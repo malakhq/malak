@@ -1,4 +1,4 @@
-use malak_layers::{ProcessIdentity, SenderPeer, SessionProcess};
+use malak_layers::{ClaimedSession, ProcessIdentity, SenderPeer, SessionProcess};
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -42,6 +42,29 @@ pub(super) fn local_session_process() -> Option<SessionProcess> {
     let mut peer = SenderPeer::transport("unix");
     walk(&mut peer, std::process::id(), os::process);
     peer.trace.session
+}
+
+pub(super) fn process_identity(pid: u32) -> Option<ProcessIdentity> {
+    os::process(pid).map(|process| process.identity)
+}
+
+pub(super) fn session_at(pid: u32, exact: bool) -> Option<ClaimedSession> {
+    let process = os::process(pid)?;
+    let identity = process.identity;
+    let session = if !exact && wrapper(process.program.as_deref()?) && process.parent != 1 {
+        let mut peer = SenderPeer::transport("unix");
+        walk(&mut peer, pid, os::process);
+        peer.trace.session?
+    } else {
+        process.session()?
+    };
+    let folder = os::cwd(session.identity.pid).filter(|cwd| cwd.len() <= 4096);
+    (os::process(pid)?.identity == identity
+        && os::process(session.identity.pid)?.identity == session.identity)
+        .then_some(ClaimedSession {
+            process: session,
+            folder,
+        })
 }
 
 fn walk(peer: &mut SenderPeer, pid: u32, read: impl Fn(u32) -> Option<Process>) {

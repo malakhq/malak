@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Bind local worker, guest and lead handovers to their assigned sessions. Show
+  claim status and refused attachments in the mailbox and `recipe workers`.
+  Use `enrol --session PID` to bind a running session manually.
+
+- Make `mailbox --next` skip the lead's own messages and remember which messages
+  it has shown across restarts. Unacknowledged lead mail can repeat at most
+  once an hour.
+
 ## v0.1.1 (2026-11-24)
 
 - Reject empty message bodies and require `-` when piping a body to `send`.

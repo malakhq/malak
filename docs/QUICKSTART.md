@@ -144,6 +144,21 @@ Use `malak revoke researcher` or `malak revoke ID` to retire access by itself.
 
 To message another board, use [`recipe guest`](RECIPES.md#message-another-boards-lead) to send as a guest, watch the guest inbox for replies, and revoke access when done.
 
+### Check and re-issue a handover
+
+`malak recipe workers NAME` and `malak mailbox --who` show the claimed
+session, refused attempts and claim history. When a session ends, its handover
+needs to be re-issued. Run `malak recipe worker-start NAME --again` to launch a
+replacement worker, or `malak recipe lead-up` from the new lead chat.
+
+Use `malak enrol NAME --session PID --out HANDOVER` to bind a running session
+manually. Bare enrolment and `enrol --unbound` both allow multiple sessions.
+`malak recipe guest NAME --out HANDOVER` binds the invoking session. Pass
+`--session PID` to issue the guest handover to a different running session.
+
+Use `worker-start --unbound` for scripts that share a handover across
+processes. `--resume` requires `--unbound`.
+
 ## Upgrade and uninstall
 
 After upgrading Malak, stop the old board processes with `malak board stop --all`.

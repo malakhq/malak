@@ -16,6 +16,7 @@ struct State {
 pub(super) struct LiveLink {
     wire: Arc<dyn CloseLink>,
     participant: OnceLock<ParticipantId>,
+    local_process: bool,
 }
 
 trait CloseLink: Send + Sync {
@@ -39,6 +40,7 @@ impl Links {
         }
         state.links.retain(|link| link.strong_count() != 0);
         let live = Arc::new(LiveLink {
+            local_process: wire.process_id().is_some(),
             wire,
             participant: OnceLock::new(),
         });
@@ -47,12 +49,22 @@ impl Links {
     }
 
     pub(super) fn participant(&self, id: &ParticipantId) -> Vec<Arc<LiveLink>> {
+        self.participant_links(id, false)
+    }
+
+    pub(super) fn participant_sessions(&self, id: &ParticipantId) -> Vec<Arc<LiveLink>> {
+        self.participant_links(id, true)
+    }
+
+    fn participant_links(&self, id: &ParticipantId, local_only: bool) -> Vec<Arc<LiveLink>> {
         self.0
             .lock()
             .links
             .iter()
             .filter_map(Weak::upgrade)
-            .filter(|link| link.participant.get() == Some(id))
+            .filter(|link| {
+                link.participant.get() == Some(id) && (!local_only || link.local_process)
+            })
             .collect()
     }
 

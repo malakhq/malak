@@ -170,6 +170,17 @@ malak rekey "$id" --out alice-new.key
 MALAK_HANDOVER="$PWD/alice-new.key" malak send lead "New key works."
 ```
 
+## `malak release`
+
+The current lead session can release a worker's claim through the owner door.
+
+```sh
+# Release a worker claim from the current lead session.
+eval "$(malak recipe lead-up)"
+malak enrol alice --session "$$" --out alice.handover
+malak release alice
+```
+
 ## `malak revoke`
 
 ```sh

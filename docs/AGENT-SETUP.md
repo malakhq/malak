@@ -45,6 +45,17 @@ If the board's config or state is outside the writable workspace, ask the
 owner to add those directories with `--add-dir PATH` or approve the Malak
 command that needs access. [Codex network access](https://learn.chatgpt.com/docs/agent-approvals-security#network-isolation)
 
+`lead-up` binds the handover to the chat that runs it on a local Unix socket.
+Take over from a new chat by running `lead-up` there. The worker launcher binds
+the command it starts. Use `malak recipe workers NAME` or `malak mailbox --who`
+to check the claimed session and see refused attempts. A person in a separate
+terminal can use the owner mailbox to inspect status.
+
+The current lead session can release a worker's claim with
+`malak release NAME` when it has owner access. Other owner releases require
+a terminal and typed confirmation. The handover needs to be re-issued
+after release.
+
 ## 2. Install the skill and reminders
 
 Run `malak recipe agents` from a terminal and confirm the prompt. When the
@@ -84,10 +95,13 @@ malak --board "$board" mailbox --plain --for lead --next
 
 Set `MALAK_HANDOVER` in the watcher command itself. In Claude Code, use
 background Bash. In Codex, start the command with a short yield, keep the
-command session ID, and check its output as you work. The watcher prints
-waiting lead mail and open owner questions if present, or waits for the next
-event, then exits. Handle what it prints, acknowledge lead messages, and run
-it again. It reconnects through a brief board restart.
+command session ID, and check its output as you work. The watcher exits after
+showing new waiting lead mail, a new message from another participant, or a
+due reminder. It remembers shown messages across runs and repeats
+unacknowledged lead mail at most once an hour. Review open owner questions
+with `malak --board "$board" mailbox --questions`. Handle what the watcher
+prints, acknowledge lead messages, and run it again. It reconnects through a
+brief board restart.
 
 To stay awake inside the host's own loop, run the watcher once per tick:
 

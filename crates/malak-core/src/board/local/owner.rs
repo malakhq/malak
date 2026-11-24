@@ -185,6 +185,10 @@ impl LocalEntrances {
             OwnerOperation::Rekey => self.operation_rekey(frame),
             OwnerOperation::Grant => self.operation_grant(frame).and_then(|()| ok(ticket)),
             OwnerOperation::Revoke => self.operation_revoke(frame).and_then(|()| ok(ticket)),
+            OwnerOperation::WorkerExit => self.operation_worker_exit(frame, sender),
+            OwnerOperation::Release => self
+                .operation_release(frame, sender)
+                .and_then(|()| ok(ticket)),
             OwnerOperation::ChannelCreate => self.operation_create(frame),
             OwnerOperation::ChannelRemove => self.operation_remove(frame),
             OwnerOperation::Trim => self.operation_trim(frame),
@@ -229,6 +233,8 @@ impl LocalEntrances {
             OwnerOperation::Enrol => ("ENROL", OwnerTarget::Name(text("name"))),
             OwnerOperation::Grant => ("GRANT", id()),
             OwnerOperation::Revoke => ("REVOKE", id()),
+            OwnerOperation::Release => ("RELEASE", id()),
+            OwnerOperation::WorkerExit => ("WORKER_EXIT", id()),
             OwnerOperation::Rekey => ("REKEY", id()),
             OwnerOperation::Trim => {
                 let record = fields.as_ref().and_then(|fields| {
@@ -290,7 +296,38 @@ impl LocalEntrances {
             .transpose()
             .map_err(|_| Error::refused("invalid handover account"))?
             .unwrap_or(self.settings.board_user);
-        let id = self.enrol_local(name, grant, path.as_ref(), account, only_user)?;
+        let session = self.session_field(&fields)?;
+        let previous = session.as_ref().and_then(|_| {
+            self.board
+                .status(None, None)
+                .participants
+                .into_iter()
+                .find(|person| {
+                    !person.id.is_lead()
+                        && !person.revoked
+                        && person.name.as_str() == name
+                        && person
+                            .claim
+                            .as_ref()
+                            .is_some_and(|claim| claim.state != crate::ClaimState::Bound)
+                })
+        });
+        let id = if let Some(previous) = previous {
+            let fingerprint = previous
+                .fingerprint
+                .ok_or_else(|| Error::refused("participant has no current key"))?;
+            self.rekey_local(&previous.id, &fingerprint, path.as_ref(), session)?;
+            previous.id
+        } else {
+            self.enrol_at(
+                name,
+                grant,
+                path.as_ref(),
+                account,
+                only_user.map(malak_layers::Source::LocalUser),
+                session,
+            )?
+        };
         encode_frame(
             frame.rid(),
             "OK",
@@ -305,6 +342,73 @@ impl LocalEntrances {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn operation_worker_exit(
+        &self,
+        frame: &Frame,
+        sender: &Arc<malak_layers::SenderPeer>,
+    ) -> Result<Bytes, Error> {
+        let fields = owner_fields(frame)?;
+        fields.only(&["id", "status", "path", "trace"])?;
+        let id = fields.required("id")?.parse()?;
+        let status = fields
+            .required("status")?
+            .parse::<u8>()
+            .map_err(|_| Error::refused("invalid worker exit status"))?;
+        let (receipt, message) = self.report_worker_exit(
+            &id,
+            status,
+            fields.required("path")?.as_ref(),
+            fields.text("trace")?,
+            sender,
+        )?;
+        let lead = crate::board::Handle {
+            board: self.board.clone(),
+            id: crate::ParticipantId::lead(),
+            proof: None,
+        };
+        let crate::GetReply::Message(record) = lead.get("lead", receipt.position.get())? else {
+            return Err(Error::unavailable(
+                "the worker's exit report could not be confirmed",
+            ));
+        };
+        if record.id.as_str() != message || record.receipt.creation != receipt.creation {
+            return Err(Error::unavailable(
+                "the worker's exit report could not be confirmed",
+            ));
+        }
+        super::calls::codec::exit_record(frame.rid(), &record, receipt.duplicate)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn operation_release(
+        &self,
+        frame: &Frame,
+        peer: &malak_layers::SenderPeer,
+    ) -> Result<(), Error> {
+        let fields = owner_fields(frame)?;
+        fields.only(&["id", "confirmation"])?;
+        let id = fields.required("id")?.parse()?;
+        self.release_claim(&id, peer, fields.text("confirmation")?)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn session_field(
+        &self,
+        fields: &Fields<'_>,
+    ) -> Result<Option<malak_layers::ClaimedSession>, Error> {
+        let pid = fields
+            .number("session")?
+            .map(u32::try_from)
+            .transpose()
+            .map_err(|_| Error::refused("invalid session PID"))?;
+        let launch = fields.text("launch_program")?;
+        if launch.is_some() && pid.is_none() {
+            return Err(Error::refused("worker launch requires a session PID"));
+        }
+        pid.map(|pid| self.lookup_session(pid, launch)).transpose()
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn operation_rekey(&self, frame: &Frame) -> Result<Bytes, Error> {
         let fields = owner_fields(frame)?;
         let id = fields.required("id")?.parse()?;
@@ -313,7 +417,8 @@ impl LocalEntrances {
         if !std::path::Path::new(path).is_absolute() {
             return Err(Error::refused("key replacement path must be absolute"));
         }
-        self.rekey_local(&id, expected, path.as_ref())?;
+        let session = self.session_field(&fields)?;
+        self.rekey_local(&id, expected, path.as_ref(), session)?;
         encode_frame(
             frame.rid(),
             "OK",

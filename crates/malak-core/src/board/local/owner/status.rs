@@ -73,7 +73,9 @@ fn encode_status(status: &BoardStatus, mechanism: Option<&str>) -> Vec<u8> {
         .array(status.participants.len() as u64)
         .unwrap();
     for participant in &status.participants {
-        output.map(9).unwrap();
+        output
+            .map(9 + u64::from(participant.claim.is_some()))
+            .unwrap();
         output
             .str("id")
             .unwrap()
@@ -110,6 +112,10 @@ fn encode_status(status: &BoardStatus, mechanism: Option<&str>) -> Vec<u8> {
         }
         output.str("grant").unwrap();
         write_grant(&mut output, &participant.grant);
+        if let Some(claim) = &participant.claim {
+            output.str("claim").unwrap();
+            claim_status(&mut output, claim);
+        }
     }
     output
         .str("channels")
@@ -153,4 +159,81 @@ fn text_or_null(output: &mut Encoder<Vec<u8>>, value: Option<&str>) {
     } else {
         output.null().unwrap();
     }
+}
+
+fn claim_status(output: &mut Encoder<Vec<u8>>, claim: &crate::Claim) {
+    output.map(6).unwrap();
+    output
+        .str("state")
+        .unwrap()
+        .str(claim.state.as_str())
+        .unwrap();
+    output.str("session").unwrap();
+    session_status(output, &claim.session);
+    output
+        .str("issuer")
+        .unwrap()
+        .str(claim.issuer.as_str())
+        .unwrap();
+    output.str("refused").unwrap().u64(claim.refused).unwrap();
+    output.str("last_refused_at_ms").unwrap();
+    if let Some(at) = claim.last_refused_at_ms {
+        output.u64(at).unwrap();
+    } else {
+        output.null().unwrap();
+    }
+    output
+        .str("history")
+        .unwrap()
+        .array(claim.history.len() as u64)
+        .unwrap();
+    for event in &claim.history {
+        use crate::ClaimEvent;
+        let (kind, details) = match event {
+            ClaimEvent::Issued { .. } => ("issued", 2),
+            ClaimEvent::Refused { .. } => ("refused", 1),
+            ClaimEvent::Ended { .. } => ("ended", 0),
+            ClaimEvent::Released { .. } => ("released", 0),
+        };
+        output.map(2 + details).unwrap();
+        output.str("event").unwrap().str(kind).unwrap();
+        output.str("at_ms").unwrap().u64(event.at_ms()).unwrap();
+        match event {
+            ClaimEvent::Issued {
+                session, issuer, ..
+            } => {
+                output.str("session").unwrap();
+                session_status(output, session);
+                output.str("issuer").unwrap().str(issuer.as_str()).unwrap();
+            }
+            ClaimEvent::Refused { peer, .. } => {
+                output.str("peer").unwrap();
+                let mut peer = peer.clone();
+                peer.session = None;
+                crate::sender::write(output, &peer, None, None);
+            }
+            ClaimEvent::Ended { .. } | ClaimEvent::Released { .. } => {}
+        }
+    }
+}
+
+fn session_status(output: &mut Encoder<Vec<u8>>, session: &malak_layers::ClaimedSession) {
+    output.map(4).unwrap();
+    output
+        .str("pid")
+        .unwrap()
+        .u32(session.process.identity.pid)
+        .unwrap();
+    output
+        .str("start_time")
+        .unwrap()
+        .u64(session.process.identity.start_time)
+        .unwrap();
+    output
+        .str("program")
+        .unwrap()
+        .str(&session.process.program)
+        .unwrap();
+    output.str("folder").unwrap();
+    text_or_null(output, session.folder.as_deref());
 }

@@ -81,6 +81,14 @@ enum Command {
         only_from: Option<String>,
         #[arg(long)]
         account: Option<String>,
+        /// Bind the handover to the session of this running PID on the board host.
+        #[arg(long, value_name = "PID", conflicts_with = "unbound")]
+        session: Option<u32>,
+        /// Allow the handover to be used from different local sessions.
+        #[arg(long)]
+        unbound: bool,
+        #[arg(long, hide = true, requires = "session")]
+        launch_program: Option<String>,
         #[arg(long)]
         out: PathBuf,
         /// Print the participant ID and handover path as JSON.
@@ -100,8 +108,16 @@ enum Command {
         id: ParticipantId,
         #[arg(long)]
         fingerprint: Option<String>,
+        #[arg(long, hide = true)]
+        session: Option<u32>,
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Release the current session claim of a participant.
+    #[command(after_help = examples::help(&["release"]))]
+    Release {
+        #[arg(value_name = "NAME")]
+        target: String,
     },
     /// Revoke a participant by ID or active name and close its connections.
     #[command(after_help = examples::help(&["revoke"]))]
@@ -145,7 +161,7 @@ enum Command {
         /// Write one live line per event without opening the alternate screen.
         #[arg(long)]
         plain: bool,
-        /// Show waiting lead mail or wait for the next lead event, then exit.
+        /// Exit after new messages from others or a due lead reminder.
         #[arg(long, requires_all = ["plain", "name"], conflicts_with = "mailbox_list")]
         next: bool,
         /// Exit with "No events." after this many seconds of waiting with --next.
@@ -442,8 +458,12 @@ impl Args {
             Command::Rekey {
                 id,
                 fingerprint,
+                session,
                 out,
-            } => owner_commands::rekey(&mut owner(self.config)?, &id, fingerprint, &out),
+            } => owner_commands::rekey(&mut owner(self.config)?, &id, fingerprint, &out, session),
+            Command::Release { target } => {
+                owner_commands::release(&mut owner(self.config)?, &target)
+            }
             Command::Revoke { target } => owner_commands::revoke(&mut owner(self.config)?, &target),
             Command::Channel { command } => {
                 owner_commands::channel(&mut owner(self.config)?, command)
@@ -509,6 +529,9 @@ impl Args {
                 grants,
                 only_from,
                 account,
+                session,
+                unbound: _,
+                launch_program,
                 out,
                 json,
             } => {
@@ -520,8 +543,12 @@ impl Args {
                     .to_str()
                     .ok_or_else(|| Error::refused("output path must be UTF-8"))?;
                 let mut client = owner(self.config)?;
-                let (id, path) =
-                    client.enrol_for_account(&name, &grant, path, account, only_user)?;
+                let (id, path) = if let Some(launch) = session.zip(launch_program.as_deref()) {
+                    client
+                        .enrol_starting_session(&name, &grant, path, account, only_user, launch)?
+                } else {
+                    client.enrol_with_session(&name, &grant, path, account, only_user, session)?
+                };
                 if json {
                     let receipt = serde_json::json!({ "id": id.as_str(), "handover": path });
                     output::line(format_args!("{receipt}"))
@@ -775,6 +802,10 @@ impl Args {
             Command::Rekey { id, out, .. } => (
                 format!("replace the credential for {id} at {}", out.display()),
                 check_participant,
+            ),
+            Command::Release { target } => (
+                format!("release the session claim for {target}"),
+                "Check the participant's claim with malak recipe workers NAME.",
             ),
             Command::Revoke { target } => (
                 format!("revoke access for {target}"),

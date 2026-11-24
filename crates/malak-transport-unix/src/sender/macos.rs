@@ -25,6 +25,9 @@ pub(super) fn program(pid: u32) -> Option<Box<str>> {
 pub(super) fn process(pid: u32) -> Option<Process> {
     // SAFETY: This flavor writes a proc_bsdinfo.
     let info = unsafe { pid_info::<libc::proc_bsdinfo>(pid, libc::PROC_PIDTBSDINFO) }?;
+    if info.pbi_status == libc::SZOMB {
+        return None;
+    }
     let start_time = info
         .pbi_start_tvsec
         .checked_mul(1_000_000)?

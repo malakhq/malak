@@ -76,15 +76,25 @@ impl LivePreviews {
         if self.id.as_str() != viewer.id {
             return Ok(None);
         }
-        fetch_with(viewer, address, |address| match self.read(address) {
-            Err(error) if link_failed(&error) => {
-                reconnect(Instant::now() + REFRESH, |_| self.read(address))
-            }
-            result => result,
+        fetch_with(viewer, address, |address| {
+            self.read_with_body(address, RecordBody::Full)
         })
     }
 
-    fn read(&mut self, address: &Address) -> Result<Option<Preview>, Error> {
+    pub(super) fn read_with_body(
+        &mut self,
+        address: &Address,
+        body: RecordBody,
+    ) -> Result<Option<Preview>, Error> {
+        match self.read(address, body) {
+            Err(error) if link_failed(&error) => {
+                reconnect(Instant::now() + REFRESH, |_| self.read(address, body))
+            }
+            result => result,
+        }
+    }
+
+    fn read(&mut self, address: &Address, body: RecordBody) -> Result<Option<Preview>, Error> {
         if self.session.is_none() {
             let (session, id) = self
                 .door
@@ -98,7 +108,7 @@ impl LivePreviews {
             self.session = Some(session);
         }
         let session = self.session.as_mut().expect("preview session is open");
-        let result = read_message(session, address, RecordBody::Full);
+        let result = read_message(session, address, body);
         if !session.is_connected() {
             self.session = None;
         }

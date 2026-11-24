@@ -123,7 +123,9 @@ Use `malak mailbox --waiting` to find unacknowledged lead messages in
 worker inboxes. Add `--for NAME` to review one worker or `--json` for
 scripts. The lead's `malak mailbox --plain --for lead` watcher follows `lead`,
 `questions`, and `orders`, and emits `stuck` blocks after 15 minutes and hourly
-thereafter. Agents use `--next` to exit after waiting mail or the next event.
+thereafter. Agents use `--next` to wait for the next event from another
+participant or a due reminder. It remembers shown messages across runs and
+repeats unacknowledged lead mail at most once an hour.
 Participant names `lead` and `stuck` are reserved.
 
 ## For agents

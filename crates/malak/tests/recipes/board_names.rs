@@ -186,7 +186,9 @@ fn board_recipes_run_against_each_named_board() {
         let diagnostics = String::from_utf8_lossy(&setup.stderr).into_owned();
         assert!(stdout(setup).contains(board.fixture.state.to_str().unwrap()));
         assert!(diagnostics.contains(&format!("Pass --board {}", board.name)));
-        board.run(&["send", "lead", board.name]);
+        let sent: Value =
+            serde_json::from_str(&board.run(&["send", "--json", "lead", board.name])).unwrap();
+        let position = sent["position"].as_u64().unwrap().to_string();
 
         let question = format!("What should {} do?", board.name);
         let recipes: &[(&str, &[&str], &str, &str)] = &[
@@ -244,7 +246,7 @@ fn board_recipes_run_against_each_named_board() {
                 ],
             ),
             ("handoff", &["alice", "1", "--to", "bob"]),
-            ("forward", &["lead", "1", "bob"]),
+            ("forward", &["lead", &position, "bob"]),
             ("agents-md", &["--dir", root.to_str().unwrap()]),
         ];
         for (recipe, args) in launches {
@@ -289,7 +291,15 @@ fn board_recipes_run_against_each_named_board() {
             reports.last().unwrap()["text"],
             format!("Worker exit status: 0\n\n{}", board.name)
         );
+    }
+}
 
+#[test]
+fn the_demo_routes_each_unbound_named_board_separately() {
+    let boards = NamedBoard::pair();
+    for board in &boards {
+        board.run(&["board", "start", "--detach"]);
+        board.run(&["send", "lead", board.name]);
         let mut demo = board.recipe("demo", &["claude", "Fixture goal"]);
         let path = env::var_os("PATH").unwrap();
         let path = env::join_paths(

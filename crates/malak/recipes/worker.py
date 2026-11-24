@@ -16,7 +16,7 @@ import tempfile
 import time
 
 import board_data as board
-from agent_launch import start_worker
+from agent_launch import prepare_gate, start_worker, worker_command
 from lead_status import watcher_running
 from recipe_board import (
     LEAD_WATCHER_CONSEQUENCE, board_config, board_name, handover_identity, lead_watcher_command,
@@ -36,7 +36,7 @@ REPORT_CONNECTION_EXIT = 75
 SELECT_BOARD = "[--config PATH | --board NAME]"
 USAGE = {
     "worker-start": f"malak recipe worker-start NAME [--again | --prepared] {SELECT_BOARD} "
-                    "[--brief FILE] [--detach] [--resume CMD] [--no-watcher] -- CMD…",
+                    "[--brief FILE] [--detach] [--unbound] [--resume CMD] [--no-watcher] -- CMD…",
     "queue": f"malak recipe queue NAME --after OTHER (--brief FILE | --prepared) {SELECT_BOARD} "
              "[--wait SECONDS] [--resume CMD] [--no-watcher] -- CMD…",
 }
@@ -114,6 +114,7 @@ def arguments(mode, words):
         options.add_argument("--prepared", action="store_true")
         parser.add_argument("--brief", type=Path)
         parser.add_argument("--detach", action="store_true")
+        parser.add_argument("--unbound", action="store_true")
     try:
         separator = words.index("--")
     except ValueError:
@@ -129,6 +130,7 @@ def arguments(mode, words):
                 "hooks deliver it at session start. The command's prompt need not repeat it.",
                 "--again retires the previous enrolment once its launcher has exited.",
                 "--detach returns once the command starts and prints how to follow or stop it.",
+                "--unbound allows several local processes to use the handover. Required for --resume.",
             ])
         lines.append("--no-watcher allows scripts and tests to run without a lead watcher.")
         out.usage(lines)
@@ -139,6 +141,8 @@ def arguments(mode, words):
         raise QueueError("supply a command after --")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
         raise QueueError(f"invalid participant name {args.name!r}")
+    if mode == "worker-start" and args.resume and not args.unbound:
+        raise QueueError("--resume requires --unbound")
     if args.prepared and args.brief:
         raise QueueError("--prepared uses the original queued brief")
     if mode == "queue":
@@ -168,6 +172,9 @@ class Worker:
             raise QueueError(f"start the worker through malak recipe {mode}")
         if getattr(args, "detach", False) != bool(self.detached_bundle):
             raise QueueError("start detached workers through malak recipe worker-start")
+        self.bound = (mode == "worker-start" and not args.unbound
+                      and not args.prepared and not self.demo_handover)
+        self.gate = None
         self.started = False
         self.cancelled = False
         self.brief_confirmed = None
@@ -229,10 +236,17 @@ class Worker:
         try:
             if getattr(self.args, "again", False):
                 self.retry_previous(status)
-            return board.enrol_lead_sender(self.config, self.args.name, self.handover)
+            binding = ["--unbound"]
+            if self.bound:
+                self.gated_run = Path(tempfile.mkdtemp(prefix="result.", dir=self.private))
+                with (self.gated_run / "out").open("wb") as output, (self.gated_run / "err").open("wb") as errors:
+                    self.gate = prepare_gate(stdout=output, stderr=errors)
+                binding = ["--session", str(self.gate[0].pid),
+                           "--launch-program", Path(self.args.command[0]).name]
+            return board.enrol_lead_sender(self.config, self.args.name, self.handover, *binding)
         except (board.RecipeError, OSError):
-            (self.private / "retry-brief").unlink(missing_ok=True)
-            self.private.rmdir()
+            self.close_gate()
+            shutil.rmtree(self.private)
             raise
 
     def use_demo_enrolment(self, status):
@@ -272,7 +286,8 @@ class Worker:
                 options.extend(("--trace", trace))
             receipt = self.connection.send(self.inbox, options, payload)
             self.brief_confirmed = time.time_ns()
-            record = self.connection.get(self.inbox, receipt["position"], self.handover)
+            record = self.connection.get(self.inbox, receipt["position"],
+                                         None if self.bound else self.handover)
             if (not from_receipt(record, receipt) or record["sender"] != "lead"
                     or record["grade"] != "proven" or record["kind"] != "task"
                     or bytes(record["body"]) != payload):
@@ -443,16 +458,24 @@ class Worker:
             "MALAK_RECIPE_CONFIG": str(self.config), "MALAK_REPORT_JSON": "1",
             "MALAK_RECIPE_REPORT_RETRY": "1",
         }
-        result = send_final_report([RECIPES / "report.sh", str(status), run / "out"], env)
+        if self.bound:
+            command = [board.MALAK_EXE, "--config", self.config, "recipe", "__worker-exit",
+                       self.record.id, str(status), run / "out", env["MALAK_TASK_TRACE"]]
+        else:
+            command = [RECIPES / "report.sh", str(status), run / "out"]
+        result = send_final_report(command, env)
         if not result.returncode:
             receipt = json.loads(result.stdout)
+            if self.bound:
+                identifier = receipt["id"]
             fields = (("Trace", receipt["trace"]),) if receipt.get("trace") else ()
             action = "already recorded in" if receipt["duplicate"] else "sent to"
             out.receipt(f"Report {action} lead #{receipt['position']}.", receipt, fields)
             sys.stdout.flush()
             if initial:
                 try:
-                    record = self.connection.get("lead", receipt["position"])
+                    record = (receipt["report"] if self.bound
+                              else self.connection.get("lead", receipt["position"]))
                     if (not from_receipt(record, receipt) or receipt["id"] != identifier
                             or not is_worker_report(record, self.record.id)):
                         raise QueueError("the launcher's final report could not be verified")
@@ -501,7 +524,69 @@ class Worker:
             # The caller can go away once the worker is running.
             pass
 
+    def close_gate(self):
+        if self.gate is not None:
+            process, gate, ready = self.gate
+            gate.close()
+            ready.close()
+            if process.poll() is None:
+                try:
+                    process.terminate()
+                except ProcessLookupError:
+                    pass
+            process.wait()
+            self.gate = None
+
+    def run_bound(self, command, cursor):
+        run = self.gated_run
+        agent, gate, ready = self.gate
+        env = self.environment(cursor)
+        self.started = False
+        status = 3
+        try:
+            tool = Path(command[0]).name
+            if tool not in {"claude", "codex"}:
+                out.details(f"No native Malak hooks configured for worker {self.args.name}.",
+                            stream=sys.stderr)
+            if shutil.which(command[0], path=env.get("PATH")) is None:
+                raise OSError(f"worker executable {command[0]} is unavailable")
+            command, env = worker_command(command, env)
+            self.phase(self.evidence["phase"], agent_pid=agent.pid)
+            with gate:
+                gate.write(json.dumps([command, env, board.MALAK_EXE, tool]).encode())
+            with ready:
+                self.started = ready.read(1) == b"1"
+            if self.started and self.detached_bundle:
+                with (run / "err").open("ab") as errors:
+                    self.announce_detached(run, errors)
+            if self.started and self.detached_bundle and self.cancelled:
+                os.killpg(os.getpgrp(), signal.SIGTERM)
+            status = agent.wait()
+            if status < 0:
+                status = 128 - status
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
+            with (run / "err").open("a") as errors:
+                out.error("start the worker command", error, "Check the executable and its launch settings.", stream=errors)
+        finally:
+            self.close_gate()
+        if status and not self.started and tool in {"claude", "codex"}:
+            sys.stderr.buffer.write((run / "err").read_bytes())
+            out.details(f"Worker {self.args.name} failed malak hook --check --tool {tool}.",
+                        (("Inbox", self.inbox), ("Worker stderr", run / "err"),
+                         ("Next", "Check the worker's hook delivery before retrying.")), stream=sys.stderr)
+        elif status:
+            out.details(f"Worker {self.args.name} exited with status {status}.",
+                        (("Inbox", self.inbox), ("Worker stderr", run / "err")), stream=sys.stderr)
+        try:
+            sent = self.report(run, status, env, initial=True)
+            return status or sent, sent
+        finally:
+            if not self.started:
+                self.revoke()
+
     def run(self, command, cursor, initial=False):
+        if self.gate is not None:
+            return self.run_bound(command, cursor)
         run = Path(tempfile.mkdtemp(prefix="result.", dir=self.private))
         env = self.environment(cursor)
         tool = Path(command[0]).name
@@ -587,6 +672,7 @@ def main(mode, words):
     try:
         return worker.execute()
     finally:
+        worker.close_gate()
         if worker.detached_bundle:
             shutil.rmtree(worker.hook_state, ignore_errors=True)
             shutil.rmtree(worker.detached_bundle, ignore_errors=True)

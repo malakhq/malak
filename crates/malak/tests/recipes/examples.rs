@@ -132,8 +132,11 @@ fn a_guest_posts_to_the_receiving_lead_as_itself() {
     let status = receiver.status();
     let guest = participant(&status, "team-to-review");
     let notes = messages(&receiver.lead(&["read", "--json", "lead"]));
+    let notes = notes
+        .iter()
+        .filter(|note| note["sender"] == guest["id"])
+        .collect::<Vec<_>>();
     assert_eq!(notes.len(), 1);
-    assert_eq!(notes[0]["sender"], guest["id"]);
     assert_eq!(notes[0]["grade"], "proven");
     assert_eq!(notes[0]["text"], "The team build is ready for review.\n");
     assert_eq!(guest["revoked"], true);
@@ -246,6 +249,11 @@ examples! {
         assert_eq!(example.first_on("lead")["text"], "New key works.");
         let old = output(example.shell(r#"MALAK_HANDOVER="$PWD/alice.key" malak send lead retired"#));
         assert!(!old.status.success(), "{old:?}");
+    }
+
+    release_shows_alices_claim_as_released: "release" [running] |example| {
+        example.run();
+        assert_eq!(participant(&example.board.status(), "alice")["claim"]["state"], "released");
     }
 
     revoke_shows_alice_as_revoked: "revoke" [running] |example| {

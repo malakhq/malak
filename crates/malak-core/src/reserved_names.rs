@@ -16,6 +16,7 @@ const COMMANDS: &[&str] = &[
     "recipe",
     "recover",
     "rekey",
+    "release",
     "revoke",
     "send",
     "tail",

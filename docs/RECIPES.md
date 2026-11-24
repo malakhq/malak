@@ -188,11 +188,13 @@ An agent with a shell can wait in its own inbox with
 use the hooks below.
 
 As the lead, run `malak --board NAME mailbox --plain --for lead --next` in
-the background. It shows waiting lead messages and open owner questions at
-startup or waits for the next event on `lead`, `questions`, and `orders`,
-or the next stuck-work notice. Handle what it prints, acknowledge lead messages,
-and run it again. Read orders in force with `malak --board NAME mailbox --orders`
-before acting. Add `--timeout SECONDS` to end a quiet wait with `No events.`
+the background. It exits after showing new waiting lead mail, a new message
+from another participant on `lead`, `questions`, or `orders`, or a due reminder.
+It remembers shown messages across runs and repeats unacknowledged lead mail
+at most once an hour. Handle what it prints, acknowledge lead messages, and run
+it again. Review open owner questions with `malak --board NAME mailbox --questions`
+and read orders in force with `malak --board NAME mailbox --orders`.
+Add `--timeout SECONDS` to end a quiet wait with `No events.`
 The watcher flags unacknowledged lead messages in worker inboxes after
 15 minutes and every hour thereafter until the worker acknowledges them or
 is revoked. The first word after the timestamp is `stuck`.
@@ -421,7 +423,7 @@ recorded launcher PID. It reposts the retained brief to the new inbox.
 Use `--brief FILE` to replace the brief or provide it if the old inbox was
 trimmed. The name needs a prior enrolment.
 
-With `--resume`, keep the launcher running. After the
+Pass `--unbound` with `--resume` so later processes can use the same handover. Keep the launcher running. After the
 command exits and reports, the recipe waits for a pending task from the
 proven lead, then runs the supplied shell command with the same handover.
 Each task position can trigger one resume during that invocation. The
@@ -439,6 +441,13 @@ printed stop and revoke commands. A revoked worker loses permission to post
 its report.
 
 ### Check worker status
+
+For a session-bound handover, `malak recipe workers NAME` shows the current
+session, its state and the 64 newest claim events. A refusal records the time
+and the process that presented the handover. A worker can receive commands
+through its handover after the launcher binds its session. After the session
+ends, `worker-start NAME --again` launches a fresh enrolment.
+
 
 ```sh
 malak recipe workers researcher --board team

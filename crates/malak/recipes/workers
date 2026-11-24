@@ -20,23 +20,51 @@ def workers(connection, name):
         person["name"], person.get("enrolled_at_ms") or 0, person["id"],
     ))
     for person in participants:
-        if person["id"] == "lead" or (name is not None and person["name"] != name):
+        if (name is not None and person["name"] != name
+                or person["id"] == "lead" and name != "lead"):
             continue
         record = LaunchRecord(connection.state, person["id"])
         evidence, live = record.observe()
+        claim = person.get("claim")
         if not record.on_board(evidence, connection.identity):
-            continue
+            if claim is None:
+                continue
+            evidence = {}
+            live = False
         exit_code = evidence.get("last_exit_status", evidence.get("exit_status"))
         yield {
             "name": person["name"],
-            "state": "running" if live else "exited",
+            "state": ("running" if live else "exited") if evidence else claim["state"],
             "launcher_pid": evidence.get("launcher_pid"),
             "agent_pid": evidence.get("agent_pid"),
             "started_at_ms": evidence.get("started_at_ms"),
             "exit_code": None if live else exit_code,
-            "inbox": f"to/{record.id}",
+            "inbox": record.id if record.id == "lead" else f"to/{record.id}",
             "enrolment": "revoked" if person["revoked"] else "active",
+            **({"claim": claim} if claim is not None else {}),
         }
+
+
+def stamp(ms):
+    return datetime.fromtimestamp(ms / 1000, timezone.utc).isoformat()
+
+
+def claim_fields(claim):
+    session = claim["session"]
+    yield ("Claim", claim["state"])
+    yield ("Session", process_text(session))
+    yield ("Issuer", claim["issuer"])
+    if claim["refused"]:
+        yield ("Refused", f"{claim['refused']} (last {stamp(claim['last_refused_at_ms'])})")
+    for event in claim["history"]:
+        details = event.get("session") or event.get("peer")
+        label = f"{stamp(event['at_ms'])} {event['event']}"
+        yield ("History", f"{label} {process_text(details)}" if details else label)
+
+
+def process_text(details):
+    folder = details.get("folder") or details.get("cwd")
+    return f"PID {details.get('pid') or '?'} {details.get('program') or '?'} ({folder or 'folder unavailable'})"
 
 
 def main():
@@ -78,6 +106,8 @@ def main():
                           ("Started", time), ("Inbox", row["inbox"]), ("Enrolment", row["enrolment"])]
             if row["state"] == "exited":
                 fields.append(("Exit code", row["exit_code"]))
+            if claim := row.get("claim"):
+                fields.extend(claim_fields(claim))
             out.details(f"{row['name']} {row['state']}",
                         [(label, "Unavailable" if value is None else value) for label, value in fields])
     return 0

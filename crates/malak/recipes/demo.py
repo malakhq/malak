@@ -336,7 +336,7 @@ def start_workers(config, workspace, private, names, briefs, command, env, worke
                     if stopping():
                         return
                     worker = subprocess.Popen(
-                        [MALAK_EXE, "--config", config, "recipe", "worker-start", name,
+                        [MALAK_EXE, "--config", config, "recipe", "worker-start", name, "--unbound",
                          "--no-watcher", "--brief", str(brief), "--", *command, WORKER_PROMPT],
                         cwd=workspace, env={**worker_env, "MALAK_DEMO_REPORT_RECORD": str(expected),
                                             "MALAK_DEMO_HANDOVER": str(handover)},
@@ -355,7 +355,7 @@ def enrol_demo_worker(config, state, name, enrolled):
     private = Path(tempfile.mkdtemp(prefix="worker.", dir=state))
     handover = private / "handover"
     try:
-        participant = board_data.enrol_lead_sender(config, name, handover)
+        participant = board_data.enrol_lead_sender(config, name, handover, "--unbound")
     except (board_data.RecipeError, OSError, ValueError, KeyError) as error:
         # The board can save the identity before a handover write or an
         # enrolment reply fails. Use evidence specific to this owner call.

@@ -29,6 +29,7 @@ const BOARD_CONFIG: &str = "__board-config";
 const BOARD_NAME: &str = "__board-name";
 const BOARD_LIST: &str = "__board-list";
 const SESSION_PROCESS: &str = "__session-process";
+const WORKER_EXIT: &str = "__worker-exit";
 const WORKER_STARTED: &str = "malak-worker-started\n";
 pub(super) const BUNDLE_TEMP_PREFIX: &str = "malak-recipe";
 pub(super) const WORKER_HOOK_TEMP_PREFIX: &str = "malak-worker-hooks";
@@ -218,6 +219,31 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
             participant::check_recipe_handover(config)?;
             return Ok(ExitCode::SUCCESS);
         }
+        Some(WORKER_EXIT) => {
+            let [id, status, path, trace] = arguments else {
+                return Err(Error::refused("invalid worker exit report"));
+            };
+            let utf8 = |arg: &std::ffi::OsStr| {
+                arg.to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| Error::refused("worker exit report requires UTF-8 arguments"))
+            };
+            let [id, status, path, trace] = [utf8(id)?, utf8(status)?, utf8(path)?, utf8(trace)?];
+            let report = (|| {
+                let mut owner = super::owner(config)?;
+                super::owner_commands::worker_exit(&mut owner, &id, &status, &path, &trace)
+            })();
+            if let Err(ref error) = report
+                && (participant::report_connection_failed(error)
+                    || error.outcome() == malak::Outcome::Unavailable)
+            {
+                eprintln!("{error}");
+                return Ok(ExitCode::from(participant::REPORT_CONNECTION_EXIT));
+            } else {
+                report?;
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         Some(SESSION_PROCESS) if arguments.is_empty() => {
             if let Some(process) = malak_transport_unix::local_session_process() {
                 output::line(format_args!(
@@ -379,7 +405,10 @@ fn help_before_recipe_position(name: &str, arguments: &[OsString]) -> bool {
             | ("guest", "--json")
             | ("lead-up", "--list" | "--tree")
             | ("queue", "--prepared" | "--no-watcher")
-            | ("worker-start", "--again" | "--prepared" | "--detach" | "--no-watcher")
+            | (
+                "worker-start",
+                "--again" | "--prepared" | "--detach" | "--no-watcher" | "--unbound",
+            )
             | ("workers", "--json") => 0,
             ("ask", "--reply-to") => 3,
             (_, option) if option.starts_with("--") && option.contains('=') => 0,

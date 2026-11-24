@@ -533,6 +533,10 @@ pub(super) fn participant_line(
     let mut suffix = model
         .name_number(lane.participant)
         .map_or_else(String::new, |n| format!(" ({n})"));
+    if let Some(claim) = &lane.participant.claim {
+        suffix.push(' ');
+        suffix.push_str(&claim.state);
+    }
     if let Some(state) = lane.participant.launcher_state {
         suffix.push(' ');
         suffix.push_str(state);

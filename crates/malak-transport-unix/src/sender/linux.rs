@@ -18,7 +18,10 @@ pub(super) fn process(pid: u32) -> Option<Process> {
     // The parenthesized comm can itself contain a closing parenthesis or spaces.
     let (comm, fields) = stat.rsplit_once(')')?;
     let (_, comm) = comm.split_once('(')?;
-    let mut fields = fields.split_ascii_whitespace().skip(1); // Skip state (field 3).
+    let mut fields = fields.split_ascii_whitespace();
+    if matches!(fields.next()?, "Z" | "X" | "x") {
+        return None;
+    }
     let parent = fields.next()?.parse().ok()?; // Field 4.
     let start_time = fields.nth(17)?.parse().ok()?; // Field 22.
     Some(Process {

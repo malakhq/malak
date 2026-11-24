@@ -144,9 +144,18 @@ impl Fixture {
     }
 
     fn start(&self) {
-        let mut command = self.recipe("lead-up");
-        command.arg("--config").arg(&self.config);
-        run(command);
+        // Most recipe fixtures deliberately reuse credentials across processes.
+        // Tests that exercise lead-up run it explicitly.
+        run(self.owner(&["board", "start", "--detach"]));
+        run(self.owner(&["channel", "create", "selftest/lead"]));
+        self.lead(&[
+            "send",
+            "--id",
+            "lead-up-test-fixture",
+            "selftest/lead",
+            "Malak lead-up self-test",
+        ]);
+        self.lead(&["read", "--ack", "selftest/lead"]);
     }
 
     fn worker_start(&self, options: &[&str], worker_command: &[&str]) -> Command {
@@ -156,6 +165,7 @@ impl Fixture {
 
     fn worker_start_command(&self, options: &[&str], worker_command: &[&str]) -> Command {
         let mut command = self.recipe("worker-start");
+        command.arg("--unbound");
         command
             .args(["alice", "--board", BOARD])
             .args(options)
@@ -3660,3 +3670,57 @@ mod agents;
 
 #[path = "recipes/board_names.rs"]
 mod board_names;
+
+#[test]
+fn a_bound_worker_gets_one_claim_notice_and_one_combined_exit_report() {
+    let board = Fixture::new();
+    run(board.recipe("lead-up"));
+    let mut launcher = board.recipe("worker-start");
+    launcher.args([
+        "bound",
+        "--no-watcher",
+        "--",
+        "sh",
+        "-c",
+        "malak send lead 'from bound child' && malak send lead 'second command'",
+    ]);
+    let output = run(launcher);
+    assert!(output.contains("Report sent"), "{output}");
+    assert_eq!(
+        participant(&board.status(), "bound")["claim"]["state"],
+        "ended"
+    );
+
+    let output = board.lead(&["read", "--json", "lead"]);
+    let rows = output
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let bodies = rows
+        .iter()
+        .filter_map(|row| row["text"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies
+            .iter()
+            .filter(|body| body.contains("bound is on the board"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        bodies
+            .iter()
+            .filter(|body| body.contains("bound's session ended"))
+            .count(),
+        1
+    );
+    let report = rows.iter().find(|row| row["kind"] == "report").unwrap();
+    assert!(
+        report["text"]
+            .as_str()
+            .unwrap()
+            .contains("bound's session ended")
+    );
+    assert!(bodies.contains(&"from bound child"));
+    assert!(bodies.contains(&"second command"));
+}

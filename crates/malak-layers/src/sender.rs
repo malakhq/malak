@@ -18,6 +18,15 @@ pub struct SessionProcess {
     pub program: Box<str>,
 }
 
+/// The process and working folder selected when issuing a session-bound handover.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimedSession {
+    /// The OS identity and program of the selected session.
+    pub process: SessionProcess,
+    /// The session's working folder, if the operating system reports it.
+    pub folder: Option<Box<str>>,
+}
+
 /// Sender details observed by the board's transport, separate from authentication.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SenderTrace {

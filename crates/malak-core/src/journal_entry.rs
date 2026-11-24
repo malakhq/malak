@@ -48,7 +48,10 @@ pub(crate) enum Entry<'a> {
         mechanism: &'a str,
         record: Option<&'a [u8]>,
         enrolled_at_ms: u64,
+        session: Option<&'a malak_layers::ClaimedSession>,
     },
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    Claim(&'a ParticipantId, &'a crate::authority::ClaimChange),
     SocketUpdate {
         participant: &'a ParticipantId,
         generation: u64,
@@ -86,6 +89,8 @@ pub(crate) enum Entry<'a> {
         generation: u64,
         key: [u8; 32],
         record: Option<&'a [u8]>,
+        session: Option<&'a malak_layers::ClaimedSession>,
+        issued_at_ms: u64,
     },
     Create {
         name: &'a ChannelName,
@@ -146,6 +151,7 @@ pub(crate) enum Entry<'a> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod encode;
+mod session;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod start;

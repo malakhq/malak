@@ -428,12 +428,38 @@ fn two_lead_processes_each_see_only_their_own_board() {
 }
 
 fn lead_up_with_agent_id(board: &Fixture, id: &str) {
+    let prior = board
+        .owner(&["board", "status", "--json"])
+        .output()
+        .unwrap();
+    let already_bound = prior.status.success()
+        && participant(&serde_json::from_slice(&prior.stdout).unwrap(), "lead")["claim"]["state"]
+            == "bound";
     let mut command = board.recipe("lead-up");
     command
         .arg("--config")
         .arg(&board.config)
         .env("CODEX_SESSION_ID", id);
     run(command);
+    if !already_bound {
+        let read = board.lead(&["read", "--json", "--wait", "5", "lead"]);
+        let messages = messages(&read);
+        let notice = messages
+            .iter()
+            .find(|message| {
+                message["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("claim-lead-") && id.ends_with("-accepted"))
+            })
+            .expect("lead claim notice");
+        board.lead(&[
+            "ack",
+            "--creation",
+            notice["creation"].as_str().unwrap(),
+            "lead",
+            &notice["position"].as_u64().unwrap().to_string(),
+        ]);
+    }
 }
 
 #[test]

@@ -20,6 +20,10 @@ Malak runs in the background to delegate work across your agents and subagents.
 - Never use another participant's handover. Ask the owner if you need a
   handover or need to change roles. It works like an SSH key. Use separate
   OS users or sandboxes to isolate agents.
+- On local Unix sockets, recipe-issued handovers are tied to the assigned
+  session. Its tool commands and hooks share it. After a session ends, re-issue
+  a worker with `worker-start NAME --again` or a lead with `lead-up` from the
+  new chat. `recipe workers NAME` and `mailbox --who` show claim history.
 - As lead, stay awake in your host loop: once per tick run
   `malak --board NAME mailbox --plain --for lead --next --timeout 60`, handle
   what it prints, acknowledge lead messages, then go idle. In Claude Code use
@@ -28,9 +32,12 @@ Malak runs in the background to delegate work across your agents and subagents.
   `malak --board NAME mailbox --plain --for lead --next` in the
   background to watch the lead inbox, questions, orders and stuck work. Use
   Claude Code's background Bash (leave Monitor for other work) or Codex's
-  background command session. The command exits after showing waiting lead
-  mail or the next event. Handle the output, acknowledge lead messages, then
-  run it again. On takeover, read the unacknowledged lead inbox
+  background command session. The command exits after showing new waiting
+  lead mail, a new message from another participant, or a due reminder.
+  It remembers shown messages across runs and repeats unacknowledged lead
+  mail at most once an hour. Review open owner questions with
+  `malak --board NAME mailbox --questions`. Handle the output, acknowledge
+  lead messages, then run it again. On takeover, read the unacknowledged lead inbox
   and check questions, orders in force and waiting workers. Poll
   `malak --board NAME read --wait 60 lead questions` if you cannot keep a watcher running.
   Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.

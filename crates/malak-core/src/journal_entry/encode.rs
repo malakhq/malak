@@ -90,8 +90,9 @@ impl Entry<'_> {
                 mechanism,
                 record,
                 enrolled_at_ms,
+                session,
             } => {
-                tag(&mut encoder, 17, 10)
+                tag(&mut encoder, 17, 10 + u64::from(session.is_some()))
                     .str(participant.as_str())
                     .unwrap()
                     .str(name.as_str())
@@ -125,6 +126,14 @@ impl Entry<'_> {
                 }
                 write_grant(&mut encoder, grant);
                 encoder.u64(*enrolled_at_ms).unwrap();
+                if let Some(session) = session {
+                    super::session::write(&mut encoder, session);
+                }
+            }
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            Self::Claim(id, change) => {
+                tag(&mut encoder, 30, 2).str(id.as_str()).unwrap();
+                super::session::write_change(&mut encoder, change);
             }
             Self::SocketUpdate {
                 participant,
@@ -325,8 +334,10 @@ impl Entry<'_> {
                 generation,
                 key,
                 record,
+                session,
+                issued_at_ms,
             } => {
-                tag(&mut encoder, 28, 4)
+                tag(&mut encoder, 28, 4 + 2 * u64::from(session.is_some()))
                     .str(participant.as_str())
                     .unwrap()
                     .u64(*generation)
@@ -337,6 +348,10 @@ impl Entry<'_> {
                     Some(record) => encoder.bytes(record).unwrap(),
                     None => encoder.null().unwrap(),
                 };
+                if let Some(session) = session {
+                    super::session::write(&mut encoder, session);
+                    encoder.u64(*issued_at_ms).unwrap();
+                }
             }
             Self::Remove(creation) => {
                 tag(&mut encoder, 26, 1).bytes(creation.as_bytes()).unwrap();
