@@ -1,0 +1,38 @@
+[package]
+name = "malak-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["fuzzing", "message-board"]
+# TODO(owner): Set repository to the public source URL.
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bytes = "1"
+data-encoding = "2"
+libfuzzer-sys = "0.4"
+malak-layers = { path = "../crates/malak-layers" }
+malak-proto = { path = "../crates/malak-proto" }
+malak-record = { path = "../crates/malak-record" }
+
+[[bin]]
+name = "frame_decoder"
+path = "fuzz_targets/frame_decoder.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "markdown_parser"
+path = "fuzz_targets/markdown_parser.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+resolver = "3"

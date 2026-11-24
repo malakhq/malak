@@ -1,0 +1,92 @@
+{
+  "claude_start": {
+    "session_id": "claude-session",
+    "transcript_path": "/workspace/claude.jsonl",
+    "cwd": "/workspace",
+    "hook_event_name": "SessionStart",
+    "source": "startup"
+  },
+  "claude_subagent": {
+    "session_id": "claude-session",
+    "transcript_path": "/workspace/claude.jsonl",
+    "cwd": "/workspace",
+    "hook_event_name": "SubagentStart",
+    "agent_id": "agent-abc123",
+    "agent_type": "Explore"
+  },
+  "claude_background": {
+    "session_id": "claude-session",
+    "cwd": "/workspace",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sleep 60", "description": "private description", "run_in_background": true},
+    "tool_use_id": "toolu_01ABC123"
+  },
+  "claude_task": {
+    "session_id": "claude-session",
+    "cwd": "/workspace",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "TaskUpdate",
+    "tool_input": {"taskId": "7", "status": "in_progress"},
+    "tool_response": "Updated task #7",
+    "tool_use_id": "toolu_01ABC124"
+  },
+  "claude_end": {
+    "session_id": "claude-session",
+    "cwd": "/workspace",
+    "hook_event_name": "SessionEnd",
+    "reason": "other"
+  },
+  "codex_start": {
+    "session_id": "codex-session",
+    "transcript_path": null,
+    "cwd": "/workspace",
+    "hook_event_name": "SessionStart",
+    "model": "gpt-5.4",
+    "permission_mode": "default",
+    "source": "startup"
+  },
+  "codex_subagent": {
+    "session_id": "codex-session",
+    "transcript_path": null,
+    "cwd": "/workspace",
+    "hook_event_name": "SubagentStart",
+    "model": "gpt-5.4",
+    "permission_mode": "default",
+    "turn_id": "turn-123",
+    "agent_id": "subagent-123",
+    "agent_type": "explorer"
+  },
+  "codex_spawn": {
+    "session_id": "codex-session",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "spawn_agent",
+    "tool_input": {"agent_type": "explorer", "message": "private task"},
+    "tool_use_id": "call-spawn",
+    "turn_id": "turn-123"
+  },
+  "codex_bash": {
+    "session_id": "codex-session",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {"command": "sleep 60 &"},
+    "tool_use_id": "call-shell",
+    "turn_id": "turn-123"
+  },
+  "codex_plan": {
+    "session_id": "codex-session",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "update_plan",
+    "tool_input": {"plan": [{"step": "private plan", "status": "in_progress"}]},
+    "tool_response": {"output": "Plan updated"},
+    "tool_use_id": "call-plan",
+    "turn_id": "turn-123"
+  },
+  "codex_end": {
+    "session_id": "codex-session",
+    "transcript_path": null,
+    "cwd": "/workspace",
+    "hook_event_name": "SessionEnd",
+    "reason": "other"
+  }
+}

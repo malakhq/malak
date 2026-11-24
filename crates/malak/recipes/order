@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+. "$recipes/board.sh"
+
+usage() {
+    recipe_usage "${1:-help}" 'Usage: malak recipe order [--config PATH | --board NAME] [--until YYYY-MM-DDTHH:MM:SSZ | --for 30m|12h|2d] < WHAT-THE-LEAD-MAY-DECIDE'
+}
+
+config=
+until=
+duration=
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -h|--help) usage; exit 0 ;;
+        --config|--board|--until|--for)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage error >&2; exit 2; fi
+            case $1 in
+                --config|--board)
+                    [ -z "$config" ] || { usage error >&2; exit 2; }
+                    config=$(recipe_config_option "$1" "$2") ;;
+                --until) until=$2 ;;
+                --for) duration=$2 ;;
+            esac
+            shift 2
+            ;;
+        --) shift; [ "$#" -eq 0 ] || { usage error >&2; exit 2; }; break ;;
+        *) usage error >&2; exit 2 ;;
+    esac
+done
+config=$(recipe_config "$config")
+exec python3 "$recipes/board_data.py" order "$config" "$until" "$duration"

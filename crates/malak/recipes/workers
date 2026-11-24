@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""Show the stock worker launchers on a local board."""
+
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+
+import board_data as board
+from recipe_board import board_config, selected_config
+import recipe_output as out
+from worker_queue import LaunchRecord, QueueBoard, QueueError
+
+
+def workers(connection, name):
+    participants = sorted(connection.status()["participants"], key=lambda person: (
+        person["name"], person.get("enrolled_at_ms") or 0, person["id"],
+    ))
+    for person in participants:
+        if person["id"] == "lead" or (name is not None and person["name"] != name):
+            continue
+        record = LaunchRecord(connection.state, person["id"])
+        evidence, live = record.observe()
+        if not record.on_board(evidence, connection.identity):
+            continue
+        exit_code = evidence.get("last_exit_status", evidence.get("exit_status"))
+        yield {
+            "name": person["name"],
+            "state": "running" if live else "exited",
+            "launcher_pid": evidence.get("launcher_pid"),
+            "agent_pid": evidence.get("agent_pid"),
+            "started_at_ms": evidence.get("started_at_ms"),
+            "exit_code": None if live else exit_code,
+            "inbox": f"to/{record.id}",
+            "enrolment": "revoked" if person["revoked"] else "active",
+        }
+
+
+def main():
+    parser = out.ArgumentParser(
+        prog="malak recipe workers",
+        usage="%(prog)s [NAME] [--json] [--config PATH | --board NAME]",
+        allow_abbrev=False,
+    )
+    parser.add_argument("name", nargs="?", metavar="NAME", help="Show only this worker name")
+    parser.add_argument("--json", action="store_true", help="Print worker records as JSON")
+    selectors = parser.add_mutually_exclusive_group()
+    selectors.add_argument("--board", metavar="NAME", help="Select a named board")
+    selectors.add_argument("--config", type=Path, metavar="PATH", help="Select a board config")
+    args = parser.parse_args()
+
+    config = (selected_config(args.board, args.config) or board_config()).absolute()
+    with config.open("rb") as source:
+        connection = QueueBoard(config, board.board_state(source).absolute())
+    if handover := os.environ.get("MALAK_HANDOVER"):
+        board.check_board(config, handover)
+    rows = list(workers(connection, args.name))
+    if args.name is not None and not rows:
+        raise QueueError(f"no stock worker named {args.name!r}")
+    if args.json:
+        print(json.dumps({"workers": rows}))
+    elif not rows:
+        out.details("No stock workers.")
+    else:
+        for row in rows:
+            started = row["started_at_ms"]
+            time = (datetime.fromtimestamp(started / 1000, timezone.utc).isoformat()
+                    if started is not None else None)
+            if row["launcher_pid"] is None and row["agent_pid"] is None and started is None:
+                # Workers launched before launch records existed have only board state.
+                fields = [("Launch record", "none (started by an older Malak)"),
+                          ("Inbox", row["inbox"]), ("Enrolment", row["enrolment"])]
+            else:
+                fields = [("Launcher PID", row["launcher_pid"]), ("Agent PID", row["agent_pid"]),
+                          ("Started", time), ("Inbox", row["inbox"]), ("Enrolment", row["enrolment"])]
+            if row["state"] == "exited":
+                fields.append(("Exit code", row["exit_code"]))
+            out.details(f"{row['name']} {row['state']}",
+                        [(label, "Unavailable" if value is None else value) for label, value in fields])
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (board.RecipeError, OSError, KeyError, ValueError) as error:
+        out.error("show workers", error, "Check the selected board and worker name.")
+        sys.exit(getattr(error, "code", 3))

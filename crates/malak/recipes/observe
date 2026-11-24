@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""Show Malak's session nudge from a Claude Code or Codex command hook."""
+
+import fcntl
+from functools import cache
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import signal
+import stat
+import sys
+import time
+
+import recipe_output as out
+from board_data import RecipeError, board_status, malak
+from recipe_board import (
+    board_entries, board_identity, board_name, board_settings, config_for_socket,
+    lead_watcher_command, local_board_label, selected_config,
+)
+
+
+COOLDOWN_SECONDS = 60
+LEAD_STATUS_INTERVAL_SECONDS = 3 * 60
+INTRO = "Malak is installed for visibility."
+NO_BOARD = (
+    "Malak is installed. If this chat already leads a board, keep leading it with its --board name. "
+    "Otherwise ask the owner before leading or joining a board."
+)
+TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TodoWrite", "update_plan"}
+AGENT_TOOLS = {"Agent", "Task", "spawn_agent"}
+START_SOURCES = {"startup", "resume", "fork"}
+
+
+class HookDeadline(Exception):
+    pass
+
+
+def worker_context(board, participant, config):
+    name = local_board_label(board)
+    if config is not None:
+        try:
+            name = board_name(config)
+            if status := read_status(config):
+                participant = next(
+                    (person["name"] for person in status["participants"] if person["id"] == participant),
+                    participant,
+                )
+        except (HookDeadline, OSError, ValueError):
+            pass
+    return (
+        f"{INTRO} You are {participant} on board {json.dumps(name)}. "
+        "Use the inherited MALAK_HANDOVER for this session and its subagents. "
+        "Ask the person before joining another board."
+    )
+
+
+def lead_handover_for(config):
+    try:
+        settings = board_settings(config)
+        handover = Path(settings["state"]) / "lead.handover"
+        if board_identity(handover) == (Path(settings["socket_folder"]), "lead"):
+            return handover
+    except (KeyError, OSError, TypeError, ValueError):
+        pass
+    return None
+
+
+def lead_context(name, config):
+    return (
+        f"{INTRO} You lead board {json.dumps(name)}. "
+        f"Watch with `{lead_watcher_command(config, name)}`."
+    )
+
+
+def read_status(config):
+    try:
+        return board_status(config, check=False)
+    except (RecipeError, OSError, ValueError):
+        return None
+
+
+@cache
+def hook_process():
+    try:
+        return json.loads(malak("recipe", "__session-process").stdout)
+    except (RecipeError, OSError, ValueError):
+        return None
+
+
+def same_session(recorded, session_id):
+    if not recorded:
+        return False
+    if session_id and (lead_id := recorded.get("agent_session_id")):
+        return session_id == lead_id
+    process = hook_process()
+    return process is not None and process == {
+        "pid": recorded["pid"], "start_time": recorded["start_time"],
+    }
+
+
+def matching_leads(config, session_id):
+    try:
+        entries = [(board_name(config), config)] if config is not None else sorted(board_entries())
+        for name, path in entries:
+            if status := read_status(path):
+                if same_session(status.get("lead_session"), session_id):
+                    yield name, path, status
+    except (OSError, ValueError):
+        # An unavailable board cannot establish leadership.
+        return
+
+
+def hook_context(config, handover, intro, session_id, review=False):
+    if handover is not None:
+        board, participant = board_identity(handover)
+        if participant != "lead" and not intro:
+            return None, []
+        if config is None:
+            try:
+                config = config_for_socket(board)
+            except (HookDeadline, OSError, ValueError):
+                pass
+        if config is not None and Path(board_settings(config)["socket_folder"]) != board:
+            raise ValueError("MALAK_HANDOVER does not match the selected board")
+        if participant != "lead":
+            return worker_context(board, participant, config) if intro else None, []
+        if config is None:
+            return NO_BOARD if intro else None, []
+    introductions, notices = [], []
+    try:
+        from lead_status import waiting_context
+
+        for name, path, status in matching_leads(config, session_id):
+            if intro:
+                introductions.append(lead_context(name, path))
+            if review and (lead_handover := lead_handover_for(path)):
+                if waiting := waiting_context(name, path, lead_handover, status):
+                    notices.append(waiting)
+    except HookDeadline:
+        # Keep completed reviews if a later board runs out of time.
+        pass
+    context = ("\n".join(introductions) or NO_BOARD) if intro else None
+    return context, notices
+
+
+def detached(tool_input):
+    if tool_input.get("run_in_background") is True:
+        return True
+    command = tool_input.get("command")
+    if not isinstance(command, str) or "\n" in command.strip():
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+    lexer.whitespace_split = True
+    try:
+        words = list(lexer)
+    except ValueError:
+        return False
+    if not words:
+        return False
+    if words[-1] == "&" and re.search(r"(?<![\\&])&\s*$", command):
+        return True
+    if Path(words[0]).name != "malak":
+        return False
+    args = iter(words[1:])
+    command = []
+    for word in args:
+        if word in {"--config", "--board"}:
+            next(args, None)
+        elif not word.startswith(("--config=", "--board=")):
+            command.append(word)
+    return command[:2] == ["board", "start"] and "--detach" in command[2:]
+
+
+def digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def marker_for(payload, on_board):
+    event = payload.get("hook_event_name")
+    agent = payload.get("agent_id")
+    if event == "SessionStart":
+        if not agent and payload.get("source") in START_SOURCES:
+            return "startup"
+        return None
+    if not on_board:
+        return None
+    if event == "SubagentStart" and isinstance(agent, str) and agent:
+        return f"agent-{digest(agent)}"
+    tool = payload.get("tool_name")
+    if event == "PostToolUse" and tool in TASK_TOOLS:
+        return "activity"
+    if event == "PreToolUse":
+        if tool in AGENT_TOOLS or tool == "Monitor":
+            return "activity"
+        tool_input = payload.get("tool_input")
+        if tool == "Bash" and isinstance(tool_input, dict) and detached(tool_input):
+            return "activity"
+    return None
+
+
+def session_directory(session):
+    temporary = Path(os.environ.get("TMPDIR") or "/tmp")
+    return temporary / f"malak-observe-{os.geteuid()}-{digest(session)}"
+
+
+def open_session(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(fd)
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+            raise ValueError("observe markers need a private session directory")
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        if os.stat(path, follow_symlinks=False).st_ino != metadata.st_ino:
+            raise ValueError("observe session directory has changed")
+        return fd
+    except (OSError, ValueError):
+        os.close(fd)
+        raise
+
+
+def should_show(path, marker, *, once=False, cooldown=COOLDOWN_SECONDS):
+    path.mkdir(mode=0o700, exist_ok=True)
+    directory = open_session(path)
+    try:
+        try:
+            fd = os.open(
+                marker, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600, dir_fd=directory
+            )
+        except FileExistsError:
+            fd = os.open(marker, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+            try:
+                metadata = os.fstat(fd)
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or once
+                    or marker == "startup"
+                    or time.time() - metadata.st_mtime < cooldown
+                ):
+                    return False
+                os.utime(fd, None)
+            finally:
+                os.close(fd)
+        else:
+            os.close(fd)
+        return True
+    finally:
+        os.close(directory)
+
+
+def end_session(path):
+    directory = open_session(path)
+    try:
+        for marker in os.listdir(directory):
+            if marker in {"startup", "activity", "lead-status"} or re.fullmatch(r"agent-[a-f0-9]{64}", marker):
+                os.unlink(marker, dir_fd=directory)
+        path.rmdir()
+    finally:
+        os.close(directory)
+
+
+def reminder_marker(payload):
+    if payload.get("hook_event_name") == "UserPromptSubmit":
+        return "reminder"
+    marker = marker_for(payload, True)
+    if marker == "activity":
+        return "reminder"
+    if marker and marker.startswith("agent-"):
+        return f"reminder-{marker}"
+    return None
+
+
+def main(installed, config):
+    if not installed and os.environ.get("MALAK_OBSERVE") != "1":
+        return
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict):
+            return
+        session_id = payload.get("session_id")
+        if not isinstance(session_id, str) or not session_id:
+            session_id = None
+        if session_id is None and not (process := hook_process()):
+            return
+        event = payload.get("hook_event_name")
+        path = session_directory(session_id or f"process:{process['pid']}:{process['start_time']}")
+        if event == "SessionEnd":
+            end_session(path)
+            return
+        handover = os.environ.get("MALAK_HANDOVER")
+        marker = (reminder_marker(payload) if installed
+                  else marker_for(payload, handover is not None or config is not None))
+        if installed:
+            intro = marker if marker and not (path / marker).exists() else None
+            review = event in {"UserPromptSubmit", "PreToolUse"} and should_show(
+                path, "lead-status", cooldown=LEAD_STATUS_INTERVAL_SECONDS,
+            )
+            if not intro and not review:
+                return
+            context, notices = hook_context(config, handover, intro, session_id, review)
+            if intro and not should_show(path, intro, once=True):
+                context = None
+            context = "\n".join([context, *notices] if context else notices)
+            signal.setitimer(signal.ITIMER_REAL, 0)
+        else:
+            if marker is None:
+                return
+            context, _ = hook_context(config, handover, marker, session_id)
+            if not should_show(path, marker):
+                return
+        if context:
+            print(json.dumps({
+                "hookSpecificOutput": {"hookEventName": event, "additionalContext": context}
+            }))
+    except (HookDeadline, KeyError, OSError, TypeError, ValueError):
+        # A missing or malformed input is never a reason to block agent work
+        # or to look for a replacement handover.
+        return
+
+
+def timed_out(_signal, _frame):
+    raise HookDeadline
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--reminder"]:
+        # Leave time for the hook runner to collect the response after the
+        # last CLI call. A timeout follows the same silent path as other errors.
+        signal.signal(signal.SIGALRM, timed_out)
+        signal.setitimer(signal.ITIMER_REAL, 4)
+        main(True, selected_config())
+    else:
+        parser = out.ArgumentParser(
+            prog="malak recipe observe",
+            usage="MALAK_OBSERVE=1 malak recipe observe [--board NAME | --config PATH] < HOOK_JSON",
+            allow_abbrev=False,
+        )
+        selection = parser.add_mutually_exclusive_group()
+        selection.add_argument("--board", metavar="NAME", help="select a named board")
+        selection.add_argument("--config", metavar="PATH", type=Path, help="select a board config")
+        args = parser.parse_args()
+        try:
+            config = selected_config(args.board, args.config)
+        except ValueError as error:
+            parser.error(str(error))
+        main(False, config)

@@ -1,0 +1,21 @@
+[package]
+name = "malak-supervise"
+description = "Host-owned worker stop handles for Malak"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+repository.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+nix = { version = "0.31", features = ["process", "signal"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+getrandom = "0.3"
+malak-fs = { path = "../malak-fs", version = "0.1.0" }
+malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.0" }
+
+[lints]
+workspace = true

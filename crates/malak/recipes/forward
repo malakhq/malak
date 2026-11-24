@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+. "$recipes/board.sh"
+
+usage() {
+    recipe_usage "${1:-help}" 'Usage: malak recipe forward [--config PATH | --board NAME] CHANNEL POSITION [TARGET]'
+}
+
+config=
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -h|--help) usage; exit 0 ;;
+        --) shift; break ;;
+        --config|--board)
+            [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$config" ] || { usage error >&2; exit 2; }
+            config=$(recipe_config_option "$1" "$2")
+            shift 2 ;;
+        -*) usage error >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+if [ "$#" -ne 2 ] && [ "$#" -ne 3 ]; then usage error >&2; exit 2; fi
+config=$(recipe_config "$config")
+config=${config:-$(board_config)}
+exec python3 "$recipes/board_data.py" forward "$config" "$@"

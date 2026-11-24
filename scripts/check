@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+cd "$(dirname "$0")/.."
+
+set -x
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --all
+python3 -B -m unittest discover -s crates/malak/recipes/tests
+RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --no-deps

@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Install Malak's project instructions for Codex and Claude Code."""
+
+import fcntl
+import json
+import os
+from pathlib import Path
+import stat
+import sys
+import tempfile
+import tomllib
+
+import recipe_output as out
+from recipe_board import board_config, board_identity, board_name, board_selector, local_board_label, selected_config
+
+
+BEGIN = b"<!-- malak:begin (managed by malak recipe agents-md; remove with --remove) -->"
+END = b"<!-- malak:end -->"
+CREATED = b"<!-- malak:created-file -->"
+FILENAMES = ("AGENTS.md", "CLAUDE.md")
+
+
+def project_board(config, handover):
+    socket_folder, participant = board_identity(handover) if handover else (None, None)
+    if config is None and handover:
+        return local_board_label(socket_folder), participant
+
+    config = (config or board_config()).absolute()
+    try:
+        with config.open("rb") as source:
+            board = tomllib.load(source)["board"]
+    except (FileNotFoundError, PermissionError):
+        if handover:
+            raise
+        board = {}
+    if not isinstance(board, dict):
+        raise ValueError(f"expected a [board] table in {config}")
+    if handover and board.get("socket_folder") != str(socket_folder):
+        raise ValueError("MALAK_HANDOVER does not match the selected board's socket folder")
+    return board_name(config), participant
+
+
+def instructions(label, participant, config):
+    selector = board_selector(config, label) if config is not None else None
+    # Keep the label on one line and inside a Markdown code span.
+    label = json.dumps(label).replace("`", "\\u0060")
+    inbox = "Your inbox comes from `MALAK_HANDOVER`."
+    if participant:
+        channel = "lead" if participant == "lead" else f"to/{participant}"
+        inbox = f"Your inbox from `MALAK_HANDOVER` is `{channel}`."
+    selection = f"\n- Pass `{selector}` on each board command." if selector else ""
+    monitor = "malak mailbox --plain --for lead" + (f" {selector}" if selector else "")
+    return f"""## Malak
+
+Malak is installed for visibility. Route work through the board.
+
+- Board `{label}`.{selection}
+- Use `malak mailbox` to watch the board, `malak send` to post, and
+  `malak read`, `malak get`, and `malak ack` to handle messages.
+- The lead watches the lead inbox, questions, orders and stuck work with
+  `{monitor}`.
+- {inbox} Use `lead` for reports and
+  `orders` for the owner's standing directions.
+- The board uses `to/<id>` for worker inboxes, `questions` for owner
+  questions, and `relay/<name>` for messages to forward.
+- `malak recipe` lists recipes. Start with `ask`, `answer`, `forward`,
+  `worker-start`, or `demo`.
+
+### Board rules
+
+- Pass another participant's message on with `malak recipe forward`. Never retype it.
+- Ask the owner on `questions` with `malak recipe ask`. Never rely on chat alone.
+- Send longer work to a worker on the board with `malak recipe worker-start`. Keep it visible there.
+""".encode()
+
+
+def managed_body(body, newline, created):
+    origin = CREATED + newline if created else b""
+    return origin + body.replace(b"\n", newline)
+
+
+def update_block(path, original, body):
+    lines = (original or b"").splitlines(keepends=True)
+    starts, ends = [], []
+    for index, line in enumerate(lines):
+        marker = line.removesuffix(b"\n").removesuffix(b"\r")
+        if marker == BEGIN:
+            starts.append(index)
+        if marker == END:
+            ends.append(index)
+
+    if starts or ends:
+        if len(starts) != 1 or len(ends) != 1 or starts[0] >= ends[0]:
+            raise ValueError(f"{path} has incomplete or repeated Malak instruction markers")
+        start, end = starts[0], ends[0]
+        created = start + 1 < end and lines[start + 1].rstrip(b"\r\n") == CREATED
+        if body is None:
+            remaining = b"".join(lines[:start] + lines[end + 1:])
+            return None if created and not remaining else remaining
+        newline = b"\r\n" if lines[start].endswith(b"\r\n") else b"\n"
+        return (
+            b"".join(lines[:start + 1])
+            + managed_body(body, newline, created)
+            + b"".join(lines[end:])
+        )
+
+    if body is None:
+        return original
+    newline = b"\r\n" if lines and lines[0].endswith(b"\r\n") else b"\n"
+    return (
+        BEGIN + newline + managed_body(body, newline, original is None)
+        + END + newline + (original or b"")
+    )
+
+
+def plan_update(path, body):
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        mode, original = 0o600, None
+    else:
+        if not stat.S_ISREG(mode):
+            raise ValueError(f"{path} must be a regular file")
+        original = path.read_bytes()
+    updated = update_block(path, original, body)
+    return (path, stat.S_IMODE(mode), updated) if updated != original else None
+
+
+def install(directory, body):
+    # Serialize recipe runs and stage both edits before replacing either file.
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    staged = []
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        updates = [plan_update(directory / name, body) for name in FILENAMES]
+        for update in filter(None, updates):
+            path, mode, data = update
+            if data is None:
+                staged.append((None, path))
+                continue
+            with tempfile.NamedTemporaryFile(dir=directory, delete=False) as file:
+                temporary = Path(file.name)
+                staged.append((temporary, path))
+                file.write(data)
+                os.fchmod(file.fileno(), mode)
+        for temporary, path in staged:
+            if temporary is None:
+                path.unlink()
+            else:
+                temporary.replace(path)
+    finally:
+        for temporary, _ in staged:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+        os.close(descriptor)
+
+
+def main():
+    parser = out.ArgumentParser(
+        prog="malak recipe agents-md",
+        usage="malak recipe agents-md [--board NAME | --config PATH] [--dir DIR] [--remove]",
+        description="Install or remove a Malak instructions block in AGENTS.md and CLAUDE.md.",
+        allow_abbrev=False,
+    )
+    selection = parser.add_mutually_exclusive_group()
+    selection.add_argument("--board", metavar="NAME", help="select a named board")
+    selection.add_argument("--config", metavar="PATH", type=Path, help="select a board config")
+    parser.add_argument("--dir", type=Path, default=Path.cwd(), help="project directory (default: current directory)")
+    parser.add_argument("--remove", action="store_true", help="remove only the managed Malak block")
+    args = parser.parse_args()
+    try:
+        config = selected_config(args.board, args.config)
+        if args.remove:
+            install(args.dir, None)
+        else:
+            label, participant = project_board(config, os.environ.get("MALAK_HANDOVER"))
+            install(args.dir, instructions(label, participant, config))
+    except (OSError, KeyError, ValueError) as error:
+        if out.interactive(sys.stderr):
+            action = "remove" if args.remove else "install"
+            out.error(f"{action} Malak instructions", error, "Check the project directory and recipe arguments.")
+        else:
+            print(f"agents-md: {error}", file=sys.stderr)
+        return getattr(error, "code", 1)
+    if out.interactive(sys.stdout):
+        title = "Malak instructions removed." if args.remove else "Malak instructions installed."
+        out.details(title, (("Directory", args.dir), ("Files", ", ".join(FILENAMES))))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

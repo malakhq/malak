@@ -1,0 +1,5 @@
+# Repository-relative paths. A directory entry excludes all its contents.
+docs/field-notes/
+docs/FIELD-NOTES.md
+docs/M2-DESIGN.md
+docs/OPEN-QUESTIONS.md

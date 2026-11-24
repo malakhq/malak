@@ -1,0 +1,31 @@
+[workspace]
+members = [
+    "crates/malak",
+    "crates/malak-core",
+    "crates/malak-fs",
+    "crates/malak-journal",
+    "crates/malak-layers",
+    "crates/malak-mechanism-key",
+    "crates/malak-proto",
+    "crates/malak-record",
+    "crates/malak-store-markdown",
+    "crates/malak-store-memory",
+    "crates/malak-store-sqlite",
+    "crates/malak-supervise",
+    "crates/malak-testkit",
+    "crates/malak-transport-unix",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["agents", "ipc", "message-board"]
+repository = "https://github.com/malakhq/malak"
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_code = "deny"

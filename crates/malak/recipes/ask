@@ -1,0 +1,81 @@
+#!/bin/sh
+set -eu
+
+case $0 in */*) recipes=${0%/*} ;; *) recipes=. ;; esac
+. "$recipes/board.sh"
+
+usage() {
+    recipe_usage "${1:-help}" 'Usage: malak recipe ask [--config PATH | --board NAME] [--reply-to CHANNEL CREATION POSITION] --blocks TEXT --option TEXT [--option TEXT]... --recommend TEXT < QUESTION'
+}
+
+blocks=
+recommend=
+options=
+config=
+reply=
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        --blocks|--option|--recommend)
+            if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage error >&2; exit 2; fi
+            case $1 in
+                --blocks) blocks=$2 ;;
+                --recommend) recommend=$2 ;;
+                --option) options="${options}- $2
+" ;;
+            esac
+            shift 2
+            ;;
+        -h|--help) usage; exit 0 ;;
+        --config|--board)
+            [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$config" ] || { usage error >&2; exit 2; }
+            config=$(recipe_config_option "$1" "$2")
+            shift 2
+            ;;
+        --reply-to)
+            [ "$#" -ge 4 ] && [ -n "$2" ] && [ -n "$3" ] && [ -z "$reply" ] || { usage error >&2; exit 2; }
+            case $4 in ''|*[!0-9]*) usage error >&2; exit 2 ;; esac
+            export MALAK_TASK_INBOX="$2" MALAK_TASK_CREATION="$3" MALAK_TASK_POSITION="$4"
+            unset MALAK_TASK_TRACE
+            reply=1
+            shift 4
+            ;;
+        --) shift; [ "$#" -eq 0 ] || { usage error >&2; exit 2; }; break ;;
+        *) usage error >&2; exit 2 ;;
+    esac
+done
+if [ -z "$blocks" ] || [ -z "$recommend" ] || [ -z "$options" ]; then usage error >&2; exit 2; fi
+
+MALAK_RECIPE_CONFIG=$(recipe_config "$config")
+question=
+question_lines=0
+while :; do
+    line=
+    if IFS= read -r line; then
+        newline='
+'
+    elif [ -n "$line" ]; then
+        newline=
+    else
+        break
+    fi
+    question=$question$line$newline
+    while [ -n "$line" ] && [ "${line%[[:space:]]}" != "$line" ]; do
+        line=${line%[[:space:]]}
+    done
+    case $line in
+        *\?) question_lines=$((question_lines + 1)) ;;
+    esac
+    if [ "$question_lines" -gt 1 ]; then
+        recipe_notice 'post the question' 'Ask allows one question per message.' \
+            'Send each question with its own ask.' \
+            'Ask allows one question per message. Send each question with its own ask.' >&2
+        exit 2
+    fi
+done
+case $question in
+    *[![:space:]]*) ;;
+    *) recipe_notice 'post the question' 'No question was provided.' \
+           'Give a question on standard input.' 'Give a question on standard input.' >&2; exit 2 ;;
+esac
+printf '%s\nBlocks: %s\nOptions:\n%sRecommendation: %s\n' "$question" "$blocks" "$options" "$recommend" |
+    task_send --kind note questions -

@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Print the initial command's verified report without acknowledging lead."""
+
+import argparse
+import os
+from pathlib import Path
+import re
+import signal
+import sys
+
+sys.dont_write_bytecode = True
+
+import board_data as board
+from recipe_board import board_config, handover_identity, selected_config
+import recipe_output as out
+from worker_queue import DEFAULT_WAIT, Expired, QueueBoard, QueueError, await_report
+
+
+def duration(value):
+    match = re.fullmatch(r"([1-9][0-9]*)([smh]?)", value)
+    if not match:
+        raise argparse.ArgumentTypeError("use positive whole seconds or an s, m or h suffix")
+    amount, unit = match.groups()
+    return int(amount) * {"": 1, "s": 1, "m": 60, "h": 3600}[unit]
+
+
+def main():
+    parser = out.ArgumentParser(
+        prog="malak recipe await",
+        usage="%(prog)s NAME [--config PATH | --board NAME] [--timeout DURATION]",
+        allow_abbrev=False,
+    )
+    parser.add_argument("name", metavar="NAME", help="Worker name on the selected board")
+    selectors = parser.add_mutually_exclusive_group()
+    selectors.add_argument("--board", metavar="NAME", help="Select a named board")
+    selectors.add_argument("--config", type=Path, metavar="PATH", help="Select a board config")
+    parser.add_argument("--timeout", type=duration, default=DEFAULT_WAIT, metavar="DURATION",
+                        help="Whole seconds or a duration such as 30s, 5m or 1h (default 30m)")
+    args = parser.parse_args()
+
+    def expire(*_):
+        raise Expired(f"timed out waiting for {args.name!r} to post a final report to lead", 3)
+
+    signal.signal(signal.SIGALRM, expire)
+    signal.setitimer(signal.ITIMER_REAL, args.timeout)
+    try:
+        config = (selected_config(args.board, args.config) or board_config()).absolute()
+        with config.open("rb") as source:
+            connection = QueueBoard(config, board.board_state(source).absolute())
+        if selected := os.environ.get("MALAK_HANDOVER"):
+            if handover_identity(selected) != connection.identity:
+                raise QueueError("a lead handover for the selected board is required")
+            board.check_board(config, selected)
+        report, status = await_report(connection, args.name)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    out.details(f"Final report from {args.name} on lead #{report['position']}.",
+                (("Worker exit", status), ("Creation", report["creation"])))
+    print()
+    body = bytes(report["body"]).decode(errors="replace")
+    print("\n".join(map(out.display, body.split("\n"))), end="" if body.endswith("\n") else "\n")
+    return status
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (board.RecipeError, OSError, KeyError, ValueError, OverflowError) as error:
+        out.error("await the worker's final report", error,
+                  "Check the selected board and worker before retrying.")
+        sys.exit(getattr(error, "code", 3))

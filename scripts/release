@@ -1,0 +1,271 @@
+#!/usr/bin/env python3
+"""Export a checked build tag to the local Malak release repository."""
+
+import argparse
+import fcntl
+import os
+from pathlib import Path, PurePosixPath
+import re
+import subprocess
+import sys
+import tarfile
+import tempfile
+
+
+class ReleaseError(Exception):
+    pass
+
+
+VERSION = re.compile(r"v[0-9]+\.[0-9]+\.[0-9]+")
+EMAIL = re.compile(rb"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}", re.I)
+SIGNATURES = {
+    "private specification reference": re.compile(
+        rb"""
+        (?i:\bspec\.md\b)
+        |(?<![\w.])[A-Z]\.[0-9]+(?:\.[0-9]+)*\b
+        |(?:\xc2\xa7)+[ \t]*[0-9]+(?:\.[0-9]+)*\b
+        |(?i:\b(?:spec(?:ification)?(?:\s+sections?)?|section))\s+`?[0-9]+(?:\.[0-9]+)*\b
+        |(?i:\bsections?)\s+`?[A-Z](?![\w/])
+        |(?i:\bsections)\s+`?[0-9]+(?:\.[0-9]+)+\b
+        |(?i:\bdecisions?)\s+\#?[ \t]*[0-9]+\b(?!\.[.0-9])
+        """,
+        re.X,
+    ),
+    "private key": re.compile(rb"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"),
+    "secret": re.compile(
+        rb"\b(?:(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9_]{20,}"
+        rb"|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}"
+        rb"|sk_(?:live|test)_[A-Za-z0-9]{12,}|sk-[A-Za-z0-9_-]{20,}"
+        rb"|AIza[A-Za-z0-9_-]{35})\b"
+        rb"""|\b(?:[a-z0-9_]*[_-])?(?:token|secret|password|api[_-]?key|secret[_-]?key|access[_-]?key)["']?"""
+        rb"""\s*[:=]\s*["']?[a-z0-9+/=_-]{8,}(?=["'\r\n# \t]|$)""",
+        re.I,
+    ),
+    "absolute home path": re.compile(rb"(?:/(?:Users|home|root)/|[A-Z]:[\\/]Users[\\/])", re.I),
+    "handover file": re.compile(
+        rb"(?:\A\x89\x01\x01[\x01\x02][\x60-\x7b](?:.{0,3}?)(?:unix:|vsock:)"
+        rb"|\A\x84\x01[\x60-\x7b](?:.{0,3}?)unix:)"
+        rb".*\x58\x20.{32}\Z",
+        re.S,
+    ),
+}
+COAUTHORS = (
+    ("Claude Opus 5.5", "anthropic.com"),
+    ("Codex Sol 6.2", "openai.com"),
+)
+
+
+def git(repo, *args, env, **kwargs):
+    return subprocess.run(
+        ["git", "-C", repo, "-c", "core.hooksPath=/dev/null", *args],
+        env=env,
+        check=True,
+        **kwargs,
+    )
+
+
+def git_output(repo, *args, env, **kwargs):
+    return git(repo, *args, env=env, stdout=subprocess.PIPE, **kwargs).stdout
+
+
+def resolve(repo, ref, env):
+    try:
+        return git_output(repo, "rev-parse", "--verify", "--quiet", ref, env=env).strip()
+    except subprocess.CalledProcessError as error:
+        if error.returncode == 1:
+            return None
+        raise
+
+
+def run_tag_check(build, commit, scratch, env):
+    checkout = scratch / "check"
+    git(build, "worktree", "add", "--quiet", "--detach", checkout, commit, env=env)
+    try:
+        subprocess.run([checkout / "scripts/check"], cwd=checkout, env=env, check=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReleaseError("scripts/check failed at the build tag") from error
+    finally:
+        git(build, "worktree", "remove", "--force", checkout, env=env)
+
+
+def exclusions(build, commit, env):
+    manifest = git_output(build, "show", commit + b":.release-exclude", env=env)
+    paths = set()
+    for line in os.fsdecode(manifest).splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            path = PurePosixPath(line)
+            if path.is_absolute() or ".." in path.parts or not path.parts:
+                raise ReleaseError(f"invalid path in .release-exclude: {line!r}")
+            paths.add(path)
+    return paths
+
+
+def archived_files(build, commit, scratch, env):
+    excluded = exclusions(build, commit, env)
+    with tempfile.TemporaryFile(dir=scratch) as archive:
+        git(build, "archive", "--format=tar", commit, env=env, stdout=archive)
+        archive.seek(0)
+        with tarfile.open(fileobj=archive, mode="r:") as tree:
+            for member in tree:
+                path = PurePosixPath(member.name)
+                if member.isdir() or any(part in excluded for part in (path, *path.parents)):
+                    continue
+                if member.issym():
+                    yield path, b"120000", os.fsencode(member.linkname)
+                elif member.isfile():
+                    with tree.extractfile(member) as contents:
+                        mode = b"100755" if member.mode & 0o111 else b"100644"
+                        yield path, mode, contents.read()
+                else:
+                    raise ReleaseError(f"unsupported archive entry: {str(path)!r}")
+
+
+def scan(files, author_email):
+    findings = []
+    for path, mode, contents in files:
+        encoded_path = os.fsencode(path)
+        items = (encoded_path, contents)
+        names = (path, PurePosixPath(os.fsdecode(contents))) if mode == b"120000" else (path,)
+        reasons = {
+            name for name, pattern in SIGNATURES.items()
+            if any(pattern.search(item) for item in items)
+        }
+        for name in names:
+            basename = name.name.lower()
+            if ".malak" in (part.lower() for part in name.parts):
+                reasons.add(".malak state")
+            if basename == "handover" or re.search(r"\.handover(?:\.|$)", basename):
+                reasons.add("handover file")
+            if basename in {"owner.credential", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}:
+                reasons.add("private key")
+        if any(email != author_email for item in items for email in EMAIL.findall(item)):
+            reasons.add("email address other than the author")
+        if reasons:
+            findings.append(f"  {str(path)!r}: {', '.join(sorted(reasons))}")
+    if findings:
+        raise ReleaseError("release export contains private material:\n" + "\n".join(findings))
+
+
+def git_path(repo, option, env):
+    path = git_output(repo, "rev-parse", "--path-format=absolute", option, env=env)
+    return Path(os.fsdecode(path.removesuffix(b"\n"))).resolve()
+
+
+def existing_release_repo(build, release, env):
+    if build == release or build in release.parents or release in build.parents:
+        raise ReleaseError("choose a separate release repository")
+    if not release.exists():
+        return False
+    dot_git = release / ".git"
+    if dot_git.is_dir() and not dot_git.is_symlink():
+        if git_path(build, "--git-common-dir", env) == git_path(release, "--git-common-dir", env):
+            raise ReleaseError("the build repository cannot also be the release repository")
+        if git_path(release, "--show-toplevel", env) == release:
+            return True
+    if not release.is_dir() or any(release.iterdir()):
+        raise ReleaseError("release path must be a Git repository or an empty directory")
+    return False
+
+
+def release_tree(repo, files, scratch, env):
+    index_env = {**env, "GIT_INDEX_FILE": str(scratch / "index")}
+    index_entries = []
+    for path, mode, data in files:
+        blob = git_output(repo, "hash-object", "-w", "--stdin", input=data, env=env).strip()
+        index_entries.append(mode + b" " + blob + b"\t" + os.fsencode(path) + b"\0")
+    git(repo, "update-index", "-z", "--index-info", input=b"".join(index_entries), env=index_env)
+    return git_output(repo, "write-tree", env=index_env).strip()
+
+
+def publish(repo, tag, files, scratch, author, env):
+    # Serialize publishers before taking the parent and updating its checkout.
+    with (repo / ".git" / "malak-release.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        ref = f"refs/tags/{tag}"
+        if resolve(repo, ref, env):
+            return False
+        if git_output(repo, "status", "--porcelain", "--untracked-files=all", "--ignored", env=env):
+            raise ReleaseError("release repository has local changes")
+        parent = resolve(repo, "HEAD", env)
+        old_tree = resolve(repo, "HEAD^{tree}", env)
+        if old_tree is None:
+            old_tree = git_output(repo, "mktree", input=b"", env=env).strip()
+        tree = release_tree(repo, files, scratch, env)
+        name, email = map(os.fsdecode, author)
+        identity = {
+            **env,
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": name,
+            "GIT_COMMITTER_EMAIL": email,
+        }
+        trailers = [f"Co-authored-by: {person} <noreply@{domain}>" for person, domain in COAUTHORS]
+        message = "\n".join((f"Malak {tag}", "", *trailers, ""))
+        parents = ("-p", parent) if parent else ()
+        commit = git_output(repo, "commit-tree", "--no-gpg-sign", tree, *parents,
+                            input=message.encode(), env=identity).strip()
+        previous = parent or b"0" * len(commit)
+        updates = b"update HEAD %s %s\ncreate %s %s\n" % (commit, previous, ref.encode(), commit)
+        git(repo, "read-tree", "-m", "-u", old_tree, tree, env=env)
+        try:
+            git(repo, "update-ref", "--stdin", input=updates, env=env)
+        except subprocess.CalledProcessError:
+            git(repo, "read-tree", "-m", "-u", tree, old_tree, env=env)
+            raise
+    return True
+
+
+def release_tag(tag, release):
+    # Inherited Git repository and index overrides must never redirect a command
+    # from the build or release repository named by this script.
+    local_vars = subprocess.check_output(["git", "rev-parse", "--local-env-vars"], text=True)
+    overrides = set(local_vars.splitlines())
+    env = {key: value for key, value in os.environ.items() if key not in overrides}
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    build = git_path(Path(__file__).resolve().parents[1], "--show-toplevel", env)
+    commit = resolve(build, f"refs/tags/{tag}^{{commit}}", env)
+    if commit is None:
+        raise ReleaseError(f"build tag {tag} does not exist or does not point to a commit")
+    release = release.expanduser().resolve()
+    existing = existing_release_repo(build, release, env)
+    if existing and resolve(release, f"refs/tags/{tag}", env):
+        print(f"{tag} is already in the release repository.")
+        return
+    try:
+        author = tuple(
+            git_output(build, "config", "--get", f"user.{field}", env=env).removesuffix(b"\n")
+            for field in ("name", "email")
+        )
+    except subprocess.CalledProcessError as error:
+        raise ReleaseError("configure user.name and user.email in the build repository") from error
+    if not all(author):
+        raise ReleaseError("configure user.name and user.email in the build repository")
+    with tempfile.TemporaryDirectory(prefix="malak-release-") as temp:
+        scratch = Path(temp)
+        run_tag_check(build, commit, scratch, env)
+        files = list(archived_files(build, commit, scratch, env))
+        scan(files, author[1])
+        if not existing:
+            git(build, "init", "--quiet", release, env=env)
+        if publish(release, tag, files, scratch, author, env):
+            print(f"Created Malak {tag} in {release}.")
+        else:
+            print(f"{tag} is already in the release repository.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("tag", help="build tag in vX.Y.Z form")
+    parser.add_argument("--release-repo", type=Path, default=Path.home() / "Projects/malak-release")
+    args = parser.parse_args()
+    if not VERSION.fullmatch(args.tag):
+        parser.error("tag must be in vX.Y.Z form")
+    try:
+        release_tag(args.tag, args.release_repo)
+    except (ReleaseError, OSError, subprocess.CalledProcessError, tarfile.TarError) as error:
+        sys.exit(f"release: {error}")
+
+
+if __name__ == "__main__":
+    main()

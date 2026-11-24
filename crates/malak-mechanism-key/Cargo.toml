@@ -1,0 +1,17 @@
+[package]
+name = "malak-mechanism-key"
+description = "Registered-key identity for Malak"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+readme.workspace = true
+keywords.workspace = true
+repository.workspace = true
+
+[dependencies]
+malak-layers = { path = "../malak-layers", version = "0.1.0" }
+malak-proto = { path = "../malak-proto", version = "0.1.0" }
+
+[lints]
+workspace = true

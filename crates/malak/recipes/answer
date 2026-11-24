@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+. "$recipes/board.sh"
+usage() {
+    mode=${1:-help}
+    set -- 'Usage: malak recipe answer [--config PATH | --board NAME] [--under-order POSITION] [--task] POSITION < BODY | CHANNEL POSITION < BODY | INBOX CHANNEL CREATION POSITION < BODY'
+    if [ "$mode" = help ]; then
+        set -- "$@" '' 'POSITION alone prefers an open question on questions, then looks on lead.' \
+            'Use CHANNEL POSITION to select the channel. The receipt names the channel answered.'
+    fi
+    recipe_usage "$mode" "$@"
+}
+
+config=
+order=
+kind=note
+while [ "$#" -gt 0 ]; do
+    case $1 in
+        -h|--help) usage; exit 0 ;;
+        --task) kind=task; shift ;;
+        --) shift; break ;;
+        --config|--board|--under-order)
+            [ "$#" -ge 2 ] && [ -n "$2" ] || { usage error >&2; exit 2; }
+            case $1 in
+                --config|--board)
+                    [ -z "$config" ] || { usage error >&2; exit 2; }
+                    config=$(recipe_config_option "$1" "$2") ;;
+                --under-order) order=$2 ;;
+            esac
+            shift 2
+            ;;
+        -*) usage error >&2; exit 2 ;;
+        *) break ;;
+    esac
+done
+config=$(recipe_config "$config")
+case $# in
+    1|2|4) set -- python3 "$recipes/board_data.py" answer "$config" "$order" "$kind" "$@" ;;
+    *) usage error >&2; exit 2 ;;
+esac
+if [ -z "$order" ]; then exec "$@"; fi
+
+mark=$(python3 "$recipes/board_data.py" order-mark "$config" "$order")
+{ printf '%s\n\n' "$mark"; cat; } | "$@"

@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""Install or remove Malak's skill and lifecycle reminders."""
+
+import errno
+import fcntl
+import json
+import os
+from pathlib import Path
+import shlex
+import sys
+
+from agent_settings import (
+    decode, directory_exists, encode, plan_settings, plan_settings_removal,
+    read_file, replace_file, settings_additions,
+)
+from codex_notice import notify_open
+import recipe_output as out
+
+
+SKILL = Path(__file__).with_name("malak-skill.md")
+# Private recipe result consumed by the upgrade continuation.
+REFRESHED_HOOKS = 10
+REFRESH_PENDING = 11
+TRUST_STEPS = (
+    "In Codex CLI, open /hooks and press Enter on UserPromptSubmit, SubagentStart, "
+    "or PreToolUse. Select the Malak command from hooks.json, review it, then press t "
+    "to trust it. Press Esc and repeat for the other two events. "
+    "In Codex desktop, open Settings > Hooks to review and trust the Malak commands."
+)
+
+
+def user_config(home, variable, name):
+    configured = os.environ.get(variable)
+    return Path(configured).expanduser().absolute() if configured else home / name
+
+
+def registrations(command):
+    handler = {"type": "command", "command": command, "timeout": 5}
+    return {
+        "UserPromptSubmit": {"hooks": [handler]},
+        "SubagentStart": {"hooks": [handler]},
+        "PreToolUse": {"hooks": [handler]},
+    }
+
+
+def installed_registrations():
+    command = shlex.join([os.environ["MALAK_RECIPE_EXE"], "recipe", "observe", "--reminder"])
+    return registrations(command)
+
+
+def plan_install(home):
+    hooks = installed_registrations()
+    plan = {"settings": [], "skills": [], "notified": [], "complete": False}
+    configs = [
+        (user_config(home, "CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
+        (user_config(home, "CODEX_HOME", ".codex"), "hooks.json"),
+    ]
+    for root, settings in configs:
+        if not directory_exists(root):
+            continue
+        parent = root / "skills"
+        parent_exists = directory_exists(parent)
+        folder = parent / "malak"
+        if directory_exists(folder):
+            print(f"Keeping existing skill folder {out.display(folder)}.")
+        else:
+            plan["skills"].append({
+                "path": str(folder / "SKILL.md"),
+                "create_parent": not parent_exists,
+                "data": encode(SKILL.read_bytes()),
+            })
+        change = plan_settings(root / settings, hooks)
+        if change is not None:
+            plan["settings"].append(change)
+    return plan
+
+
+def install(plan, dry_run):
+    hooks_changed = False
+    for skill in plan["skills"]:
+        path = Path(skill["path"])
+        if not dry_run:
+            if not directory_exists(path.parent.parent):
+                path.parent.parent.mkdir(mode=0o700)
+            if not directory_exists(path.parent):
+                path.parent.mkdir(mode=0o700)
+            data = decode(skill["data"])
+            if read_file(path) != data:
+                replace_file(path, None, data)
+        print(f"{'Would install' if dry_run else 'Installed'} skill {out.display(path)}.")
+    for change in plan["settings"]:
+        path = Path(change["path"])
+        events = ", ".join(change["added"])
+        if not dry_run:
+            if not directory_exists(path.parent):
+                raise ValueError(f"{path.parent} no longer exists")
+            before, after = decode(change["before"]), decode(change["after"])
+            if read_file(path) != after:
+                replace_file(path, before, after)
+                hooks_changed = True
+        print(f"{'Would add' if dry_run else 'Added'} {events} in {out.display(path)}.")
+    return hooks_changed
+
+
+def remove_folder(path):
+    try:
+        path.rmdir()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        if error.errno not in (errno.ENOTEMPTY, errno.EEXIST):
+            raise
+
+
+def remove(plan, dry_run):
+    settings = []
+    for change in plan["settings"]:
+        path = Path(change["path"])
+        if directory_exists(path.parent):
+            update = plan_settings_removal(change)
+            if update is not None:
+                settings.append(update)
+    skills = []
+    for skill in plan["skills"]:
+        path = Path(skill["path"])
+        if not all(directory_exists(p) for p in (path.parent.parent.parent, path.parent.parent, path.parent)):
+            continue
+        data = read_file(path)
+        if data is not None and data != decode(skill["data"]):
+            print(f"Keeping edited skill {out.display(path)}.")
+        else:
+            skills.append((skill, path, data))
+
+    action = "Would remove" if dry_run else "Removed"
+    for path, previous, updated, events in settings:
+        if not dry_run:
+            replace_file(path, previous, updated)
+        print(f"{action} {', '.join(events)} in {out.display(path)}.")
+    for skill, path, data in skills:
+        if data is not None:
+            if not dry_run:
+                replace_file(path, data, None)
+            print(f"{action} skill {out.display(path)}.")
+        if not dry_run:
+            remove_folder(path.parent)
+            if skill["create_parent"]:
+                remove_folder(path.parent.parent)
+
+
+def refresh_settings(change, hooks, say):
+    if all(group == hooks.get(event) for event, group in change["added"].items()):
+        return None
+    path = Path(change["path"])
+    if not directory_exists(path.parent):
+        say(f"Keeping missing settings {out.display(path)}.")
+        return None
+    # Replace managed registrations in a single settings write, using the
+    # same ownership checks as removal and the same merge as installation.
+    removal = plan_settings_removal(change)
+    if removal is None:
+        # A prior refresh can have written the settings before saving its
+        # manifest. Recover the ordinary case with an unchanged baseline.
+        before = decode(change["before"])
+        expected = settings_additions(path, before, {
+            event: group for event, group in hooks.items() if event in change["added"]
+        })
+        if expected and read_file(path) == decode(expected["after"]):
+            return path, None, None, expected
+        say(f"Keeping edited or removed Malak hooks in {out.display(path)}.")
+        return None
+    _, previous, baseline, removed = removal
+    if set(removed) != set(change["added"]):
+        say(f"Keeping edited or removed Malak hooks in {out.display(path)}.")
+    additions = settings_additions(path, baseline, {
+        event: group for event, group in hooks.items()
+        if event in removed or event not in change["added"]
+    })
+    updated = decode(additions["after"]) if additions else baseline
+    return path, previous, updated, additions
+
+
+def refresh(plan, save, dry_run):
+    say = (lambda _message: None) if dry_run else print
+    changed = False
+    hooks_changed = False
+    if not plan["complete"]:
+        if dry_run:
+            return REFRESH_PENDING
+        hooks_changed = install(plan, False)
+        plan["complete"] = True
+        save()
+        changed = True
+    new_skill = SKILL.read_bytes()
+    for skill in plan["skills"]:
+        old_skill = decode(skill["data"])
+        if old_skill == new_skill:
+            continue
+        path = Path(skill["path"])
+        if not all(directory_exists(p) for p in (path.parent.parent.parent, path.parent.parent, path.parent)):
+            say(f"Keeping missing skill {out.display(path)}.")
+            continue
+        current = read_file(path)
+        if current != old_skill and current != new_skill:
+            say(f"Keeping edited skill {out.display(path)}.")
+            continue
+        if dry_run:
+            return REFRESH_PENDING
+        replace_file(path, current, new_skill)
+        skill["data"] = encode(new_skill)
+        save()
+        print(f"Refreshed skill {out.display(path)}.")
+        changed = True
+    hooks = installed_registrations()
+    for change in plan["settings"][:]:
+        update = refresh_settings(change, hooks, say)
+        if update is None:
+            continue
+        if dry_run:
+            return REFRESH_PENDING
+        path, previous, updated, addition = update
+        replace_file(path, previous, updated)
+        index = plan["settings"].index(change)
+        if addition is None:
+            del plan["settings"][index]
+        else:
+            plan["settings"][index] = addition
+        save()
+        print(f"Refreshed reminders in {out.display(path)}.")
+        changed = True
+        hooks_changed |= previous != updated
+    if not changed:
+        say("No installed skill or reminders changed.")
+    return REFRESHED_HOOKS if hooks_changed else 0
+
+
+def notify_upgrade(plan, home, notice):
+    if plan is None or not plan["complete"]:
+        return
+    codex = user_config(home, "CODEX_HOME", ".codex")
+    if not directory_exists(codex):
+        return
+    paths = [Path(item["path"]) for item in plan["settings"] + plan["skills"]]
+    if codex / "hooks.json" in paths or codex / "skills/malak/SKILL.md" in paths:
+        # An installation notice and an upgrade notice are distinct deliveries.
+        notify_open([], lambda: None, notice)
+
+
+def run(args, home):
+    manifest = home / ".malak" / "agents.json"
+    if directory_exists(manifest.parent):
+        state = read_file(manifest, private=True)
+    else:
+        state = None
+    plan = json.loads(state) if state is not None else None
+
+    def save():
+        nonlocal state
+        updated = (json.dumps(plan, indent=2) + "\n").encode()
+        if not directory_exists(manifest.parent):
+            manifest.parent.mkdir(mode=0o700)
+        replace_file(manifest, state, updated)
+        state = updated
+
+    if args.upgrade_refresh:
+        return refresh(plan, save, args.dry_run) if plan is not None else 0
+    if args.upgrade_notice is not None:
+        if not args.dry_run:
+            notify_upgrade(plan, home, args.upgrade_notice)
+        return
+    if args.remove:
+        if plan is None:
+            print("No Malak agent integration is recorded.")
+        else:
+            remove(plan, args.dry_run)
+            if not args.dry_run:
+                replace_file(manifest, state, None)
+        return
+    if plan is None:
+        plan = plan_install(home)
+        if plan["skills"] or plan["settings"]:
+            if not args.dry_run:
+                save()
+        else:
+            print("No new Claude Code or Codex skill or hooks to install.")
+            plan["complete"] = True
+    elif plan["complete"]:
+        print("Malak agent integration is already installed.")
+    if not plan["complete"]:
+        install(plan, args.dry_run)
+        if not args.dry_run:
+            plan["complete"] = True
+            save()
+    if any(Path(change["path"]).name == "hooks.json" for change in plan["settings"]):
+        print(TRUST_STEPS)
+    if args.notify_open:
+        if args.dry_run:
+            print("Would notify open local Codex threads once.")
+        elif not notify_open(plan["notified"], save):
+            print("No new Codex threads were notified.")
+
+
+def main():
+    parser = out.ArgumentParser(
+        prog="malak recipe agents",
+        usage="malak recipe agents [--yes] [--dry-run] [--remove | --notify-open]",
+        description="Install or remove Malak's user-level Claude Code and Codex integration.",
+        allow_abbrev=False,
+    )
+    parser.add_argument("--yes", action="store_true", help="confirm installation or removal")
+    parser.add_argument("--dry-run", action="store_true", help="preview changes without saving or notifying")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--remove", action="store_true", help="remove Malak's installed files and hook entries")
+    mode.add_argument("--notify-open", action="store_true", help="also notify open local Codex app-server threads")
+    mode.add_argument("--upgrade-refresh", action="store_true", help=out.argparse.SUPPRESS)
+    parser.add_argument("--upgrade-notice", help=out.argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.upgrade_notice is not None and not args.notify_open:
+        parser.error("--upgrade-notice requires --notify-open")
+    if not args.dry_run and not args.yes:
+        if not sys.stdin.isatty():
+            parser.error("use --yes when running without a terminal")
+        action = "Remove" if args.remove else "Install"
+        question = f"{action} Malak's skill and reminders for Claude Code and Codex"
+        if args.notify_open:
+            question += " and notify open local Codex threads"
+        try:
+            confirmed = input(f"{question}? [y/N] ").strip().lower() in ("y", "yes")
+        except EOFError:
+            confirmed = False
+        if not confirmed:
+            print("Cancelled.")
+            return 0
+    try:
+        home = Path.home().resolve(strict=True)
+        fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            status = run(args, home)
+        finally:
+            os.close(fd)
+    except (OSError, ValueError, KeyError) as error:
+        print(f"agents: {out.display(error)}", file=sys.stderr)
+        return 1
+    return status or 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

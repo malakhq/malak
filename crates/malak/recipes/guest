@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Enrol or upgrade a guest on a local receiving board."""
+
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import sys
+
+sys.dont_write_bytecode = True
+
+import board_data as board
+from recipe_board import board_config, board_settings, handover_identity, selected_config
+import recipe_output as out
+from worker_queue import LaunchRecord, select_enrolment
+
+
+# Action bits in the owner status response.
+SEND = 1
+READ_GET_ACK = 2 | 4 | 8
+
+
+def ensure_guest(config, name, handover):
+    settings = board_settings(config)
+    state = Path(settings["state"])
+    with select_enrolment(state, name):
+        status = board.board_status(config)
+        active = next((person for person in status["participants"]
+                       if person["name"] == name and not person["revoked"]), None)
+        participant = (active["id"] if active is not None
+                       else board.enrol_lead_sender(config, name, handover))
+        inbox = f"to/{participant}"
+        if active is not None:
+            record, running = LaunchRecord(state, participant).observe()
+            if running or record is not None:
+                raise board.RecipeError(f"{name!r} already belongs to a worker")
+            legacy = [None, [["lead", SEND]]]
+            current = [None, [["lead", SEND], [inbox, READ_GET_ACK]]]
+            ends, rules = active["grant"]
+            grant = [ends, sorted(rules)]
+            if grant not in (legacy, current):
+                raise board.RecipeError(f"{name!r} already has a non-guest grant")
+            socket, holder, _ = handover_identity(handover)
+            if (socket, holder) != (Path(settings["socket_folder"]), participant):
+                raise board.RecipeError(f"use the existing handover for guest {name!r} on this board")
+            if board.channel_status(status, inbox) is None:
+                board.malak("--config", config, "channel", "create", inbox)
+            if grant == current:
+                return participant, inbox
+
+        board.malak("--config", config, "grant", participant, "lead:send", f"{inbox}:read,get,ack")
+        return participant, inbox
+
+
+def main():
+    parser = out.ArgumentParser(
+        prog="malak recipe guest",
+        usage="%(prog)s NAME --out HANDOVER [--json] [--board NAME | --config PATH]",
+        allow_abbrev=False,
+    )
+    parser.add_argument("name", metavar="NAME", help="Guest name on the receiving board")
+    parser.add_argument("--out", type=Path, required=True, metavar="HANDOVER",
+                        help="Private handover path, or the existing guest handover to upgrade")
+    parser.add_argument("--json", action="store_true", help="Print the guest and commands as JSON")
+    selectors = parser.add_mutually_exclusive_group()
+    selectors.add_argument("--board", metavar="NAME", help="Select the receiving board by name")
+    selectors.add_argument("--config", type=Path, metavar="PATH", help="Select the receiving board config")
+    args = parser.parse_args()
+
+    if args.name == "lead":
+        raise board.RecipeError("'lead' is reserved for the lead")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
+        raise board.RecipeError(f"invalid participant name {args.name!r}")
+    config = (selected_config(args.board, args.config) or board_config()).absolute()
+    handover = args.out.absolute()
+    participant, inbox = ensure_guest(config, args.name, handover)
+    cli = f"MALAK_HANDOVER={shlex.quote(str(handover))} malak"
+    result = {
+        "id": participant, "inbox": inbox, "handover": str(handover),
+        "send": f"{cli} send lead -", "watch": f"{cli} read --wait 60 {inbox}",
+    }
+    if args.json:
+        print(json.dumps(result))
+    else:
+        out.details(f"Guest {args.name} is ready.")
+        out.fields_output((("ID", participant), ("Inbox", inbox), ("Handover", handover),
+                           ("Send", result["send"]), ("Watch", result["watch"])), stream=sys.stdout)
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    try:
+        main()
+    except (board.RecipeError, OSError, KeyError, ValueError) as error:
+        out.error("set up the guest", error, "Check the receiving board and the handover path.")
+        sys.exit(getattr(error, "code", 3))

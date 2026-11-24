@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
+exec python3 -B "$recipes/worker.py" queue "$@"

@@ -1,0 +1,345 @@
+Live mailbox captures from the lanes board
+22 November 2026, UTC
+
+The before binary came from 44a1915. Each capture shows the rendered
+terminal cells. Terminal colors are absent in this text capture.
+Board counts reflect the time of each capture. Message text and IDs
+were redacted. The layout and reply address lengths are preserved.
+
+Before at 45 × 24
+─────────────────
+
+Mailbox · 23:27:17 UTC+00:00  63 participants
+lead 0 waiting
+questions 0 open
+orders 1 in force
+inboxes 4 waiting (cliux, mailbox-design, …)
+relay none
+Inboxes──────────────────────────────────────
+Participant  lead (Connected)
+  Inbox  lead
+  Waiting 0  Acked 575  Sent 0
+Participant  v01-demo (Offline)
+  Inbox  v01-demo
+  Waiting 0  Acked 15  Sent 0
+Waiting for acknowledgement──────────────────
+orders #1 [preview removed]
+(1078 bytes · malak get orders 1)
+[preview removed]
+(6666 bytes · malak get
+to/00000000000000000000000000000000 1)
+Activity · sent counts start with this view──
+Acknowledgements and refusals shown since thi
+23:27:05  v01-demo sent a report to lead #575
+Reply address
+page 1 of 39 · q quit · ←/→ lanes · ↑/↓ feed
+
+After at 45 × 24
+────────────────
+
+┌─ Malak · lanes ─────────────── 23:54 UTC ─┐
+│ lead 0   questions 0   orders 1           │
+│ inboxes 7 waiting   relay –               │
+└───────────────────────────────────────────┘
+─────────────────────────────────────────────
+  PARTICIPANTS                      waiting
+  lead                                    0 ▸
+  astra                                   0 ▸
+  … 66 more  (↓)
+─────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+▶ cliux                      2 messages  6h ▸
+  s-writer                    1 message  5h ▸
+  cli-ui-audit               1 message  21m ▸
+  … 2 more  (↓)
+─────────────────────────────────────────────
+ACTIVITY
+  23:52:58  astra → lead · report #602      ▸
+  23:51:44  cli-ui → lead · report #601     ▸
+  23:51:33  cli-ui → lead · report #600     ▸
+  … 913 more  (↓)
+╞═══════════════════════════════════════════╡
+↑/↓ move  ⏎ expand  Tab section  f jump
+? help  q quit
+
+After at 45 × 24, waiting inbox expanded with Enter
+───────────────────────────────────────────────────
+
+┌─ Malak · lanes ─────────────── 23:54 UTC ─┐
+│ lead 0   questions 0   orders 1           │
+│ inboxes 7 waiting   relay –               │
+└───────────────────────────────────────────┘
+─────────────────────────────────────────────
+  PARTICIPANTS                      waiting
+  lead                                    0 ▸
+─────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+▶ cliux                      2 messages  6h ▾
+  ┆ #4  note from lead  17:43  [preview removed]
+  ┆ [detail removed]
+  ┆ #5  note from lead  17:43  [preview removed]
+  ┆ [detail removed]
+  ┆ reply to/00000000000000000000000000000000
+  ┆ 00000000000000000000000000000000 4
+  s-writer                    1 message  5h ▸
+─────────────────────────────────────────────
+ACTIVITY
+  23:52:58  astra → lead · report #602      ▸
+  23:51:44  cli-ui → lead · report #601     ▸
+╞═══════════════════════════════════════════╡
+↑/↓ move  ⏎ collapse  Tab section  f jump
+c copy  ? help  q quit
+
+Before at 100 × 30
+──────────────────
+
+Mailbox · 23:28:03 UTC+00:00                                            63 participants · 63 inboxes
+lead 0 waiting
+questions 0 open
+orders 1 in force
+inboxes 4 waiting (cliux, mailbox-design, s-writer)
+relay none
+────────────────────────────────────────────────────────────────────────────────────────────────────
+Participant     Inbox                                          Waiting Acked Sent  Connection Last
+lead            lead                                           0       576   0     Connected
+mailbox-design  mailbox-design                                 1       0     0     Offline
+v01-demo        v01-demo                                       0       15    0     Offline
+mailbox-baselin mailbox-baseline                               0       1     0     Offline
+demo-exit-revie demo-exit-review                               0       1     0     Offline
+agents-md       agents-md                                      0       3     0     quiet 14m
+v01-verify      v01-verify                                     0       1     0     quiet 19m
+astra           astra                                          0       0     0     Offline
+claude-review   claude-review                                  0       0     0     Offline
+ux-fixes        ux-fixes                                       0       4     0     quiet 46m
+Waiting for acknowledgement─────────────────────────────────────────────────────────────────────────
+orders #1 [preview removed]
+(1078 bytes · malak get orders 1)
+mailbox-design (to/00000000000000000000000000000000) #1 [preview removed]
+(6666 bytes · malak get to/00000000000000000000000000000000 1)
+h-writer2 (to/00000000000000000000000000000000) #1 [preview removed]
+(8474 bytes · malak get to/00000000000000000000000000000000 1)
+Activity · sent counts start with this view─────────────────────────────────────────────────────────
+Acknowledgements and refusals shown since this view opened.
+23:27:59  mailbox-design sent a report to lead #576  Reply to #1 to/00000000000000000000000000000000
+Reply address  lead 00000000000000000000000000000000 576
+page 1 of 8 · Left/Right table · Up/Down activity · Enter expand · c compact · q quit
+
+After at 100 × 30, quick jump labels shown with f
+─────────────────────────────────────────────────
+
+┌─ Malak · lanes ────────────────────────────────────────────────────────────────────── 23:54 UTC ─┐
+│ lead 0   questions 0   orders 1   inboxes 7 waiting   relay –                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────
+  PARTICIPANTS                                                                       last  waiting
+a   lead                                                                              now        0 ▸
+b   astra                                                                              1m        0 ▸
+d   cli-ui                                                                             2m        0 ▸
+e   claude-review                                                                      3m        0 ▸
+g   mailbox-startup-baseline                                                           4m        0 ▸
+h   mailbox-design                                                                     6m        1 ▸
+  … 62 more  (↓)
+────────────────────────────────────────────────────────────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+i ▶ cliux                                                                           2 messages  6h ▸
+j   s-writer                                                                         1 message  5h ▸
+k   cli-ui-audit                                                                    1 message  21m ▸
+l   v01-demo                                                                       2 messages  18m ▸
+m   mailbox-design                                                                   1 message  6m ▸
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ACTIVITY
+n   23:54:19  get unavailable for lead in questions (2 calls)  Reason  participant call rate…      ▸
+o   23:54:18  get unavailable for lead in questions (2 calls)  Reason  participant call rate…      ▸
+p   23:52:58  astra → lead · report #602                                                           ▸
+r   23:51:44  cli-ui → lead · report #601                                                          ▸
+s   23:51:33  cli-ui → lead · report #600                                                          ▸
+t   23:50:49  claude-review → lead · report #599                                                   ▸
+  … 912 more  (↓)
+╞══════════════════════════════════════════════════════════════════════════════════════════════════╡
+letter jump  Esc/f cancel  ? help  q quit
+
+Startup at 120 × 30, blank rows omitted
+───────────────────────────────────────
+
+┌─ Malak · lanes ────────────────────────────────────────────────────────────────────────────────────────── 23:53 UTC ─┐
+│ loading...                                                                                                           │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+╞══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╡
+q quit
+
+Participant detail at 120 × 30, excerpt
+───────────────────────────────────────
+
+▶ astra                                                                                                   now        0 ▾
+  ┆ [detail removed]
+  ┆ inbox to/00000000000000000000000000000000
+
+Activity acknowledgement captures on lanes
+─────────────────────────────────────────
+
+23 November 2026, UTC. The before binary was built from f7d886b.
+The after binary shows acknowledgements on Activity messages. Both used the
+same read-only lanes configuration. Captures show the terminal after tabbing to Activity.
+Message text and creation IDs are redacted. Counts reflect the live board.
+
+The timing runs from process launch to the first Activity message.
+
+Terminal  Before  After
+120 × 30  0.689s  0.477s
+ 45 × 24  0.502s  0.925s
+
+Two earlier after runs measured 0.478s and 0.625s at 120 columns, and
+0.502s and 0.509s at 45 columns. One after run reached 1.146s at 120
+columns while the mailbox integration tests were running.
+
+Before at 120 × 30
+──────────────────
+
+┌─ Malak · lanes ────────────────────────────────────────────────────────────────────────────────────────── 02:35 UTC ─┐
+│ lead 0   questions loading…   orders 1   inboxes 1 waiting   relay –                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  PARTICIPANTS                                                                                           last  waiting
+  lead                                                                                                     1m        0 ▸
+  activity-acks                                                                                            1m        0 ▸
+  stop-flush                                                                                               1m        1 ▸
+  trace-view                                                                                              17m        – ▸
+  flaky-tests                                                                                             28m        – ▸
+  demo-merge-output-recheck                                                                                1h        – ▸
+  … 77 more  (↓)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+  stop-flush                                                                                             1 message  1m ▸
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ACTIVITY
+▶ 02:33:58  activity-acks → lead · report #687                                                                         ▾
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ reply lead 00000000000000000000000000000000 687
+  02:33:30  lead → activity-acks · note #4                                                                             ▾
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  02:33:29  lead → stop-flush · task #1                                                                                ▾
+  ┆ [detail removed]
+  … 108 more  (↓)
+╞══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╡
+↑/↓ move  ⏎ collapse  e collapse all  Tab section  f jump  c copy  ? help  q quit
+
+After at 120 × 30
+─────────────────
+
+┌─ Malak · lanes ────────────────────────────────────────────────────────────────────────────────────────── 02:35 UTC ─┐
+│ lead 0   questions loading…   orders 1   inboxes 1 waiting   relay –                                                 │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  PARTICIPANTS                                                                                           last  waiting
+  lead                                                                                                     1m        0 ▸
+  activity-acks                                                                                            1m        0 ▸
+  stop-flush                                                                                               1m        1 ▸
+  trace-view                                                                                              17m        – ▸
+  flaky-tests                                                                                             28m        – ▸
+  demo-merge-output-recheck                                                                                1h        – ▸
+  … 77 more  (↓)
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+  stop-flush                                                                                             1 message  1m ▸
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ACTIVITY
+▶ 02:33:58  activity-acks → lead · report #687  acknowledged                                                           ▾
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ reply lead 00000000000000000000000000000000 687
+  02:33:30  lead → activity-acks · note #4  acknowledged                                                               ▾
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  02:33:29  lead → stop-flush · task #1  waiting                                                                       ▾
+  ┆ [detail removed]
+  … 101 more  (↓)
+╞══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╡
+↑/↓ move  ⏎ collapse  e collapse all  Tab section  f jump  c copy  ? help  q quit
+
+Before at 45 × 24
+─────────────────
+
+┌─ Malak · lanes ─────────────── 02:35 UTC ─┐
+│ lead 0   questions loading…   orders 1    │
+│ inboxes 1 waiting   relay –               │
+└───────────────────────────────────────────┘
+─────────────────────────────────────────────
+  PARTICIPANTS                      waiting
+  lead                                    0 ▸
+─────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+  stop-flush                  1 message  1m ▸
+─────────────────────────────────────────────
+ACTIVITY
+▶ 02:33:58  activity-acks → lead · report…  ▾
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ reply lead
+  ┆ 00000000000000000000000000000000 687
+╞═══════════════════════════════════════════╡
+↑/↓ move  ⏎ collapse  e collapse all
+Tab section  f jump  c copy  ? help  q quit
+
+After at 45 × 24
+────────────────
+
+┌─ Malak · lanes ─────────────── 02:35 UTC ─┐
+│ lead 0   questions loading…   orders 1    │
+│ inboxes 1 waiting   relay –               │
+└───────────────────────────────────────────┘
+─────────────────────────────────────────────
+  PARTICIPANTS                      waiting
+  lead                                    0 ▸
+─────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+  stop-flush                  1 message  1m ▸
+─────────────────────────────────────────────
+ACTIVITY
+▶ activ… → lead · report #687  acknowledged ▾
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ [detail removed]
+  ┆ reply lead
+  ┆ 00000000000000000000000000000000 687
+╞═══════════════════════════════════════════╡
+↑/↓ move  ⏎ collapse  e collapse all
+Tab section  f jump  c copy  ? help  q quit
+
+After at 45 × 24, collapsed with e
+──────────────────────────────────
+
+┌─ Malak · lanes ─────────────── 02:35 UTC ─┐
+│ lead 0   questions loading…   orders 1    │
+│ inboxes 1 waiting   relay –               │
+└───────────────────────────────────────────┘
+─────────────────────────────────────────────
+  PARTICIPANTS                      waiting
+  lead                                    0 ▸
+  activity-acks                           0 ▸
+  stop-flush                              1 ▸
+  trace-view                              – ▸
+  … 79 more  (↓)
+─────────────────────────────────────────────
+WAITING FOR ACKNOWLEDGEMENT
+  stop-flush                  1 message  1m ▸
+─────────────────────────────────────────────
+ACTIVITY
+▶ activ… → lead · report #687  acknowledged ▸
+  02:33  lead → ac… · note #4  acknowledged ▸
+  02:33  lead → stop-fl… · task #1  waiting ▸
+  02:33  ac… → qu… · note #92  acknowledged ▸
+  … 110 more  (↓)
+╞═══════════════════════════════════════════╡
+↑/↓ move  ⏎ expand  e expand all  Tab section
+f jump  ? help  q quit

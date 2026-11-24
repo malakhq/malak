@@ -1,0 +1,276 @@
+Malak multi-board mailbox captures
+
+Rendered terminal cells from disposable local boards.
+
+All boards, 120 × 30
+────────────────────
+
+┌─ Malak · 3 boards ─────────────────────────────────────────────────────────────────────────────────────── 20:46 UTC ─┐
+│ ⚑ 2 owner questions · newest on durative: "Ship the CI tab fix now or after specs?"                                  │
+│ lead 1   questions 2   orders 0   inboxes 1 waiting                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+──────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────
+  BOARDS                waiting  ⚑│[Activity] Questions Orders Waiting Trace
+▶ All boards                  2  2│─────────────────────────────────────────────────────────────────────────────────────
+▸ durative ●                  1  1│▶ 20:46:56  @cli-signin → @lead · report #1 · [BOARD: DURATIVE]        acknowledged ▾
+▸ helmbeam ○ stopped              │  ┆ Browser sign-in done. durative login opens the approval link.
+▸ malak ●                     1  1│  ┆ reply lead 2391564b… 1
+                                  │
+                                  │  20:46:55  @lead → questions · note #1 · [BOARD: DURATIVE]                 waiting ▾
+                                  │  ┆ Ship the CI tab fix now or after specs?
+                                  │
+                                  │  20:46:55  @lead → @ci-tab · task #1 · [BOARD: DURATIVE]                   waiting ▾
+                                  │  ┆ Check the browser sign-in path.
+                                  │
+                                  │  20:46:55  @lead → questions · note #1 · [BOARD: MALAK]                    waiting ▾
+                                  │  ┆ Would you review the release notes?
+                                  │
+                                  │  20:46:55  @lead → @lead · note #1 · [BOARD: MALAK]                        waiting ▾
+                                  │  ┆ The release notes are drafted.
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+╞═════════════════════════════════╧════════════════════════════════════════════════════════════════════════════════════╡
+Tab pane  1–5/[ ] view  ↑/↓ move  ⏎ open message  f jump  e collapse all  ? help  c copy  q quit
+
+Durative expanded, 120 × 30
+───────────────────────────
+
+┌─ Malak · durative ─────────────────────────────────────────────────────────────────────────────────────── 20:46 UTC ─┐
+│ ⚑ 2 owner questions · newest on durative: "Ship the CI tab fix now or after specs?"                                  │
+│ lead 0   questions 1   orders 0   inboxes 1 waiting                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+──────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────
+  BOARDS                waiting  ⚑│[Activity] Questions Orders Waiting Trace
+  All boards                  2  2│─────────────────────────────────────────────────────────────────────────────────────
+▾ durative ●                  1  1│Activity · @lead · last now
+▶   @lead          now        0   │  20:46:56  @cli-signin → @lead · report #1                            acknowledged ▾
+    @cli-signin    now        0   │  ┆ Browser sign-in done. durative login opens the approval link.
+    @ci-tab        now        1   │
+    ▸ Archived (1)                │  20:46:55  @lead → questions · note #1                                     waiting ▾
+▸ helmbeam ○ stopped              │  ┆ Ship the CI tab fix now or after specs?
+▸ malak ●                     1  1│
+                                  │  20:46:55  @lead → @ci-tab · task #1                                       waiting ▾
+                                  │  ┆ Check the browser sign-in path.
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+╞═════════════════════════════════╧════════════════════════════════════════════════════════════════════════════════════╡
+Tab pane  ⏎/→ open board  ← close  1–5/[ ] view  ↑/↓ move  f jump  a show archive  Esc clear filter  ? help  c copy
+q quit
+
+All boards, 80 × 30
+───────────────────
+
+┌─ Malak · 3 boards ─────────────────────────────────────────────── 20:46 UTC ─┐
+│ ⚑ 2 owner questions · newest on durative: "Ship the CI tab fix now or…"      │
+│ lead 1   questions 2   orders 0   inboxes 1 waiting                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+  BOARDS                   waiting  ⚑
+▶ All boards                     2  2
+▸ durative ●                     1  1
+▸ helmbeam ○ stopped
+▸ malak ●                        1  1
+[Activity] Questions Orders Waiting Trace
+────────────────────────────────────────────────────────────────────────────────
+▶ 20:46:56  @cli-signin → @lead · report #1 · [BOARD: DURATIVE]   acknowledged ▾
+  ┆ Browser sign-in done. durative login opens the approval link.
+  ┆ reply lead 2391564b… 1
+
+  20:46:55  @lead → questions · note #1 · [BOARD: DURATIVE]            waiting ▾
+  ┆ Ship the CI tab fix now or after specs?
+
+  20:46:55  @lead → @ci-tab · task #1 · [BOARD: DURATIVE]              waiting ▾
+  ┆ Check the browser sign-in path.
+
+  20:46:55  @lead → questions · note #1 · [BOARD: MALAK]               waiting ▾
+  ┆ Would you review the release notes?
+
+  20:46:55  @lead → @lead · note #1 · [BOARD: MALAK]                   waiting ▾
+  ┆ The release notes are drafted.
+╞══════════════════════════════════════════════════════════════════════════════╡
+Tab pane  1–5/[ ] view  ↑/↓ move  ⏎ open message  f jump  e collapse all  ? help
+c copy  q quit
+
+Durative expanded, 80 × 30
+──────────────────────────
+
+┌─ Malak · durative ─────────────────────────────────────────────── 20:46 UTC ─┐
+│ ⚑ 2 owner questions · newest on durative: "Ship the CI tab fix now or…"      │
+│ lead 0   questions 1   orders 0   inboxes 1 waiting                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+  BOARDS                   waiting  ⚑
+  All boards                     2  2
+▾ durative ●                     1  1
+▶   @lead             now        0
+    @cli-signin       now        0
+    @ci-tab           now        1
+    ▸ Archived (1)
+▸ helmbeam ○ stopped
+▸ malak ●                        1  1
+
+
+[Activity] Questions Orders Waiting Trace
+────────────────────────────────────────────────────────────────────────────────
+Activity · @lead · last now
+  20:46:56  @cli-signin → @lead · report #1                       acknowledged ▾
+  ┆ Browser sign-in done. durative login opens the approval link.
+
+  20:46:55  @lead → questions · note #1                                waiting ▾
+  ┆ Ship the CI tab fix now or after specs?
+
+  20:46:55  @lead → @ci-tab · task #1                                  waiting ▾
+  ┆ Check the browser sign-in path.
+╞══════════════════════════════════════════════════════════════════════════════╡
+Tab pane  ⏎/→ open board  ← close  1–5/[ ] view  ↑/↓ move  f jump
+a show archive  Esc clear filter  ? help  c copy  q quit
+
+Board states, 120 × 30
+──────────────────────
+
+┌─ Malak · 4 boards ─────────────────────────────────────────────────────────────────────────────────────── 20:46 UTC ─┐
+│ ⚑ 2 owner questions · newest on durative: "Ship the CI tab fix now or after specs?"                                  │
+│ lead 1   questions 2   orders 0   inboxes 1 waiting                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+──────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────
+  BOARDS                waiting  ⚑│[Activity] Questions Orders Waiting Trace
+▶ All boards                  2  2│─────────────────────────────────────────────────────────────────────────────────────
+▸ durative ●                  1  1│▶ 20:46:56  @cli-signin → @lead · report #1 · [BOARD: DURATIVE]        acknowledged ▾
+▸ helmbeam ○ stopped              │  ┆ Browser sign-in done. durative login opens the approval link.
+▸ malak ● ⚠ older build, restart  │  ┆ reply lead 2391564b… 1
+▸ scydar ✕ permissions            │
+                                  │  20:46:55  @lead → questions · note #1 · [BOARD: DURATIVE]                 waiting ▾
+                                  │  ┆ Ship the CI tab fix now or after specs?
+                                  │
+                                  │  20:46:55  @lead → @ci-tab · task #1 · [BOARD: DURATIVE]                   waiting ▾
+                                  │  ┆ Check the browser sign-in path.
+                                  │
+                                  │  20:46:55  @lead → questions · note #1 · [BOARD: MALAK]                    waiting ▾
+                                  │  ┆ Would you review the release notes?
+                                  │
+                                  │  20:46:55  @lead → @lead · note #1 · [BOARD: MALAK]                        waiting ▾
+                                  │  ┆ The release notes are drafted.
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+╞═════════════════════════════════╧════════════════════════════════════════════════════════════════════════════════════╡
+Tab pane  1–5/[ ] view  ↑/↓ move  ⏎ open message  f jump  e collapse all  ? help  c copy  q quit
+
+Board states, 80 × 30
+─────────────────────
+
+┌─ Malak · 4 boards ─────────────────────────────────────────────── 20:46 UTC ─┐
+│ ⚑ 2 owner questions · newest on durative: "Ship the CI tab fix now or…"      │
+│ lead 1   questions 2   orders 0   inboxes 1 waiting                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+  BOARDS                   waiting  ⚑
+▶ All boards                     2  2
+▸ durative ●                     1  1
+▸ helmbeam ○ stopped
+▸ malak ● ⚠ older build, restart
+▸ scydar ✕ owner door refused: handover file: permissions
+[Activity] Questions Orders Waiting Trace
+────────────────────────────────────────────────────────────────────────────────
+▶ 20:46:56  @cli-signin → @lead · report #1 · [BOARD: DURATIVE]   acknowledged ▾
+  ┆ Browser sign-in done. durative login opens the approval link.
+  ┆ reply lead 2391564b… 1
+
+  20:46:55  @lead → questions · note #1 · [BOARD: DURATIVE]            waiting ▾
+  ┆ Ship the CI tab fix now or after specs?
+
+  20:46:55  @lead → @ci-tab · task #1 · [BOARD: DURATIVE]              waiting ▾
+  ┆ Check the browser sign-in path.
+
+  20:46:55  @lead → questions · note #1 · [BOARD: MALAK]               waiting ▾
+  ┆ Would you review the release notes?
+
+  20:46:55  @lead → @lead · note #1 · [BOARD: MALAK]                   waiting ▸
+╞══════════════════════════════════════════════════════════════════════════════╡
+Tab pane  1–5/[ ] view  ↑/↓ move  ⏎ open message  f jump  e collapse all  ? help
+c copy  q quit
+
+Default and named configs for one board, 120 × 30
+─────────────────────────────────────────────────
+
+┌─ Malak · lanes ────────────────────────────────────────────────────────────────────────────────────────── 21:08 UTC ─┐
+│ lead 1   questions 0   orders 0   inboxes 0 waiting                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+──────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────
+  BOARDS                waiting  ⚑│[Activity] Questions Orders Waiting Trace
+▶ lanes ●                     1  0│─────────────────────────────────────────────────────────────────────────────────────
+                                  │▶ 21:08:45  @lead → @lead · report #1                                       waiting ▾
+                                  │  ┆ One retained report from the shared board.
+                                  │  ┆ reply lead 4b07e30e… 1
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+                                  │
+╞═════════════════════════════════╧════════════════════════════════════════════════════════════════════════════════════╡
+Tab pane  1–5/[ ] view  ⏎ open message  f jump  e collapse all  ? help  c copy  q quit
+
+
+Default and named configs for one board, 80 × 30
+────────────────────────────────────────────────
+
+┌─ Malak · lanes ────────────────────────────────────────────────── 21:08 UTC ─┐
+│ lead 1   questions 0   orders 0   inboxes 0 waiting                          │
+└──────────────────────────────────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────────────────────
+  BOARDS                   waiting  ⚑
+▶ lanes ●                        1  0
+[Activity] Questions Orders Waiting Trace
+────────────────────────────────────────────────────────────────────────────────
+▶ 21:08:45  @lead → @lead · report #1                                  waiting ▾
+  ┆ One retained report from the shared board.
+  ┆ reply lead 4b07e30e… 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+╞══════════════════════════════════════════════════════════════════════════════╡
+Tab pane  1–5/[ ] view  ⏎ open message  f jump  e collapse all  ? help  c copy
+q quit

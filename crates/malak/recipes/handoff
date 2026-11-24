@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+"""Move a task to another agent on the same trace. Run it as the lead."""
+
+import importlib.util
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+import recipe_output as out
+from recipe_board import BoardSelectionError, board_config, selected_config
+
+HERE = Path(__file__).resolve().parent
+spec = importlib.util.spec_from_file_location("board_data", HERE / "board_data.py")
+board_data = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(board_data)
+RecipeError = board_data.RecipeError
+malak = board_data.malak
+
+USAGE = (
+    "Usage: malak recipe handoff AGENT TASK_POSITION --to NAME [--from STEP | --part TEXT] "
+    "[--board NAME | --config PATH]"
+)
+DONE_BYTES = 400
+WORK_BYTES = 4000
+LOCATION_WORDS = ("where", "branch", "worktree", "commit", "path", "location")
+
+
+class UsageError(ValueError):
+    pass
+
+
+def parse(argv):
+    options = {"from": None, "part": None, "to": None, "board": None, "config": None}
+    positional = []
+    args = iter(argv)
+    for arg in args:
+        if arg in ("-h", "--help"):
+            out.usage((USAGE,))
+            sys.exit(0)
+        if arg == "--":
+            positional.extend(args)
+            break
+        if arg in ("--to", "--from", "--part", "--board", "--config"):
+            value = next(args, "")
+            if not value or options[arg[2:]] is not None:
+                raise UsageError(USAGE)
+            options[arg[2:]] = value
+        elif arg.startswith("-"):
+            raise UsageError(USAGE)
+        else:
+            positional.append(arg)
+    if len(positional) != 2 or not positional[1].isdigit() or not options["to"]:
+        raise UsageError(USAGE)
+    if options["from"] is not None and options["part"] is not None:
+        raise UsageError("use --from or --part, not both")
+    if options["board"] and options["config"]:
+        raise UsageError("use --board or --config, not both")
+    if options["from"] is not None and not options["from"].isdigit():
+        raise UsageError("--from takes a step number")
+    return positional[0], int(positional[1]), options
+
+
+def config_path(options):
+    path = Path(options["config"]) if options["config"] else None
+    return selected_config(options["board"], path) or board_config()
+
+
+def fetch(channel, position):
+    result = malak("get", "--json", "--", channel, str(position), check=False)
+    if result.returncode or not result.stdout.startswith("{"):
+        return None
+    record = json.loads(result.stdout)
+    return None if "result" in record else record
+
+
+def trace_of(message):
+    return message.get("headers", {}).get("trace")
+
+
+def participant(status, name):
+    found = next((
+        p["id"] for p in status["participants"]
+        if p["name"] == name and not p["revoked"] and p["id"] != "lead"
+    ), None)
+    if found is None:
+        raise RecipeError(f"no enrolled participant named {name!r}")
+    return found
+
+
+def find_task(agent, position):
+    task = fetch(f"to/{agent}", position)
+    if not task or task["sender"] != "lead" or task["kind"] != "task":
+        raise RecipeError(f"no task from the lead at position {position} in to/{agent}")
+    return task
+
+
+def collect(status, trace):
+    """Every message on the trace the lead can read, oldest first."""
+    messages = []
+    for channel in status["channels"]:
+        if channel["stopped"]:
+            continue
+        for position in range(max(channel["floor"], 1), channel["head"]):
+            message = fetch(channel["name"], position)
+            if message and trace_of(message) == trace:
+                messages.append(message)
+    messages.sort(key=lambda m: (m["sent_at"], m["channel"], m["position"]))
+    return messages
+
+
+def text(message, limit):
+    body = bytes(message["body"]).decode(errors="replace").strip()
+    if len(body) > limit:
+        body = body[:limit] + "…"
+    return body
+
+
+def address(message):
+    return (message["channel"], message["creation"], message["position"])
+
+
+def answered(message, messages):
+    for other in messages:
+        reply = other.get("headers", {}).get("reply_to")
+        if reply and tuple(reply) == address(message):
+            return True
+    return False
+
+
+def describe(number, message, limit, names):
+    sender = names.get(message["sender"]) or message.get("sender_name") or message["sender"]
+    return (
+        f"Step {number}: {message['kind']} from {sender} on "
+        f"{message['channel']} #{message['position']}\n{text(message, limit)}\n"
+    )
+
+
+def locations(messages):
+    lines = []
+    for message in messages:
+        if message["kind"] != "report":
+            continue
+        for line in bytes(message["body"]).decode(errors="replace").splitlines():
+            if line.strip().lower().startswith(LOCATION_WORDS):
+                lines.append(line.strip())
+    return lines
+
+
+def trail(messages, first_work, names):
+    """The trail summary. Steps before first_work are context, the rest the work."""
+    out = []
+    reports = [m for m in messages if m["kind"] == "report"]
+    questions = [m for m in messages if m["channel"] == "questions"]
+    out.append("Reported done:")
+    out += [f"- {text(m, DONE_BYTES)}" for m in reports] or ["- nothing yet"]
+    out.append("\nQuestions:")
+    for question in questions:
+        state = "answered" if answered(question, messages) else "open"
+        out.append(f"- [{state}] {text(question, DONE_BYTES)}")
+    if not questions:
+        out.append("- none")
+    out.append("\nWhere the work lives, as the reports state it:")
+    out += [f"- {line}" for line in locations(messages)] or ["- not stated"]
+    out.append("")
+    if first_work > 1:
+        out.append("Already done (context only):\n")
+        out += [describe(n, m, DONE_BYTES, names) for n, m in enumerate(messages[: first_work - 1], 1)]
+    out.append("The work:\n" if first_work > 1 else "The trace, oldest first:\n")
+    out += [describe(n, m, WORK_BYTES, names) for n, m in enumerate(messages[first_work - 1 :], first_work)]
+    return "\n".join(out)
+
+
+def send(channel, kind, trace, body, message_id, reply=None):
+    command = ["send", "--json", "--kind", kind, "--trace", trace, "--id", message_id]
+    if reply:
+        command += ["--reply-to", reply["channel"], reply["creation"], str(reply["position"])]
+    receipt = json.loads(malak(*command, "--", channel, "-", body=body).stdout)
+    return f"{channel} #{receipt['position']}"
+
+
+def main(argv):
+    agent_name, position, options = parse(argv)
+    config = config_path(options)
+    board_data.use_board(config)
+    if handover := os.environ.get("MALAK_HANDOVER"):
+        board_data.check_board(config, handover)
+    status = board_data.board_status(config)
+    names = {p["id"]: p["name"] for p in status["participants"]}
+    target = participant(status, options["to"])
+    old = participant(status, agent_name)
+    task = find_task(old, position)
+    trace = trace_of(task)
+    if trace is None:
+        raise RecipeError("the task carries no trace, so there is nothing to collect")
+    messages = collect(status, trace)
+    first_work = int(options["from"]) if options["from"] is not None else 1
+    if not 1 <= first_work <= len(messages):
+        raise RecipeError(f"--from takes a step from 1 to {len(messages)}")
+    inbox = f"to/{target}"
+    intent = json.dumps([address(task), target, first_work, options["part"]]).encode()
+    operation = hashlib.sha256(intent).hexdigest()[:32]
+    task_id, stand_down_id = f"handoff-{operation}-task", f"handoff-{operation}-stand-down"
+    previous_posts = {
+        (message["channel"], message["id"]): f"{message['channel']} #{message['position']}"
+        for message in messages if message["sender"] == "lead"
+    }
+    new_task = previous_posts.get((inbox, task_id))
+    notice = previous_posts.get((task["channel"], stand_down_id))
+    if new_task and (options["part"] is not None or notice):
+        out.details("Handoff already recorded.", (("Task", new_task), ("Trace", trace)))
+        return
+
+    if options["part"] is not None:
+        summary = trail(messages, first_work, names)
+        body = f"{options['part']}\n\nContext, from the trace {trace}:\n\n{summary}"
+        new_task = send(inbox, "task", trace, body, task_id, reply=task)
+        title = f"Part of the task sent to {options['to']}."
+        fields = [("New task", new_task)]
+    else:
+        if new_task is None:
+            summary = trail(messages, first_work, names)
+            original = text(task, WORK_BYTES)
+            body = f"Handed over from {names.get(old, old)}.\n\nOriginal task:\n{original}\n\n{summary}"
+            new_task = send(inbox, "task", trace, body, task_id, reply=task)
+        stand_down = (
+            f"This task has moved to {options['to']}. Stop work on it and "
+            "report nothing further for it."
+        )
+        previous = names.get(old, old)
+        try:
+            if notice is None:
+                notice = send(task["channel"], "note", trace, stand_down, stand_down_id, reply=task)
+        except (RecipeError, OSError, KeyError, ValueError) as error:
+            out.details("New task sent.", (("New task", new_task), ("Trace", trace)))
+            out.error(f"send the stand-down to {previous}", error, "Retry the same handoff to send the missing stand-down.")
+            return 1
+        title = f"Task handed from {previous} to {options['to']}."
+        fields = [("New task", new_task), ("Stand-down", f"Sent to {previous} at {notice}")]
+    fields.extend((("Trace", trace), ("Collected", f"{len(messages)} messages")))
+    out.details(title, fields, group="Delivery")
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except (UsageError, BoardSelectionError) as error:
+        if out.interactive(sys.stderr):
+            reason = str(error)
+            if reason == USAGE:
+                reason = "Missing or invalid handoff arguments."
+            out.usage((USAGE,), stream=sys.stderr, reason=reason)
+        else:
+            print(error, file=sys.stderr)
+        sys.exit(2)
+    except (RecipeError, OSError, KeyError, ValueError) as error:
+        out.error("hand off the task", error, "Check the source task, trace and target participant.")
+        sys.exit(1)
