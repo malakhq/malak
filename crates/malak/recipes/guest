@@ -21,7 +21,7 @@ SEND = 1
 READ_GET_ACK = 2 | 4 | 8
 
 
-def ensure_guest(config, name, handover):
+def ensure_guest(config, name, handover, session):
     settings = board_settings(config)
     state = Path(settings["state"])
     with select_enrolment(state, name):
@@ -29,7 +29,7 @@ def ensure_guest(config, name, handover):
         active = next((person for person in status["participants"]
                        if person["name"] == name and not person["revoked"]), None)
         participant = (active["id"] if active is not None
-                       else board.enrol_lead_sender(config, name, handover))
+                       else board.enrol_lead_sender(config, name, handover, "--session", str(session)))
         inbox = f"to/{participant}"
         if active is not None:
             record, running = LaunchRecord(state, participant).observe()
@@ -46,6 +46,9 @@ def ensure_guest(config, name, handover):
                 raise board.RecipeError(f"use the existing handover for guest {name!r} on this board")
             if board.channel_status(status, inbox) is None:
                 board.malak("--config", config, "channel", "create", inbox)
+            claim = active.get("claim")
+            if claim is not None and claim["state"] in ("released", "ended"):
+                board.enrol_lead_sender(config, name, handover, "--session", str(session))
             if grant == current:
                 return participant, inbox
 
@@ -56,12 +59,14 @@ def ensure_guest(config, name, handover):
 def main():
     parser = out.ArgumentParser(
         prog="malak recipe guest",
-        usage="%(prog)s NAME --out HANDOVER [--json] [--board NAME | --config PATH]",
+        usage="%(prog)s NAME --out HANDOVER [--session PID] [--json] [--board NAME | --config PATH]",
         allow_abbrev=False,
     )
     parser.add_argument("name", metavar="NAME", help="Guest name on the receiving board")
     parser.add_argument("--out", type=Path, required=True, metavar="HANDOVER",
                         help="Private handover path, or the existing guest handover to upgrade")
+    parser.add_argument("--session", type=int, metavar="PID",
+                        help="Bind to this running session. Defaults to the invoking session.")
     parser.add_argument("--json", action="store_true", help="Print the guest and commands as JSON")
     selectors = parser.add_mutually_exclusive_group()
     selectors.add_argument("--board", metavar="NAME", help="Select the receiving board by name")
@@ -74,7 +79,8 @@ def main():
         raise board.RecipeError(f"invalid participant name {args.name!r}")
     config = (selected_config(args.board, args.config) or board_config()).absolute()
     handover = args.out.absolute()
-    participant, inbox = ensure_guest(config, args.name, handover)
+    session = args.session if args.session is not None else board.current_session()["pid"]
+    participant, inbox = ensure_guest(config, args.name, handover, session)
     cli = f"MALAK_HANDOVER={shlex.quote(str(handover))} malak"
     result = {
         "id": participant, "inbox": inbox, "handover": str(handover),

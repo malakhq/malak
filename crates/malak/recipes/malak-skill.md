@@ -8,6 +8,9 @@ description: Use Malak to coordinate agents and subagents on a shared board. Use
 Malak runs in the background to delegate work across your agents and subagents.
 `malak mailbox` gives you a bird's-eye view of the work.
 
+- To try the five-worker demo, run `malak recipe demo claude "GOAL"` or
+  `malak recipe demo codex "GOAL"`. The demo starts its own board and prints
+  a mailbox command for watching that run.
 - For the full agent setup guide, run `malak recipe --help`. Read it when
   becoming or taking over as lead. Use the project folder name for
   `malak recipe lead-up NAME` only when the chat's working folder is the project
@@ -20,6 +23,10 @@ Malak runs in the background to delegate work across your agents and subagents.
 - Never use another participant's handover. Ask the owner if you need a
   handover or need to change roles. It works like an SSH key. Use separate
   OS users or sandboxes to isolate agents.
+- On local Unix sockets, recipe-issued handovers are tied to the assigned
+  session. Its tool commands and hooks share it. After a session ends, re-issue
+  a worker with `worker-start NAME --again` or a lead with `lead-up` from the
+  new chat. `recipe workers NAME` and `mailbox --who` show claim history.
 - As lead, stay awake in your host loop: once per tick run
   `malak --board NAME mailbox --plain --for lead --next --timeout 60`, handle
   what it prints, acknowledge lead messages, then go idle. In Claude Code use
@@ -28,13 +35,20 @@ Malak runs in the background to delegate work across your agents and subagents.
   `malak --board NAME mailbox --plain --for lead --next` in the
   background to watch the lead inbox, questions, orders and stuck work. Use
   Claude Code's background Bash (leave Monitor for other work) or Codex's
-  background command session. The command exits after showing waiting lead
-  mail or the next event. Handle the output, acknowledge lead messages, then
-  run it again. On takeover, read the unacknowledged lead inbox
+  background command session. The command exits after showing new waiting
+  lead mail, a new message from another participant, or a due reminder.
+  It remembers shown messages across runs and repeats unacknowledged lead
+  mail at most once an hour. Review open owner questions with
+  `malak --board NAME mailbox --questions`. Handle the output, acknowledge
+  lead messages, then run it again. On takeover, read the unacknowledged lead inbox
   and check questions, orders in force and waiting workers. Poll
   `malak --board NAME read --wait 60 lead questions` if you cannot keep a watcher running.
   Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.
-  If you end your turn with unacknowledged lead messages or unanswered agent questions, the Stop hook hands them to you once; handle and acknowledge them.
+  If you end your turn with unacknowledged lead messages or unanswered agent questions,
+  the Stop hook hands them to you once. Handle and acknowledge them.
+  If your watcher is missing, Stop continues the turn once with the restart command
+  after any pending mail. Run the command in the background. If the watcher is
+  still missing at the next Stop, the hook shows a one-line reminder.
   The reminder checks at most every three minutes for unacknowledged lead messages, older owner questions, and a stopped watcher. A lead whose last one-shot tick started or ended within 10 minutes counts as watching.
 - When you need the owner to decide, post it with `malak --board NAME recipe ask`
   (options and a recommendation), then raise it in chat, so the board keeps the decision.
@@ -48,6 +62,10 @@ Malak runs in the background to delegate work across your agents and subagents.
   their `to/ID` inbox and send reports to `lead`.
 - For cross-board messages, use `malak --board RECEIVING recipe guest NAME --out HANDOVER`, send as the guest, run the printed watch command for replies, and revoke the guest when done.
 - As lead, re-read this skill as soon as you receive a Malak upgrade note.
+- To bring a running Claude Code or Codex chat onto the board, use
+  `malak --board NAME recipe adopt WORKER`, select its session and have the
+  owner paste the printed block into that chat. Wait for the claim-accepted
+  notice before assigning work. Adopt the new session after the chat restarts.
 - Use `malak --board NAME recipe worker-start` to delegate work on the board.
   `worker-start` and `queue` refuse when no lead watcher is running on that board. Scripts and tests can pass `--no-watcher`.
   To check on a worker, ask it on its `to/ID` inbox and read its reply; use

@@ -36,6 +36,10 @@ pub enum OwnerOperation {
     Rekey,
     /// Revoke a participant.
     Revoke,
+    /// Release one participant's current session claim.
+    Release,
+    /// Commit a bound worker's final launcher report after its session ends.
+    WorkerExit,
     /// Replace a grant.
     Grant,
     /// Create a channel.
@@ -65,6 +69,8 @@ impl OwnerOperation {
             "ENROL" => Self::Enrol,
             "REKEY" => Self::Rekey,
             "REVOKE" => Self::Revoke,
+            "RELEASE" => Self::Release,
+            "WORKER_EXIT" => Self::WorkerExit,
             "GRANT" => Self::Grant,
             "CHANNEL_CREATE" => Self::ChannelCreate,
             "CHANNEL_REMOVE" => Self::ChannelRemove,

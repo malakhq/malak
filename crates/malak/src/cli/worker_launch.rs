@@ -4,6 +4,7 @@ use super::config;
 use malak::ParticipantId;
 use malak_fs::{Directory, check_user_permissions};
 use nix::{fcntl::OFlag, unistd::geteuid};
+use serde::Deserialize;
 use std::fs::{File, TryLockError};
 use std::io;
 use std::path::Path;
@@ -25,14 +26,24 @@ pub(super) fn live_claim(launches: &Directory, id: &ParticipantId) -> io::Result
 }
 
 pub(super) fn state(launches: &Directory, id: &ParticipantId) -> io::Result<Option<&'static str>> {
-    if open_file(launches, &format!("{id}.json"))?.is_none() {
+    let Some(record) = open_file(launches, &format!("{id}.json"))? else {
         return Ok(None);
+    };
+    if serde_json::from_reader::<_, LaunchRecord>(io::BufReader::new(record))
+        .is_ok_and(|record| record.phase.as_deref() == Some("adopted"))
+    {
+        return Ok(Some("adopted (no launcher)"));
     }
     Ok(Some(if live_claim(launches, id)? {
         "running"
     } else {
         "exited"
     }))
+}
+
+#[derive(Deserialize)]
+struct LaunchRecord {
+    phase: Option<String>,
 }
 
 fn open_file(launches: &Directory, name: &str) -> io::Result<Option<File>> {

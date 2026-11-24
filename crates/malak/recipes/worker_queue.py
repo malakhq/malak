@@ -69,6 +69,16 @@ def named(status, name):
                  if person["name"] == name and not person["revoked"]), None)
 
 
+def prepare_worker_access(config, name, participant, additional_grants=()):
+    inbox = f"to/{participant}"
+    probe = f"selftest/{participant}"
+    for channel in (f"relay/{name}", probe):
+        board.malak("--config", config, "channel", "create", channel)
+    board.malak("--config", config, "grant", participant, "lead:send", "relay/*:send",
+                "questions:send", "orders:read,get", f"{inbox}:read,get,ack",
+                f"{probe}:send,read,ack", *additional_grants)
+
+
 @contextmanager
 def select_enrolment(state, name):
     # Serialize stock enrolment and claim publication for this name.

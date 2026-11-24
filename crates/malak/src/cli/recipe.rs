@@ -5,18 +5,21 @@ use malak::Error;
 use malak_fs::{Directory, check_user_permissions, trusted_parent};
 use nix::errno::Errno;
 use nix::fcntl::OFlag;
-use nix::sys::signal::{Signal, kill};
+use nix::poll::{PollFd, PollFlags, poll};
+use nix::sys::signal::{Signal, kill, killpg};
 use nix::unistd::{Pid, geteuid};
+use signal_hook::SigId;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, Permissions};
 use std::io::{self, Read, Write};
+use std::os::fd::AsFd;
 use std::os::unix::{
     fs::{MetadataExt, PermissionsExt},
     process::{CommandExt, ExitStatusExt},
 };
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitCode, ExitStatus, Stdio};
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
@@ -29,6 +32,7 @@ const BOARD_CONFIG: &str = "__board-config";
 const BOARD_NAME: &str = "__board-name";
 const BOARD_LIST: &str = "__board-list";
 const SESSION_PROCESS: &str = "__session-process";
+const WORKER_EXIT: &str = "__worker-exit";
 const WORKER_STARTED: &str = "malak-worker-started\n";
 pub(super) const BUNDLE_TEMP_PREFIX: &str = "malak-recipe";
 pub(super) const WORKER_HOOK_TEMP_PREFIX: &str = "malak-worker-hooks";
@@ -55,6 +59,10 @@ impl Args {
             name.to_str()
                 .is_some_and(|name| help_before_recipe_position(name, words))
         })
+    }
+
+    pub(super) fn is_demo(&self) -> bool {
+        self.words.first().is_some_and(|name| name == "demo")
     }
 
     pub(super) fn operation(&self) -> String {
@@ -90,6 +98,11 @@ const AGENTS: (&str, &str, Script) = (
 );
 
 const RECIPES: &[(&str, &str, Script)] = &[
+    (
+        "adopt",
+        "Bring a running Claude Code or Codex session onto the board.",
+        script!("adopt"),
+    ),
     AGENTS,
     (
         "agents-md",
@@ -113,7 +126,7 @@ const RECIPES: &[(&str, &str, Script)] = &[
     ),
     (
         "demo",
-        "Run a lead and five workers on one goal.",
+        "Run a lead and five workers on a disposable board.",
         script!("demo"),
     ),
     (
@@ -158,7 +171,7 @@ const RECIPES: &[(&str, &str, Script)] = &[
     ),
     (
         "workers",
-        "Show running and exited stock workers.",
+        "Show launched and adopted workers.",
         script!("workers"),
     ),
     (
@@ -175,6 +188,7 @@ const SUPPORT: &[Script] = &[
     script!("board_data.py"),
     script!("codex_notice.py"),
     script!("demo.py"),
+    script!("demo_board.py"),
     script!("lead_status.py"),
     script!("lead_turn_end.py"),
     script!("malak-skill.md"),
@@ -218,6 +232,31 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
             participant::check_recipe_handover(config)?;
             return Ok(ExitCode::SUCCESS);
         }
+        Some(WORKER_EXIT) => {
+            let [id, status, path, trace] = arguments else {
+                return Err(Error::refused("invalid worker exit report"));
+            };
+            let utf8 = |arg: &std::ffi::OsStr| {
+                arg.to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| Error::refused("worker exit report requires UTF-8 arguments"))
+            };
+            let [id, status, path, trace] = [utf8(id)?, utf8(status)?, utf8(path)?, utf8(trace)?];
+            let report = (|| {
+                let mut owner = super::owner(config)?;
+                super::owner_commands::worker_exit(&mut owner, &id, &status, &path, &trace)
+            })();
+            if let Err(ref error) = report
+                && (participant::report_connection_failed(error)
+                    || error.outcome() == malak::Outcome::Unavailable)
+            {
+                eprintln!("{error}");
+                return Ok(ExitCode::from(participant::REPORT_CONNECTION_EXIT));
+            } else {
+                report?;
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
         Some(SESSION_PROCESS) if arguments.is_empty() => {
             if let Some(process) = malak_transport_unix::local_session_process() {
                 output::line(format_args!(
@@ -227,6 +266,27 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
                         "start_time": process.identity.start_time,
                     })
                 ))?;
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(SESSION_PROCESS) => {
+            let [pid] = arguments else {
+                return Err(Error::refused("supply one session PID"));
+            };
+            let pid = pid
+                .to_str()
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|&pid| pid != 0)
+                .ok_or_else(|| Error::refused("supply a positive session PID"))?;
+            if let Some(session) = malak_transport_unix::session_at(pid) {
+                let process = session.process;
+                let details = serde_json::json!({
+                    "pid": process.identity.pid,
+                    "start_time": process.identity.start_time,
+                    "program": process.program,
+                    "cwd": session.folder,
+                });
+                output::line(format_args!("{details}"))?;
             }
             return Ok(ExitCode::SUCCESS);
         }
@@ -375,11 +435,14 @@ fn help_before_recipe_position(name: &str, arguments: &[OsString]) -> bool {
             ("agents", "--yes" | "--dry-run" | "--remove" | "--notify-open")
             | ("agents-md", "--remove")
             | ("answer", "--task")
-            | ("demo", "--yes")
+            | ("demo", "--yes" | "--keep")
             | ("guest", "--json")
             | ("lead-up", "--list" | "--tree")
             | ("queue", "--prepared" | "--no-watcher")
-            | ("worker-start", "--again" | "--prepared" | "--detach" | "--no-watcher")
+            | (
+                "worker-start",
+                "--again" | "--prepared" | "--detach" | "--no-watcher" | "--unbound",
+            )
             | ("workers", "--json") => 0,
             ("ask", "--reply-to") => 3,
             (_, option) if option.starts_with("--") && option.contains('=') => 0,
@@ -400,6 +463,7 @@ fn launch(
     arguments: &[OsString],
     config: Option<&Path>,
 ) -> io::Result<ExitCode> {
+    let signals = RecipeSignals::register()?;
     let mut bundle = TemporaryDirectory::new(BUNDLE_TEMP_PREFIX)?;
     let (files, _) = bundle.opened.child_or_create(BUNDLE_FOLDER.as_ref())?;
     check_user_permissions(files.file(), geteuid().as_raw(), true)?;
@@ -466,14 +530,12 @@ fn launch(
             .any(|arg| arg == "--detach");
     let status = if detached {
         let state = hook_state.as_mut().expect("worker hook state");
-        match detach_worker(&mut command, &mut bundle, state)? {
+        match detach_worker(&mut command, &mut bundle, state, &signals)? {
             Some(status) => status,
             None => return Ok(ExitCode::SUCCESS),
         }
-    } else if matches!(script.file, "demo" | "queue") {
-        supervise_recipe(&mut command)?
     } else {
-        command.status()?
+        signals.wait(&mut command.spawn()?, false)?
     };
     let code = status
         .code()
@@ -485,6 +547,7 @@ fn detach_worker(
     command: &mut Command,
     bundle: &mut TemporaryDirectory,
     hook_state: &mut TemporaryDirectory,
+    signals: &RecipeSignals,
 ) -> io::Result<Option<ExitStatus>> {
     let mut child = command
         .env("MALAK_RECIPE_DETACHED_BUNDLE", &bundle.path)
@@ -492,12 +555,25 @@ fn detach_worker(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .spawn()?;
-    let mut readiness = String::new();
-    child
-        .stdout
-        .take()
-        .expect("piped worker readiness")
-        .read_to_string(&mut readiness)?;
+    let mut stdout = child.stdout.take().expect("piped worker readiness");
+    let mut readiness = Vec::new();
+    let mut bytes = [0; 4096];
+    loop {
+        signals.forward(&child, true)?;
+        let mut descriptors = [PollFd::new(stdout.as_fd(), PollFlags::POLLIN)];
+        match poll(&mut descriptors, 20u16) {
+            Ok(0) | Err(Errno::EINTR) => continue,
+            Ok(_) => (),
+            Err(error) => return Err(error.into()),
+        }
+        let count = stdout.read(&mut bytes)?;
+        if count == 0 {
+            break;
+        }
+        readiness.extend_from_slice(&bytes[..count]);
+    }
+    signals.forward(&child, true)?;
+    let readiness = String::from_utf8(readiness).map_err(io::Error::other)?;
     if let Some(details) = readiness.strip_prefix(WORKER_STARTED) {
         // The launcher now owns both paths, including across resume runs.
         bundle.remove_on_drop = false;
@@ -506,43 +582,65 @@ fn detach_worker(
         Ok(None)
     } else {
         io::stdout().lock().write_all(readiness.as_bytes())?;
-        child.wait().map(Some)
+        signals.wait(&mut child, true).map(Some)
     }
 }
 
-fn supervise_recipe(command: &mut Command) -> io::Result<ExitStatus> {
-    let pending = Arc::new(AtomicUsize::new(0));
-    let interrupt = signal_hook::flag::register_usize(
-        Signal::SIGINT as i32,
-        Arc::clone(&pending),
-        Signal::SIGINT as usize,
-    )?;
-    let result = (|| {
-        let terminate = signal_hook::flag::register_usize(
-            Signal::SIGTERM as i32,
-            Arc::clone(&pending),
-            Signal::SIGTERM as usize,
-        )?;
-        let status = (|| {
-            let mut child = command.spawn()?;
-            loop {
-                if let Some(status) = child.try_wait()? {
-                    return Ok(status);
-                }
-                if let Ok(signal) = Signal::try_from(pending.swap(0, Ordering::Relaxed) as i32) {
-                    match kill(Pid::from_raw(child.id() as i32), signal) {
-                        Ok(()) | Err(Errno::ESRCH) => (),
-                        Err(error) => return Err(error.into()),
-                    }
-                }
-                thread::sleep(Duration::from_millis(20));
+// Keep the handlers installed until the temporary-directory guards have run.
+struct RecipeSignals {
+    pending: Arc<AtomicUsize>,
+    handlers: Vec<SigId>,
+}
+
+impl RecipeSignals {
+    fn register() -> io::Result<Self> {
+        let mut signals = Self {
+            pending: Arc::new(AtomicUsize::new(0)),
+            handlers: Vec::new(),
+        };
+        for signal in [Signal::SIGINT, Signal::SIGTERM] {
+            signals.handlers.push(signal_hook::flag::register_usize(
+                signal as i32,
+                Arc::clone(&signals.pending),
+                signal as usize,
+            )?);
+        }
+        Ok(signals)
+    }
+
+    fn forward(&self, child: &Child, detached: bool) -> io::Result<()> {
+        if let Ok(signal) = Signal::try_from(self.pending.swap(0, Ordering::Relaxed) as i32) {
+            let pid = Pid::from_raw(child.id() as i32);
+            let result = if detached {
+                killpg(pid, signal)
+            } else {
+                kill(pid, signal)
+            };
+            match result {
+                Ok(()) | Err(Errno::ESRCH) => (),
+                Err(error) => return Err(error.into()),
             }
-        })();
-        signal_hook::low_level::unregister(terminate);
-        status
-    })();
-    signal_hook::low_level::unregister(interrupt);
-    result
+        }
+        Ok(())
+    }
+
+    fn wait(&self, child: &mut Child, detached: bool) -> io::Result<ExitStatus> {
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(status);
+            }
+            self.forward(child, detached)?;
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+impl Drop for RecipeSignals {
+    fn drop(&mut self) {
+        for handler in self.handlers.drain(..) {
+            signal_hook::low_level::unregister(handler);
+        }
+    }
 }
 
 struct TemporaryDirectory {

@@ -25,7 +25,7 @@ malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.1" }
 malak-proto = { path = "../malak-proto", version = "0.1.1" }
 malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.1" }
 minicbor = "2"
-nix = { version = "0.31", features = ["fs", "resource", "signal", "socket", "user"] }
+nix = { version = "0.31", features = ["fs", "poll", "resource", "signal", "socket", "user"] }
 rustix = { version = "1.1", features = ["termios"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -41,7 +41,6 @@ criterion = { version = "0.8", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 malak-testkit = { path = "../malak-testkit", version = "0.1.1" }
-nix = { version = "0.31", features = ["poll"] }
 
 [lints]
 workspace = true

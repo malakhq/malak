@@ -8,6 +8,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod attached;
+mod claim;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) use claim::ClaimChange;
+pub use claim::{Claim, ClaimEvent, ClaimState};
 
 const RESERVED_PARTICIPANT_NAMES: &[&str] = &["lead", "stuck"];
 
@@ -40,6 +45,7 @@ pub(crate) struct ParticipantView {
     pub(crate) grant: Grant,
     pub(crate) fingerprint: Option<String>,
     pub(crate) connections: std::sync::Arc<AtomicUsize>,
+    pub(crate) claim: Option<std::sync::Arc<Claim>>,
 }
 
 #[derive(Clone, Copy)]
@@ -56,6 +62,7 @@ struct Participant {
     revoked: bool,
     generation: u64,
     socket: Option<attached::Socket>,
+    claim: Option<std::sync::Arc<Claim>>,
     calls: VecDeque<Instant>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     connections: std::sync::Arc<AtomicUsize>,
@@ -102,6 +109,7 @@ impl Authority {
                     .and_then(|socket| socket.key.as_ref())
                     .map(attached::fingerprint),
                 connections: participant.connections.clone(),
+                claim: participant.claim.clone(),
             })
             .collect()
     }
@@ -110,7 +118,10 @@ impl Authority {
     pub(crate) fn count_connection(&self, id: &ParticipantId) -> ConnectionCount {
         let count = self.participants[id].connections.clone();
         count.fetch_add(1, Ordering::AcqRel);
-        ConnectionCount(count)
+        ConnectionCount {
+            count,
+            on_last: None,
+        }
     }
 
     pub(crate) fn check_opening(
@@ -189,11 +200,72 @@ impl Authority {
                 revoked: false,
                 generation: 0,
                 socket: None,
+                claim: None,
                 calls: VecDeque::new(),
                 #[cfg(any(target_os = "linux", target_os = "macos"))]
                 connections: std::sync::Arc::default(),
             },
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn issue_session(
+        &mut self,
+        id: &ParticipantId,
+        session: malak_layers::ClaimedSession,
+        at_ms: u64,
+    ) -> Result<(), Error> {
+        self.restore_claim(
+            id,
+            ClaimChange::Event(ClaimEvent::Issued {
+                at_ms,
+                session,
+                issuer: ParticipantId::lead(),
+            }),
+        )
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn restore_claim(
+        &mut self,
+        id: &ParticipantId,
+        change: ClaimChange,
+    ) -> Result<(), Error> {
+        let participant = self
+            .participants
+            .get_mut(id)
+            .filter(|participant| !participant.revoked)
+            .ok_or_else(|| Error::refused("participant is not active"))?;
+        Claim::apply(&mut participant.claim, change)
+            .ok_or_else(|| Error::refused("invalid session claim transition"))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) fn claim(&self, id: &ParticipantId) -> Option<&Claim> {
+        self.participants
+            .get(id)
+            .filter(|p| !p.revoked)?
+            .claim
+            .as_deref()
+    }
+
+    pub(crate) fn check_session(
+        &self,
+        id: &ParticipantId,
+        peer: Option<&malak_layers::SenderPeer>,
+    ) -> Result<(), Error> {
+        if let (Some(claim), Some(peer)) = (&self.participants[id].claim, peer)
+            && (claim.state != ClaimState::Bound
+                || (!peer
+                    .trace
+                    .session
+                    .as_ref()
+                    .is_some_and(|session| session.identity == claim.session.process.identity)
+                    && !peer.ancestry.contains(&claim.session.process.identity)))
+        {
+            return Err(Error::refused("handover used from another session"));
+        }
+        Ok(())
     }
 
     pub(crate) fn active(&self, id: &ParticipantId) -> Result<(), Error> {
@@ -359,12 +431,27 @@ impl Participant {
 
 /// Owner saves register before taking the mutex, so new checks cannot overtake them.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) struct ConnectionCount(std::sync::Arc<AtomicUsize>);
+pub(crate) struct ConnectionCount {
+    count: std::sync::Arc<AtomicUsize>,
+    on_last: Option<Box<dyn FnOnce() + Send>>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl ConnectionCount {
+    pub(crate) fn check_on_last(mut self, check: impl FnOnce() + Send + 'static) -> Self {
+        self.on_last = Some(Box::new(check));
+        self
+    }
+}
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl Drop for ConnectionCount {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
+        if self.count.fetch_sub(1, Ordering::AcqRel) == 1
+            && let Some(check) = self.on_last.take()
+        {
+            check();
+        }
     }
 }
 

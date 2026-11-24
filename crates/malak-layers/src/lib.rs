@@ -16,7 +16,9 @@ mod transport;
 
 pub use mechanism::{Enrolment, Handover, Identity, Mechanism, Proves, Session, Side, Step};
 pub use observe::{Event, EventKind, Interest, Observer};
-pub use sender::{ProcessIdentity, SenderOrigin, SenderPeer, SenderTrace, SessionProcess};
+pub use sender::{
+    ClaimedSession, ProcessIdentity, SenderOrigin, SenderPeer, SenderTrace, SessionProcess,
+};
 pub use store::{
     Candidate, Claim, Claimed, KeptRecord, Ownership, ReadLimit, ReadResult, Record, Store,
     StoreInfo, StoreLocation, StorePlace, Trim, Trimmed,

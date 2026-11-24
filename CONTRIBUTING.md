@@ -92,10 +92,19 @@ After the required check goes green, run `internal/merge-pr N` with the public
 pull request number. It uses the pull request title as the squash commit
 subject, deletes the branch, and verifies the commit's GitHub no-reply author.
 
-When it is time to release, land the version bump through the same sync
-process. Check that the exact public `main` commit has the intended workspace
-version and a successful CI run from a `main` push. Tag that commit with
-`vX.Y.Z`, push the tag, and create the GitHub release with generated notes.
+When preparing a release, land the version bump through the same sync process.
+Run `internal/pre-cut vX.Y.Z` from the private checkout to save the list of
+changes and test evidence and ask the owner for approval. After the owner
+approves on the board, run `internal/cut-release vX.Y.Z`. It verifies the
+approval, workspace version and successful push-triggered CI for the exact
+public `main` commit, pushes the tag, and creates the GitHub release with
+generated notes. It then publishes the workspace crates to crates.io from a
+temporary worktree at that tag. If public `main` moves, rerun `pre-cut` and
+seek approval for the new list.
+
+Use `internal/cut-release --no-publish vX.Y.Z` for a GitHub-only release.
+Use `internal/cut-release --publish-only vX.Y.Z` to resume crate publication
+for an existing GitHub release. It skips versions already on crates.io.
 
 ## Commit and open a pull request
 

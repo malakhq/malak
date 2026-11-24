@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Add `malak recipe adopt` to bring a running Claude Code or Codex session
+  onto a local board with its own inbox and session-bound handover.
+- Bind local worker, guest and lead handovers to their assigned sessions. Show
+  claim status and refused attachments in the mailbox and `recipe workers`.
+  Use `enrol --session PID` to bind a running session manually.
+- Make `mailbox --next` skip the lead's own messages and remember which messages
+  it has shown across restarts. Unacknowledged lead mail can repeat at most
+  once an hour.
+
+- Run each agent demo on a disposable board and clean up its state and
+  handovers after the run. Use `malak recipe demo … --keep` to keep its board
+  for inspection.
+- Continue the lead's turn once with the restart command when its watcher is
+  missing. If the watcher is still missing at the next Stop, show a reminder.
+
 ## v0.1.1 (2026-11-24)
 
 - Reject empty message bodies and require `-` when piping a body to `send`.

@@ -6,32 +6,14 @@ recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 . "$recipes/board.sh"
 
 usage() {
-    recipe_usage "${1:-help}" 'Usage: malak recipe demo [--board NAME | --config PATH] claude|codex "GOAL" [--sandbox on|off] [--yes]' \
-        'Open malak mailbox in another terminal before running the demo.' \
-        'Shows startup progress in the terminal and returns once the lead and five workers have started.' \
-        'Read the named outcome.txt file when the demo finishes.'
+    recipe_usage "${1:-help}" 'Usage: malak recipe demo claude|codex "GOAL" [--sandbox on|off] [--yes] [--timeout SECONDS] [--keep]' \
+        '       malak recipe demo --remove NAME' \
+        'Runs on its own board and prints a mailbox command to watch it.' \
+        'Stops and removes the board on exit. --keep leaves the board and logs for inspection.'
 }
 
 case "${1-}" in
     -h|--help) usage; exit 0 ;;
-    --board|--config)
-        [ "$#" -ge 2 ] && [ -n "$2" ] || { usage error >&2; exit 2; }
-        MALAK_RECIPE_CONFIG=$(recipe_config_option "$1" "$2")
-        export MALAK_RECIPE_CONFIG
-        shift 2 ;;
 esac
-case "${1-}" in
-    claude|codex) ;;
-    *) usage error >&2; exit 2 ;;
-esac
-if [ "$#" -lt 2 ] || [ -z "$2" ]; then usage error >&2; exit 2; fi
 
-if ! command -v "$1" >/dev/null 2>&1; then
-    recipe_output error "launch $1" "The agent CLI was not found on PATH." "Install it and sign in before running the demo."
-    exit 2
-fi
-
-config=$(board_config)
-check_recipe_board "$config"
-"$malak_exe" --config "$config" board status > /dev/null
-exec python3 "$recipes/demo.py" "$config" "$@"
+exec python3 "$recipes/demo.py" "$@"

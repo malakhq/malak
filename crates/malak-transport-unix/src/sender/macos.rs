@@ -2,6 +2,11 @@ use super::{Process, ProcessIdentity};
 use nix::libc;
 use std::mem::MaybeUninit;
 
+pub(super) fn runs_interpreter(_pid: u32) -> bool {
+    // libproc reports the interpreter name for these processes.
+    false
+}
+
 pub(super) fn cwd(pid: u32) -> Option<Box<str>> {
     // SAFETY: This flavor writes a proc_vnodepathinfo.
     let info = unsafe { pid_info::<libc::proc_vnodepathinfo>(pid, libc::PROC_PIDVNODEPATHINFO) }?;
@@ -25,6 +30,9 @@ pub(super) fn program(pid: u32) -> Option<Box<str>> {
 pub(super) fn process(pid: u32) -> Option<Process> {
     // SAFETY: This flavor writes a proc_bsdinfo.
     let info = unsafe { pid_info::<libc::proc_bsdinfo>(pid, libc::PROC_PIDTBSDINFO) }?;
+    if info.pbi_status == libc::SZOMB {
+        return None;
+    }
     let start_time = info
         .pbi_start_tvsec
         .checked_mul(1_000_000)?

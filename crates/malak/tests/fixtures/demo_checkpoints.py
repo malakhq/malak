@@ -2,16 +2,22 @@
 
 import os
 from pathlib import Path
-import secrets
 import signal
 import subprocess
 import sys
+import time
 
 
 if Path(sys.argv[0]).name == "demo.py":
     watchdog = int(os.environ["MALAK_TEST_WATCHDOG"])
-    if prefix := os.environ.get("MALAK_TEST_DEMO_PREFIX"):
-        secrets.token_hex = lambda _size: prefix
+    if clock_trigger := os.environ.get("MALAK_TEST_DEMO_CLOCK_TRIGGER"):
+        monotonic = time.monotonic
+        trigger = Path(clock_trigger)
+
+        def demo_time():
+            return monotonic() + (120 if trigger.exists() else 0)
+
+        time.monotonic = demo_time
     real_run = subprocess.run
     refused_revoke = False
 

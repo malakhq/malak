@@ -64,7 +64,7 @@ fn every_command_and_recipe_accepts_the_same_three_help_forms() {
             .find(|line| line.to_ascii_lowercase().starts_with("usage: "))
             .unwrap_or_else(|| panic!("missing usage for {command:?}: {usage}"));
         assert!(!line.contains("[OPTIONS]"), "{line}");
-        if command != ["recipe", "agents"] {
+        if !matches!(command.as_slice(), ["recipe", "agents" | "demo"]) {
             assert!(line.contains("--board NAME"), "{line}");
         }
         assert!(usage.contains("Example:\n"), "{command:?}: {usage}");

@@ -155,7 +155,11 @@ pub(super) fn write(output: &mut dyn Write, tool: Tool, json: bool) -> io::Resul
     prose(
         output,
         &render,
-        "The background command follows new messages on lead, questions, and orders. It flags lead work still unacknowledged after 15 minutes.\n\
+        "The background command follows new messages on lead, questions, and orders \
+         from other participants. It remembers which messages it has shown across runs \
+         and repeats unacknowledged lead mail at most once an hour. Use mailbox \
+         --questions to review open owner questions. It flags lead work still \
+         unacknowledged after 15 minutes.\n\
          To stay awake inside the host's own loop, run it once per tick as\n\
          malak --board NAME mailbox --plain --for lead --next --timeout 60,\n\
          handle what it prints, acknowledge lead messages and go idle. In Claude Code\n\

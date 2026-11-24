@@ -37,8 +37,35 @@ pub(super) struct Participant {
     pub revoked_at_ms: Option<u64>,
     #[serde(skip)]
     pub launcher_state: Option<&'static str>,
+    pub claim: Option<ClaimStatus>,
     #[serde(default)]
     pub grant: Grant,
+}
+
+#[derive(Clone, Deserialize)]
+pub(super) struct ClaimStatus {
+    pub state: String,
+    pub session: ClaimProcess,
+    pub issuer: String,
+    pub refused: u64,
+    pub last_refused_at_ms: Option<u64>,
+    pub history: Vec<ClaimEvent>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(super) struct ClaimProcess {
+    pub pid: Option<u32>,
+    pub program: Option<String>,
+    #[serde(alias = "cwd")]
+    pub folder: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+pub(super) struct ClaimEvent {
+    pub event: String,
+    pub at_ms: u64,
+    #[serde(alias = "peer")]
+    pub session: Option<ClaimProcess>,
 }
 
 impl Participant {

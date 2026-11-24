@@ -34,6 +34,8 @@ pub struct ParticipantStatus {
     pub grant_changed_at_ms: Option<u64>,
     /// Time of revocation in Unix epoch milliseconds, when recorded.
     pub revoked_at_ms: Option<u64>,
+    /// Current claim for a session-bound handover, including its history.
+    pub claim: Option<Arc<crate::Claim>>,
 }
 
 /// The owner-visible state of a channel creation.
@@ -126,6 +128,7 @@ impl Board {
                 enrolled_at_ms: view.times.enrolled_at_ms,
                 grant_changed_at_ms: view.times.grant_changed_at_ms,
                 revoked_at_ms: view.times.revoked_at_ms,
+                claim: view.claim.clone(),
             })
             .collect();
         let channels = snapshot

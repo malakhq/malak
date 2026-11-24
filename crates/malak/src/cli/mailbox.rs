@@ -4,7 +4,7 @@ use super::{
     config::{self, io_error},
     output::{self, now_ms},
     owner, owner_commands, owner_for_board,
-    participant::{Session, check_preview_board},
+    participant::{Session, check_preview_board, preview_handover, wait_for_inbox},
     worker_launch,
 };
 use malak::{Error, ParticipantId};
@@ -43,6 +43,28 @@ mod who;
 pub(super) use next::run as next;
 pub(super) use trace::{id as trace_id, run as trace};
 pub(super) use waiting::run as waiting;
+
+pub(super) fn worker_next(
+    config: Option<PathBuf>,
+    name: &str,
+    timeout: Option<u32>,
+) -> Result<(), Error> {
+    let id = preview_handover(config.clone())?.id().clone();
+    let wrong_worker = || Error::refused("use --for NAME for your own worker inbox");
+    if id.is_lead() {
+        return Err(wrong_worker());
+    }
+    let status = owner_commands::status(&mut owner(config.clone())?, &[("id", id.as_str())])?;
+    let own_worker = status["participants"].as_array().is_some_and(|people| {
+        people.iter().any(|person| {
+            person["id"] == id.as_str() && person["name"] == name && person["revoked"] == false
+        })
+    });
+    if !own_worker {
+        return Err(wrong_worker());
+    }
+    wait_for_inbox(config, id.inbox().to_string(), timeout)
+}
 
 const REFRESH: Duration = Duration::from_secs(1);
 

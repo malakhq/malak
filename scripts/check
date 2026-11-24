@@ -1,12 +1,58 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env python3
+"""Run the workspace checks and report new Malak entries in the temp folder."""
 
-cd "$(dirname "$0")/.."
+import os
+from pathlib import Path
+import shlex
+import sys
+import tempfile
 
-set -x
-cargo fmt --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all
-python3 -B -m unittest discover -s crates/malak/recipes/tests
-python3 -B -m unittest discover -s scripts/tests
-RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --no-deps
+sys.dont_write_bytecode = True
+from process_cleanup import cleanup_on_interrupt, command_process
+
+
+def temp_entries(folder):
+    return {entry.name for entry in folder.iterdir() if entry.name.startswith("malak")}
+
+
+def run_checks():
+    flags = os.environ.get("RUSTDOCFLAGS", "")
+    doc_env = {**os.environ, "RUSTDOCFLAGS": f"{flags} -D warnings".lstrip()}
+    for command, env in (
+        (["cargo", "fmt", "--check"], None),
+        (["cargo", "clippy", "--all-targets", "--all-features", "--", "-D", "warnings"], None),
+        (["cargo", "test", "--all"], None),
+        ([sys.executable, "-B", "-m", "unittest", "discover", "-s", "crates/malak/recipes/tests"], None),
+        ([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts/tests"], None),
+        (["cargo", "doc", "--no-deps"], doc_env),
+    ):
+        print("+ " + shlex.join(command), file=sys.stderr, flush=True)
+        with command_process(command, env=env) as process:
+            status = process.wait()
+        if status:
+            return status if status > 0 else 128 - status
+    return 0
+
+
+def main():
+    temporary = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve()
+    os.chdir(Path(__file__).resolve().parents[1])
+    before = temp_entries(temporary)
+    with cleanup_on_interrupt():
+        try:
+            status = run_checks()
+        finally:
+            after = temp_entries(temporary)
+            leftovers = after - before
+            counts = f"{len(before)} before, {len(after)} after, {len(leftovers)} new"
+            if leftovers:
+                print(f"Temp directory check failed ({counts}):", file=sys.stderr)
+                for name in sorted(leftovers):
+                    print(f"  {str(temporary / name)!r}", file=sys.stderr)
+            else:
+                print(f"Temp directory check passed ({counts}).", file=sys.stderr)
+    return status or bool(leftovers)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

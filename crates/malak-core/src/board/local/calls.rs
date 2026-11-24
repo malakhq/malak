@@ -13,7 +13,7 @@ use parking_lot::{Condvar, Mutex};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-mod codec;
+pub(super) mod codec;
 
 fn call_name(operation: Operation) -> &'static str {
     match operation {

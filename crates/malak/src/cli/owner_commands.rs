@@ -73,6 +73,65 @@ pub(super) fn ping(client: &mut Client) -> Result<(), Error> {
     request(client, "PING", &[]).map(drop)
 }
 
+pub(super) fn worker_exit(
+    client: &mut Client,
+    id: &str,
+    status: &str,
+    path: &str,
+    trace: &str,
+) -> Result<(), Error> {
+    let mut args = vec![("id", id), ("status", status), ("path", path)];
+    if !trace.is_empty() {
+        args.push(("trace", trace));
+    }
+    let frame = request(client, "WORKER_EXIT", &args)?;
+    let header = fields(&frame)?;
+    let mut receipt = header.clone();
+    let record = super::participant::json_message(
+        header.as_object().ok_or_else(invalid)?.clone(),
+        frame.body(),
+    );
+    receipt["trace"] = record["headers"]["trace"].clone();
+    receipt["report"] = record;
+    output::line(format_args!("{receipt}"))
+}
+
+pub(super) fn release(client: &mut Client, target: &str) -> Result<(), Error> {
+    use std::io::{IsTerminal, Write};
+
+    let reply = status(client, &[])?;
+    let people = reply["participants"].as_array().ok_or_else(invalid)?;
+    let id = revoke_id(people, target)?;
+    if let Err(error) = request(client, "RELEASE", &[("id", id.as_str())]) {
+        if error.to_string() != "session release requires interactive owner confirmation"
+            || !std::io::stdin().is_terminal()
+        {
+            return Err(error);
+        }
+        let mut terminal = std::io::stderr().lock();
+        write!(
+            &mut terminal,
+            "Type {target} to release its session claim: "
+        )
+        .map_err(config::io_error)?;
+        terminal.flush().map_err(config::io_error)?;
+        drop(terminal);
+        let mut reply = String::new();
+        std::io::stdin()
+            .read_line(&mut reply)
+            .map_err(config::io_error)?;
+        if reply.trim() != target {
+            return Err(Error::refused("session release confirmation did not match"));
+        }
+        request(
+            client,
+            "RELEASE",
+            &[("id", id.as_str()), ("confirmation", id.as_str())],
+        )?;
+    }
+    output::result(&format!("Session claim released for {target}."))
+}
+
 pub(super) fn revoke(client: &mut Client, target: &str) -> Result<(), Error> {
     let reply = status(client, &[])?;
     let people = reply["participants"].as_array().ok_or_else(invalid)?;
@@ -112,6 +171,7 @@ pub(super) fn rekey(
     id: &ParticipantId,
     fingerprint: Option<String>,
     destination: &Path,
+    session: Option<u32>,
 ) -> Result<(), Error> {
     let fingerprint = match fingerprint {
         Some(fingerprint) => fingerprint,
@@ -127,7 +187,7 @@ pub(super) fn rekey(
     let path = path
         .to_str()
         .ok_or_else(|| Error::refused("output path must be UTF-8"))?;
-    let path = client.rekey(id, &fingerprint, path)?;
+    let path = client.rekey_session(id, &fingerprint, path, session)?;
     output::details(
         &format!("Credential replaced for {id}."),
         &[("Handover", &path)],

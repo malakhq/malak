@@ -60,6 +60,7 @@ fn installed_command(fixture: &CargoInstall, exe: &Path, args: &[&str]) -> Comma
     let folders = std::iter::once(fixture.tools.clone()).chain(std::env::split_paths(&path));
     command
         .env("PATH", std::env::join_paths(folders).unwrap())
+        .env("TMPDIR", fixture.home.path())
         .env("CODEX_HOME", fixture.home.path().join(".codex"))
         .env("CLAUDE_CONFIG_DIR", fixture.home.path().join(".claude"))
         .env("MALAK_TEST_REPLACEMENT", MALAK);

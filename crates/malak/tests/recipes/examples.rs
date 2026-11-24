@@ -132,8 +132,11 @@ fn a_guest_posts_to_the_receiving_lead_as_itself() {
     let status = receiver.status();
     let guest = participant(&status, "team-to-review");
     let notes = messages(&receiver.lead(&["read", "--json", "lead"]));
+    let notes = notes
+        .iter()
+        .filter(|note| note["sender"] == guest["id"])
+        .collect::<Vec<_>>();
     assert_eq!(notes.len(), 1);
-    assert_eq!(notes[0]["sender"], guest["id"]);
     assert_eq!(notes[0]["grade"], "proven");
     assert_eq!(notes[0]["text"], "The team build is ready for review.\n");
     assert_eq!(guest["revoked"], true);
@@ -248,6 +251,11 @@ examples! {
         assert!(!old.status.success(), "{old:?}");
     }
 
+    release_shows_alices_claim_as_released: "release" [running] |example| {
+        example.run();
+        assert_eq!(participant(&example.board.status(), "alice")["claim"]["state"], "released");
+    }
+
     revoke_shows_alice_as_revoked: "revoke" [running] |example| {
         let output = example.run();
         assert!(output.contains("Revoked"), "{output}");
@@ -360,6 +368,16 @@ examples! {
         assert_eq!(output.lines().collect::<Vec<_>>(), names);
     }
 
+    adopt_prints_bootstrap_commands_for_the_running_session: "recipe adopt" [running] |example| {
+        let agent = adopt::Agent::start(&example.board);
+        let output = run({
+            let mut command = example.shell(example.code);
+            command.env("agent_pid", agent.pid().to_string());
+            command
+        });
+        assert!(output.contains(&format!("read --ack {}", example.inbox("researcher"))));
+    }
+
     agents_installs_the_user_skill: "recipe agents" [stopped] |example| {
         fs::create_dir(example.board.home.path().join(".claude")).unwrap();
         example.run();
@@ -388,13 +406,12 @@ examples! {
         }
     }
 
-    demo_coordinates_five_workers_and_collects_their_reports: "recipe demo" [running] |example| {
+    demo_coordinates_five_workers_and_collects_their_reports: "recipe demo" [stopped] |example| {
         let mut command = example.shell(example.code);
         configure_demo_fixture(&example.board, &mut command, "claude", "success");
         let output = run(command);
-        assert!(output.contains("outcome.txt"), "{output}");
-        assert!(demo_outcome(&example.board).contains("5 of 5 workers reported"));
-        assert_eq!(example.read("lead").iter().filter(|record| record["kind"] == "report").count(), 5);
+        assert!(output.contains("5 of 5 workers reported"), "{output}");
+        assert_demo_removed(&example.board, &demo_name(&output));
     }
 
     forward_carries_the_original_source_into_alices_inbox: "recipe forward" [running] |example| {
@@ -434,7 +451,11 @@ examples! {
             line.trim_start().strip_prefix(label).map(str::trim_start)
         }).unwrap_or_else(|| panic!("missing {label} in {output}"));
         run(example.shell(&format!("printf 'Build ready.' | {}", command("Send  "))));
-        assert_eq!(example.first_on("lead")["text"], "Build ready.");
+        let status = example.board.status();
+        let guest = participant(&status, "team-to-review");
+        let notes = example.read("lead");
+        let note = notes.iter().find(|note| note["sender"] == guest["id"]).unwrap();
+        assert_eq!(note["text"], "Build ready.");
         example.board.lead(&["send", &inbox, "Reviewed."]);
         let reply = run(example.shell(command("Watch  ")));
         assert!(reply.contains("Reviewed."), "{reply}");

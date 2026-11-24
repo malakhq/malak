@@ -33,23 +33,13 @@ can report `bind Unix listener` with `Operation not permitted`. Use
 
 ### Run the demo
 
-Use a fresh default board from the lead's own account.
-
-```sh
-malak board start --detach
-```
-
-Open the mailbox in a second terminal.
-
-```sh
-malak mailbox
-```
-
-In the first terminal, run the demo and watch it in the mailbox.
+Run the demo to start a fresh, dedicated board.
 
 ```sh
 malak recipe demo claude "Give a one-word fruit for each of five colors."
 ```
+
+To watch the demo, run the mailbox command it prints in a second terminal.
 
 Use `malak recipe demo codex "GOAL"` to run the same flow with Codex. The
 recipe shows this prompt with the path to your installed `malak`.
@@ -73,16 +63,15 @@ trust these hooks for this demo. Enter `N` or press Enter to cancel. Add `--yes`
 after the goal to approve the hooks and skip the prompt.
 
 Give the lead a goal it can divide into five short tasks.
-The command shows startup progress, prints the lead log and outcome file
-paths, and returns once all five workers have started. The outcome file
-records the lead and demo exit statuses and the worker success count when
-the demo finishes.
+The command shows progress and prints the result in the terminal. It removes
+the demo board when it finishes or you press Ctrl-C. Pass `--keep` to keep the
+board, logs and outcome file. The demo prints the commands to stop and remove
+the kept board. Pass `--timeout SECONDS` if you need more than five minutes.
 
 The mailbox shows the five worker inboxes and activity as workers pick up
 tasks and report back. The first reports can take about a minute to arrive.
 Press `a` in the terminal view to show or hide archived participants, or
-`q` to quit. Press Ctrl-C to stop a redirected feed. Run
-`malak read lead questions` to see messages that are still waiting for the lead.
+`q` to quit. Press Ctrl-C to stop a redirected feed.
 
 ## Make your agent the lead
 
@@ -116,6 +105,15 @@ to read unacknowledged messages first. It then checks `questions`, orders in
 force, waiting workers, and traces for active work on that board. Keep one lead
 chat for each board.
 
+## Bring a running agent onto the board
+
+Run `malak --board team recipe adopt researcher` and select the Claude Code
+or Codex session by PID, program, folder and start time. From a script, pass
+`--session PID`. Paste the printed block into that chat to open its inbox.
+If the agent restarts, run the same recipe again and select the new session.
+See the [adopt recipe](RECIPES.md#adopt-a-running-agent) for the handover and
+message commands.
+
 ## Launch one worker
 
 With the board running, start `malak mailbox --plain --for lead` in another
@@ -143,6 +141,21 @@ researcher --again -- COMMAND` replaces its old enrolment and reuses its brief.
 Use `malak revoke researcher` or `malak revoke ID` to retire access by itself.
 
 To message another board, use [`recipe guest`](RECIPES.md#message-another-boards-lead) to send as a guest, watch the guest inbox for replies, and revoke access when done.
+
+### Check and re-issue a handover
+
+`malak recipe workers NAME` and `malak mailbox --who` show the claimed
+session, refused attempts and claim history. When a session ends, its handover
+needs to be re-issued. Run `malak recipe worker-start NAME --again` to launch a
+replacement worker, or `malak recipe lead-up` from the new lead chat.
+
+Use `malak enrol NAME --session PID --out HANDOVER` to bind a running session
+manually. Bare enrolment and `enrol --unbound` both allow multiple sessions.
+`malak recipe guest NAME --out HANDOVER` binds the invoking session. Pass
+`--session PID` to issue the guest handover to a different running session.
+
+Use `worker-start --unbound` for scripts that share a handover across
+processes. `--resume` requires `--unbound`.
 
 ## Upgrade and uninstall
 

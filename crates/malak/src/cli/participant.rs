@@ -375,6 +375,31 @@ pub(super) fn read_for_hook(
     Ok(shown.values.into_iter().zip(messages).next())
 }
 
+pub(super) fn wait_for_inbox(
+    config: Option<PathBuf>,
+    inbox: String,
+    timeout: Option<u32>,
+) -> Result<(), Error> {
+    let deadline = timeout.map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
+    let mut session = Session::new(config);
+    let channels = [inbox];
+    let maximum = Limits::default().read_wait;
+    loop {
+        let wait = deadline.map_or(maximum, |at| {
+            maximum.min(at.saturating_duration_since(Instant::now()))
+        });
+        if wait.is_zero() {
+            return output::line(format_args!("No events."));
+        }
+        let (mut response, header) = session.read_waiting(&channels, wait, Some(1), || {
+            Output::messages(false, false, 0)
+        })?;
+        if !response.take_printed().is_empty() {
+            return response.ok(&header, true);
+        }
+    }
+}
+
 pub(super) struct ParticipantRecord {
     pub label: Map<String, Value>,
     pub preview: Option<String>,

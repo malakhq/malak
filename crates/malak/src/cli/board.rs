@@ -334,7 +334,7 @@ pub(super) fn start(
     )?;
     step("entrance sockets prepared");
     let lead_handover = lead_handover.unwrap_or_else(|| config.lead_handover());
-    let (board_owner, entrances) = Owner::create_local_for_account(
+    let (board_owner, mut entrances) = Owner::create_local_for_account(
         config.store(),
         limits,
         &config.state,
@@ -348,10 +348,22 @@ pub(super) fn start(
         Arc::new(Key),
         lead_uid,
     )?;
+    entrances.set_session_lookup(
+        malak_transport_unix::session_at,
+        malak_transport_unix::starting_session_at,
+    )?;
+    entrances.set_process_identity(malak_transport_unix::process_identity)?;
     step("store opened");
     for name in STANDARD_CHANNELS {
         board_owner.create_channel(name)?;
     }
+    let launcher_active = |id: &malak::ParticipantId| {
+        super::worker_launch::open(&config.state)
+            .ok()
+            .flatten()
+            .is_some_and(|dir| super::worker_launch::live_claim(&dir, id).unwrap_or(false))
+    };
+    let _ = entrances.refresh_claims(launcher_active);
     let _version_record = board_version::record(&owner.directory, board_uid).map_err(io_error)?;
     let (faults, fault) = mpsc::channel();
     let ready = Arc::new(AtomicBool::new(false));
@@ -369,7 +381,12 @@ pub(super) fn start(
         // The detached launcher may close its pipe when --wait runs out.
         return Err(io_error(error));
     }
+    let mut next_claim_check = std::time::Instant::now() + std::time::Duration::from_secs(1);
     loop {
+        if std::time::Instant::now() >= next_claim_check {
+            let _ = entrances.refresh_claims(launcher_active);
+            next_claim_check = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        }
         match fault.recv_timeout(std::time::Duration::from_millis(100)) {
             Ok(error) => return Err(error),
             Err(mpsc::RecvTimeoutError::Timeout) if entrances.stopped() => return Ok(()),

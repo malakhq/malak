@@ -39,14 +39,27 @@ fn a_guest_gets_and_acknowledges_a_reply_linked_to_its_report() {
         0o600
     );
 
+    // Let the guest's claim acceptance occupy the first lead position.
+    run(call_guest(&board, &handover, &["read", inbox]));
+    let notice = board.lead(&["read", "--json", "--wait", "15", "lead"]);
+    assert!(
+        messages(&notice)
+            .iter()
+            .any(|note| note["sender"] == "malakowner"),
+        "{notice}"
+    );
+
     run(call_guest(
         &board,
         &handover,
         &["send", "--kind", "report", "lead", "The build is ready."],
     ));
     let notes = messages(&board.lead(&["read", "--json", "lead"]));
-    assert_eq!(notes[0]["sender"], guest["id"]);
-    assert_eq!(notes[0]["grade"], "proven");
+    let report = notes
+        .iter()
+        .find(|note| note["sender"] == guest["id"])
+        .expect("the guest sent a report");
+    assert_eq!(report["grade"], "proven");
     assert!(
         board
             .lead(&["read", "lead"])
@@ -54,13 +67,14 @@ fn a_guest_gets_and_acknowledges_a_reply_linked_to_its_report() {
             .any(|line| { line.contains("Reply inbox") && line.ends_with(inbox) })
     );
 
-    let origin = notes[0]["creation"].as_str().unwrap();
+    let origin = report["creation"].as_str().unwrap();
+    let position = report["position"].as_u64().unwrap();
     board.lead(&[
         "send",
         "--reply-to",
         "lead",
         origin,
-        "1",
+        &position.to_string(),
         inbox,
         "Reviewed.",
     ]);
@@ -70,7 +84,10 @@ fn a_guest_gets_and_acknowledges_a_reply_linked_to_its_report() {
         &["get", "--json", inbox, "1"],
     )))
     .unwrap();
-    assert_eq!(reply["headers"]["reply_to"], json!(["lead", origin, 1]));
+    assert_eq!(
+        reply["headers"]["reply_to"],
+        json!(["lead", origin, position])
+    );
     let read = run(call_guest(
         &board,
         &handover,

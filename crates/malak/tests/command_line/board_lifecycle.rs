@@ -3,9 +3,6 @@ use std::fs::{self, Permissions};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use terminal::{TerminalOutput, terminal_pair};
 
-#[path = "../fixtures/terminal.rs"]
-mod terminal;
-
 #[path = "upgrade.rs"]
 mod upgrade;
 
