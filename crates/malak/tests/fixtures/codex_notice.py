@@ -2,11 +2,17 @@
 import base64
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
 
 assert sys.argv[1:] == ["app-server", "proxy"]
 source, sink = sys.stdin.buffer, sys.stdout.buffer
+loaded_threads = {"data": ["opened-thread"], "nextCursor": None}
+if "MALAK_TEST_CODEX_PROXY_READY" in os.environ:
+    sys.stderr.buffer.write(b"\0")
+    sys.stderr.buffer.flush()
+
 headers = {}
 assert source.readline() == b"GET / HTTP/1.1\r\n"
 while (line := source.readline().strip()):
@@ -31,7 +37,7 @@ while (head := source.read(2)):
         case "initialized":
             continue
         case "thread/loaded/list":
-            result = {"data": ["opened-thread"], "nextCursor": None}
+            result = loaded_threads
         case "thread/inject_items":
             with (Path.home() / "injected.jsonl").open("a") as log:
                 log.write(json.dumps(msg["params"]) + "\n")

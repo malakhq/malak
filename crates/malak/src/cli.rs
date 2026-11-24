@@ -135,7 +135,7 @@ enum Command {
     ///
     /// With --plain --for lead, follow the lead inbox, questions, orders and stuck work.
     #[command(after_help = examples::help(&[
-        "mailbox", "mailbox --plain", "mailbox --for", "mailbox --who",
+        "mailbox", "mailbox --plain", "mailbox --next", "mailbox --for", "mailbox --who",
         "mailbox --questions", "mailbox --orders", "mailbox --waiting", "mailbox --trace",
     ]))]
     Mailbox {
@@ -145,6 +145,12 @@ enum Command {
         /// Write one live line per event without opening the alternate screen.
         #[arg(long)]
         plain: bool,
+        /// Show waiting lead mail or wait for the next lead event, then exit.
+        #[arg(long, requires_all = ["plain", "name"], conflicts_with = "mailbox_list")]
+        next: bool,
+        /// Exit with "No events." after this many seconds of waiting with --next.
+        #[arg(long, value_name = "SECONDS", requires = "next", value_parser = clap::value_parser!(u32).range(1..))]
+        timeout: Option<u32>,
         /// Show participant and grant dates.
         #[arg(long, conflicts_with = "plain")]
         who: bool,
@@ -325,9 +331,20 @@ pub(super) fn run() -> ExitCode {
     let legacy = args.structured_output();
     let launcher_report =
         matches!(&args.command, Command::Participant(command) if command.is_launcher_report());
+    let watches_link = matches!(
+        &args.command,
+        Command::Participant(participant::Command::Read { .. }) | Command::Mailbox { .. }
+    );
     match args.execute() {
         Ok(exit) => exit,
         Err(error) => {
+            let next = if error == Error::refused(participant::EMPTY_BODY) {
+                "Give the message text as an argument or pass - to read it from standard input."
+            } else if watches_link && client_transport::link_failed(&error) {
+                client_transport::LINK_HINT
+            } else {
+                next
+            };
             output::operation_error(&operation, &error.to_string(), next, legacy);
             ExitCode::from(match error.outcome() {
                 Outcome::Done => 0,
@@ -465,6 +482,17 @@ impl Args {
                 ..
             } => mailbox::waiting(self.config, name, json),
             Command::Mailbox {
+                next: true,
+                name,
+                timeout,
+                ..
+            } => {
+                if name.as_deref() != Some("lead") {
+                    return Err(Error::refused("--next requires --for lead"));
+                }
+                mailbox::next(self.config, timeout)
+            }
+            Command::Mailbox {
                 name,
                 plain,
                 who,
@@ -473,6 +501,8 @@ impl Args {
                 orders,
                 waiting: false,
                 trace: None,
+                next: false,
+                ..
             } => mailbox::run(self.config, name, plain, who, questions, json, orders),
             Command::Enrol {
                 name,

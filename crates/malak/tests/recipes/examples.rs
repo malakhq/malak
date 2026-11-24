@@ -158,6 +158,7 @@ examples! {
     send_delivers_a_note: "send" [running] |example| {
         let output = example.run();
         assert!(output.contains("Build finished."), "{output}");
+        assert!(output.contains("A second note."), "{output}");
     }
 
     read_acknowledges_the_displayed_note: "read" [running] |example| {
@@ -307,6 +308,10 @@ examples! {
         example.board.lead(&["send", "lead", "Plain example note."]);
         screen.wait_for("Plain example note.");
         assert!(!screen.bytes.windows(b"\x1b[?1049h".len()).any(|window| window == b"\x1b[?1049h"));
+    }
+
+    mailbox_next_can_wait_for_a_second: "mailbox --next" [running] |example| {
+        assert_eq!(example.run(), "No events.\n");
     }
 
     mailbox_for_filters_activity_to_alice: "mailbox --for" [running] |example| {

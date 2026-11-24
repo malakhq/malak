@@ -1,6 +1,7 @@
 [package]
 name = "malak-record"
-description = "Record integrity primitives for the Malak board core"
+description = "Integrity checks for stored board records. Internal to Malak; no stability promise."
+categories = ["cryptography"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,7 +13,7 @@ repository.workspace = true
 [dependencies]
 bytes = "1"
 hmac = { version = "0.13", features = ["zeroize"] }
-malak-layers = { path = "../malak-layers", version = "0.1.0" }
+malak-layers = { path = "../malak-layers", version = "0.1.1" }
 sha2 = { version = "0.11", default-features = false }
 
 [dev-dependencies]

@@ -178,11 +178,12 @@ class RunningBoardsTests(unittest.TestCase):
         cls.malak = built if built.is_file() else shutil.which("malak")
         if cls.malak is None:
             raise RuntimeError("Build malak with cargo build -p malak or add malak to PATH")
-        # Board sockets live under this folder, so it must not depend on how long
-        # the checkout path is (SUN_LEN is 104 on macOS).
+        home = Path.home()
+        # Malak checks every ancestor, so a shared system temp directory is
+        # unsuitable. Keep the board socket paths short even in a deep checkout.
         cls.root = Path(cls.enterClassContext(tempfile.TemporaryDirectory(
-            prefix="mk-", dir=os.path.realpath(tempfile.gettempdir()))))
-        cls.real_registry = Path.home() / ".malak" / "boards.jsonl"
+            prefix=".mk-", dir=home.resolve())))
+        cls.real_registry = home / ".malak" / "boards.jsonl"
         cls.registry_before = cls.registry_snapshot()
         cls.addClassCleanup(cls.check_real_registry)
         cls.env = {
@@ -261,7 +262,7 @@ class RunningBoardsTests(unittest.TestCase):
             capture_output=True, check=True, timeout=12, env=self.env,
         )
         context = run_observe(PAYLOADS["codex_start"], self.env)["additionalContext"]
-        self.assertIn(" mailbox --plain --for lead`", context)
+        self.assertIn(" mailbox --plain --for lead --next`", context)
 
     def test_observe_posts_nothing_to_any_running_board(self):
         def channels():

@@ -7,6 +7,7 @@ use super::{
     text, trace,
 };
 use crate::cli::{
+    client_transport::{LINK_DROPPED, link_failed, reconnect},
     config::io_error,
     participant::{ParticipantRecord, Session},
 };
@@ -14,6 +15,7 @@ use malak::Error;
 use serde_json::{Map, Value};
 use std::sync::mpsc::{self, SyncSender};
 use std::thread;
+use std::time::Instant;
 
 pub(super) fn readable_channels<'a>(
     channels: impl Iterator<Item = &'a model::Channel> + Clone,
@@ -39,19 +41,9 @@ pub(super) fn preview_worker(
                 let _ = tx.send(Update::PreviewsUnavailable);
                 return;
             };
-            let mut session = Some(session);
+            let mut previews = LivePreviews::new(door, session, id);
             while let Ok(PreviewRequest { address, viewer }) = receive.recv() {
-                let preview = if id.as_str() == viewer.id {
-                    let first = fetch_live(&door, &mut session, &viewer, &address);
-                    if first.is_err() && session.is_none() {
-                        thread::sleep(REFRESH);
-                        fetch_live(&door, &mut session, &viewer, &address)
-                    } else {
-                        first
-                    }
-                } else {
-                    Ok(None)
-                };
+                let preview = previews.fetch(&viewer, &address);
                 if tx.send(Update::Preview(address, preview)).is_err() {
                     break;
                 }
@@ -61,31 +53,57 @@ pub(super) fn preview_worker(
     Ok(send)
 }
 
-fn fetch_live(
-    door: &PreviewDoor,
-    session: &mut Option<Session>,
-    viewer: &Participant,
-    address: &Address,
-) -> Result<Option<Preview>, Error> {
-    let result = fetch_with(viewer, address, |address| {
-        if session.is_none() {
-            *session = door
-                .open()
-                .filter(|(_, id)| id.as_str() == viewer.id)
-                .map(|(session, _)| session);
+pub(super) struct LivePreviews {
+    door: PreviewDoor,
+    session: Option<Session>,
+    pub id: malak::ParticipantId,
+}
+
+impl LivePreviews {
+    pub fn new(door: PreviewDoor, session: Session, id: malak::ParticipantId) -> Self {
+        Self {
+            door,
+            session: Some(session),
+            id,
         }
-        let connected = session
-            .as_mut()
-            .ok_or_else(|| Error::unavailable("could not reopen mailbox message previews"))?;
-        read_message_once(connected, address, RecordBody::Full)
-    });
-    if session
-        .as_ref()
-        .is_some_and(|session| !session.is_connected())
-    {
-        *session = None;
     }
-    result
+
+    pub fn fetch(
+        &mut self,
+        viewer: &Participant,
+        address: &Address,
+    ) -> Result<Option<Preview>, Error> {
+        if self.id.as_str() != viewer.id {
+            return Ok(None);
+        }
+        fetch_with(viewer, address, |address| match self.read(address) {
+            Err(error) if link_failed(&error) => {
+                reconnect(Instant::now() + REFRESH, |_| self.read(address))
+            }
+            result => result,
+        })
+    }
+
+    fn read(&mut self, address: &Address) -> Result<Option<Preview>, Error> {
+        if self.session.is_none() {
+            let (session, id) = self
+                .door
+                .open()
+                .ok_or_else(|| Error::unavailable(LINK_DROPPED))?;
+            if id != self.id {
+                return Err(Error::refused(
+                    "mailbox preview handover changed participant",
+                ));
+            }
+            self.session = Some(session);
+        }
+        let session = self.session.as_mut().expect("preview session is open");
+        let result = read_message(session, address, RecordBody::Full);
+        if !session.is_connected() {
+            self.session = None;
+        }
+        result
+    }
 }
 
 pub(super) fn fetch(

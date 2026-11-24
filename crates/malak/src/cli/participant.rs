@@ -1,5 +1,5 @@
 use super::{
-    client_transport::ClientTransport,
+    client_transport::{ClientTransport, link_failed, link_io_error, reconnect},
     config::{Config, START_HINT, io_error},
     examples, output, owner_commands, owner_for_board_quiet, presentation,
 };
@@ -18,7 +18,7 @@ use std::fmt::Write as _;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod reply;
 
@@ -27,23 +27,10 @@ use reply::{Output, agent_text};
 
 const CALL_WAIT: Duration = Duration::from_secs(60);
 pub(super) const REPORT_CONNECTION_EXIT: u8 = 75;
+pub(super) const EMPTY_BODY: &str = "message body is empty";
 
 pub(super) fn report_connection_failed(error: &Error) -> bool {
-    if error.outcome() != Outcome::Unavailable {
-        return false;
-    }
-    let reason = error.to_string();
-    matches!(
-        reason.as_str(),
-        "board has stopped"
-            | "link is closed"
-            | "link closed while reading a segment"
-            | "link stopped while writing a segment"
-            | "link closed before writing bytes"
-            | "the link deadline passed"
-    ) || ["no board is answering at ", "read link: ", "write link: "]
-        .iter()
-        .any(|prefix| reason.starts_with(prefix))
+    link_failed(error)
 }
 
 #[derive(Subcommand)]
@@ -202,6 +189,9 @@ impl Command {
                     Some(body) => body,
                     None => read_body(argument.as_deref(), max_bytes)?,
                 };
+                if body.is_empty() {
+                    return Err(Error::refused(EMPTY_BODY));
+                }
                 let kind = match kind {
                     Kind::Note => "note",
                     Kind::Task => "task",
@@ -294,6 +284,10 @@ impl Command {
                 ..
             } => {
                 let wait = Duration::from_secs(wait).min(Limits::default().read_wait);
+                let output = || Output::messages(json, agent, offset.unwrap_or(0));
+                if !wait.is_zero() {
+                    return session.read_waiting(&channels, wait, limit, output);
+                }
                 let frame = encode_frame(
                     2,
                     "READ",
@@ -301,11 +295,7 @@ impl Command {
                     |out| read_fields(out, &channels, wait, limit),
                     &[],
                 );
-                (
-                    frame,
-                    Output::messages(json, agent, offset.unwrap_or(0)),
-                    wait + CALL_WAIT,
-                )
+                (frame, output(), CALL_WAIT)
             }
             Self::Get {
                 channel,
@@ -351,7 +341,9 @@ impl Command {
             }
         };
         let frame = frame.map_err(|_| Error::refused("request does not fit"))?;
-        session.request(output, wait, |client| client.send_frame(frame, CALL_WAIT))
+        session.request(output, wait, false, |client| {
+            client.send_frame(frame, CALL_WAIT)
+        })
     }
 }
 
@@ -434,6 +426,13 @@ impl Session {
     }
 
     fn client(&mut self) -> Result<&mut LocalClient<ClientTransport>, Error> {
+        self.client_with_wait(None)
+    }
+
+    fn client_with_wait(
+        &mut self,
+        remaining: Option<Duration>,
+    ) -> Result<&mut LocalClient<ClientTransport>, Error> {
         if self.client.is_none() {
             let path = handover_path(self.config.clone())?;
             let board = self
@@ -447,20 +446,13 @@ impl Session {
                 mechanism(handover)
             };
             let (client, _) = ClientTransport::connect(|transport| {
-                if self.launcher_report {
-                    // Let the launcher retry the entire send. Retrying attachment
-                    // here would fold an attachment refusal into "could not attach".
+                if let Some(wait) = remaining.or_else(|| self.launcher_report.then_some(CALL_WAIT))
+                {
+                    // The waiting read or launcher owns the retry window.
                     let handover = HandoverFile::read(&path)?;
                     let mechanism = select(&handover)?;
-                    LocalClient::participant(transport, handover, mechanism).map_err(|error| {
-                        // The board can use the same timeout text for a store call.
-                        // Only the client's attachment timeout is a link failure.
-                        if error == Error::unavailable("worker did not answer in time") {
-                            Error::unavailable("the link deadline passed")
-                        } else {
-                            error
-                        }
-                    })
+                    LocalClient::participant_with_wait(transport, handover, mechanism, wait)
+                        .map_err(link_io_error)
                 } else {
                     LocalClient::participant_from_file(transport, &path, select)
                 }
@@ -523,7 +515,7 @@ impl Session {
                 &[],
             )
             .map_err(|_| Error::refused("request does not fit"))?;
-            self.request(Output::Quiet, CALL_WAIT, |client| {
+            self.request(Output::Quiet, CALL_WAIT, false, |client| {
                 client.send_frame(frame, CALL_WAIT)
             })
             .map_err(|error| {
@@ -591,7 +583,7 @@ impl Session {
         .map_err(|_| Error::refused("request does not fit"))?;
         self.client()?;
         let (_, header) = self
-            .request(Output::Quiet, CALL_WAIT, |client| {
+            .request(Output::Quiet, CALL_WAIT, false, |client| {
                 client.send_frame(frame, CALL_WAIT)
             })
             .map_err(|error| match error.outcome() {
@@ -624,13 +616,15 @@ impl Session {
         &mut self,
         mut output: Output,
         wait: Duration,
+        defer_messages: bool,
         send: impl FnOnce(&mut LocalClient<ClientTransport>) -> Result<(), Error>,
     ) -> Result<(Output, Map<String, Value>), Error> {
         let client = self.client()?;
+        let mut pending = Vec::new();
         let reply = (|| {
-            send(client)?;
+            send(client).map_err(link_io_error)?;
             loop {
-                let frame = client.read_frame(wait)?;
+                let frame = client.read_frame(wait).map_err(link_io_error)?;
                 if frame.rid() != 2 {
                     return Err(invalid_reply());
                 }
@@ -638,6 +632,7 @@ impl Session {
                     return Err(invalid_reply());
                 };
                 match frame.op() {
+                    "MSG" if defer_messages => pending.push((header, frame)),
                     "MSG" => output.message(&mut header, frame.body())?,
                     "OK" | "ERR" if frame.body().is_empty() => {
                         return Ok((frame.op() == "OK", header));
@@ -647,12 +642,52 @@ impl Session {
             }
         })();
         match reply {
-            Ok((true, header)) => Ok((output, header)),
+            Ok((true, header)) => {
+                for (mut label, frame) in pending {
+                    output.message(&mut label, frame.body())?;
+                }
+                Ok((output, header))
+            }
             Ok((false, header)) => Err(remote_error(&header)),
             Err(error) => {
                 self.client = None;
                 Err(error)
             }
+        }
+    }
+
+    fn read_waiting(
+        &mut self,
+        channels: &[String],
+        wait: Duration,
+        limit: Option<u64>,
+        output: impl Fn() -> Output,
+    ) -> Result<(Output, Map<String, Value>), Error> {
+        self.client()?;
+        let deadline = Instant::now() + wait;
+        let read = |session: &mut Self| {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let frame = encode_frame(
+                2,
+                "READ",
+                2 + usize::from(limit.is_some()),
+                |out| read_fields(out, channels, remaining, limit),
+                &[],
+            )
+            .map_err(|_| Error::refused("request does not fit"))?;
+            // A dropped attempt may have sent MSG frames but no closing reply.
+            // Publish only the completed attempt so a retry cannot print twice.
+            session.request(output(), remaining + CALL_WAIT, true, |client| {
+                client.send_frame(frame, CALL_WAIT)
+            })
+        };
+        match read(self) {
+            Err(error) if link_failed(&error) => reconnect(deadline, |remaining| {
+                self.client = None;
+                self.client_with_wait(Some(remaining))?;
+                read(self)
+            }),
+            result => result,
         }
     }
 
@@ -746,10 +781,10 @@ impl Session {
             .map_err(|_| invalid_reply())?;
         let wait = Duration::from_secs(2);
         let reply = (|| {
-            client.send_frame(frame, wait)?;
+            client.send_frame(frame, wait).map_err(link_io_error)?;
             let mut record = None;
             loop {
-                let frame = client.read_frame(wait)?;
+                let frame = client.read_frame(wait).map_err(link_io_error)?;
                 if frame.rid() != 2 {
                     return Err(invalid_reply());
                 }

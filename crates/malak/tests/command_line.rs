@@ -466,9 +466,110 @@ fn json_message_omits_text_for_invalid_utf8() {
 
 #[test]
 fn json_message_includes_empty_text_for_an_empty_body() {
-    for message in read_and_get_json(b"") {
+    use malak_core::{HandoverFile, LocalClient};
+    use malak_proto::encode_frame;
+    use malak_transport_unix::UnixTransport;
+    use std::sync::Arc;
+
+    let board = Fixture::new();
+    let handover = HandoverFile::read(board.lead()).unwrap();
+    let mut lead =
+        LocalClient::participant(Arc::new(UnixTransport::default()), handover, None).unwrap();
+    // The CLI still displays empty records written by older versions or the library.
+    let frame = encode_frame(
+        1,
+        "SEND",
+        3,
+        |out| {
+            out.str("channel").unwrap().str("lead").unwrap();
+            out.str("kind").unwrap().str("note").unwrap();
+            out.str("id")
+                .unwrap()
+                .str("00000000000000000000000000000001")
+                .unwrap();
+        },
+        b"",
+    )
+    .unwrap();
+    lead.send_frame(frame, Duration::from_secs(5)).unwrap();
+    assert_eq!(lead.read_frame(Duration::from_secs(5)).unwrap().op(), "OK");
+
+    for words in [
+        &["read", "lead", "--json"][..],
+        &["get", "lead", "1", "--json"],
+    ] {
+        let message = messages(&call(&board.lead(), words)).remove(0);
         assert_eq!(message["body"], serde_json::json!([]));
         assert_eq!(message["text"], "");
+    }
+}
+
+#[test]
+fn a_named_board_reply_with_piped_text_requires_a_trailing_dash() {
+    let board = Fixture::new();
+    let (inbox, guest) = board.enrol("guest");
+    let registry = board.socket.path().join(".malak/durative");
+    std::fs::create_dir_all(&registry).unwrap();
+    std::fs::copy(&board.config, registry.join("board.toml")).unwrap();
+    let receipt = call(&guest, &["send", "--json", "lead", "guest question"]);
+    let receipt: Value = serde_json::from_str(&receipt).unwrap();
+    let creation = receipt["creation"].as_str().unwrap();
+    let mut reply = Command::new("sh");
+    let output = reply
+        .args([
+            "-c",
+            "printf '%s\\n' 'First line' 'Second line' | \"$@\"",
+            "malak-test",
+            MALAK,
+        ])
+        .args([
+            "--board",
+            "durative",
+            "send",
+            "--reply-to",
+            "lead",
+            creation,
+            "1",
+            &inbox,
+        ])
+        .env("HOME", board.socket.path())
+        .env("MALAK_HANDOVER", board.lead())
+        .output()
+        .unwrap();
+
+    assert_empty_send_refused(output);
+    assert!(messages(&call(&guest, &["read", "--json", &inbox])).is_empty());
+
+    let output = reply.arg("-").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let received = messages(&call(&guest, &["read", "--json", &inbox]));
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0]["text"], "First line\nSecond line\n");
+}
+
+#[test]
+fn send_refuses_an_explicit_empty_body() {
+    let board = Fixture::new();
+    for argument in ["", "-"] {
+        let output = board
+            .without_handover(&["send", "lead", argument])
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert_empty_send_refused(output);
+    }
+    assert!(messages(&call(&board.lead(), &["read", "--json", "lead"])).is_empty());
+}
+
+fn assert_empty_send_refused(output: std::process::Output) {
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{diagnostic}");
+    for expected in ["Error", "Reason", "body", "Next", "pass -"] {
+        assert!(diagnostic.contains(expected), "{diagnostic}");
     }
 }
 

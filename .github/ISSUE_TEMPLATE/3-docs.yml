@@ -1,0 +1,15 @@
+name: Documentation
+description: Docs are wrong, missing or unclear
+labels: ["docs"]
+body:
+  - type: input
+    attributes:
+      label: Page or file
+      placeholder: docs/QUICKSTART.md
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What is wrong or missing
+    validations:
+      required: true

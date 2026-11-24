@@ -1,6 +1,6 @@
 use super::{
     model::{Address, Event, Model, Preview, PreviewState},
-    text,
+    questions, text,
 };
 use crate::cli::{
     output::{self, clock, display},
@@ -149,6 +149,8 @@ pub(super) fn message_body(block: &mut String, address: &Address, preview: Previ
         } else {
             block.push_str("  Body preview unavailable.\n");
         }
+    } else if matches!(preview, PreviewState::AnswersInInbox) {
+        writeln!(block, "  {}", questions::INBOX_HINT).unwrap();
     } else {
         block.push_str("  Body preview unavailable.\n");
     }

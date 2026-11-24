@@ -8,4 +8,5 @@ cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all
 python3 -B -m unittest discover -s crates/malak/recipes/tests
+python3 -B -m unittest discover -s scripts/tests
 RUSTDOCFLAGS="${RUSTDOCFLAGS:+$RUSTDOCFLAGS }-D warnings" cargo doc --no-deps

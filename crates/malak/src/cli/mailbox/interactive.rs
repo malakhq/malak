@@ -72,7 +72,7 @@ pub(super) fn run(
         let now = view.stopped_at.unwrap_or_else(now_ms);
         let second = now / 1000;
         if redraw || last_draw != Some(second) {
-            updates.update_summary(model);
+            summary::update(model);
             scroll = scroll.min(model.people().len().saturating_sub(1));
             terminal
                 .draw(|frame| {
@@ -279,7 +279,6 @@ pub(super) struct BoardUpdates {
     events: Option<Receiver<Update>>,
     previews: Option<SyncSender<PreviewRequest>>,
     preview_pending: bool,
-    review_viewer: Option<String>,
 }
 
 pub(super) struct UpdateBatch {
@@ -293,13 +292,6 @@ impl BoardUpdates {
             events: Some(events),
             previews,
             preview_pending: false,
-            review_viewer: None,
-        }
-    }
-
-    pub fn update_summary(&self, model: &mut Model) {
-        if let Some(viewer) = &self.review_viewer {
-            summary::update(model, viewer);
         }
     }
 
@@ -357,7 +349,7 @@ impl BoardUpdates {
                 }
                 Ok(Update::Backfill(address, preview)) => fold_retained(model, address, preview),
                 Ok(Update::Recent(viewer, recent)) => {
-                    self.review_viewer = viewer;
+                    model.viewer = viewer;
                     for (address, preview) in recent {
                         fold_retained(model, address, preview);
                     }
@@ -391,10 +383,10 @@ impl BoardUpdates {
         if startup.history_ready
             && !self.preview_pending
             && let Some(previews) = &self.previews
-            && let Some(viewer) = &self.review_viewer
+            && model.viewer.is_some()
         {
             self.preview_pending =
-                request_preview(model, previews, selected, viewer, startup.history_complete);
+                request_preview(model, previews, selected, startup.history_complete);
         }
     }
 }
@@ -411,7 +403,6 @@ fn request_preview(
     model: &mut Model,
     sender: &SyncSender<PreviewRequest>,
     selected: Option<&Address>,
-    viewer: &str,
     history_complete: bool,
 ) -> bool {
     selected
@@ -427,12 +418,12 @@ fn request_preview(
         })
         .or_else(|| {
             if history_complete {
-                summary::missing(model, viewer)
+                summary::missing(model)
             } else {
                 None
             }
         })
-        .zip(model.participant(viewer))
+        .zip(model.viewer.as_deref().and_then(|id| model.participant(id)))
         .is_some_and(|(address, viewer)| {
             sender
                 .try_send(PreviewRequest {

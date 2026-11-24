@@ -71,7 +71,8 @@ def lead_handover_for(config):
 def lead_context(name, config):
     return (
         f"{INTRO} You lead board {json.dumps(name)}. "
-        f"Watch with `{lead_watcher_command(config, name)}`."
+        f"Run `{lead_watcher_command(config, name)}` in the background. "
+        "Handle the output, acknowledge lead messages, and run it again."
     )
 
 

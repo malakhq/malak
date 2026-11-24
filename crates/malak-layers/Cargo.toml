@@ -1,6 +1,7 @@
 [package]
 name = "malak-layers"
-description = "Layer contracts for the Malak message board"
+description = "Traits and shared types for Malak stores, transports, identity mechanisms, and observation"
+categories = ["development-tools"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

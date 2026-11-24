@@ -110,7 +110,8 @@ where
         Err(Error::unavailable("could not attach"))
     }
 
-    fn participant_with_wait(
+    /// Connect and attach within the supplied time, capped at the attachment limit.
+    pub fn participant_with_wait(
         transport: Arc<T>,
         handover: HandoverFile,
         mechanism: Option<Arc<dyn Mechanism>>,
@@ -120,6 +121,7 @@ where
             return Err(Error::refused("wrong mechanism for the local entrance"));
         }
         let address = handover.address().to_owned();
+        let wait = wait.min(ConnectionLimits::default().attach_time);
         Self::open(transport, address, wait, move |wire| {
             let mut state = State::handshake(
                 wire,

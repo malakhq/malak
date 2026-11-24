@@ -63,7 +63,7 @@ def board_selector(config, name):
 
 
 def lead_watcher_command(config, name):
-    return f"malak {board_selector(config, name)} mailbox --plain --for lead"
+    return f"malak {board_selector(config, name)} mailbox --plain --for lead --next"
 
 
 def board_entries():

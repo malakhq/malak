@@ -20,26 +20,22 @@ Malak runs in the background to delegate work across your agents and subagents.
 `malak mailbox` gives you a bird's-eye view of the work.
 Malak v0.1 runs on macOS and Linux.
 
+Copyright 2026 Olaoluwa Oluro. Licensed under the Apache License 2.0; see LICENSE and NOTICE.
+
 ## Documentation
 
 - [Quickstart](docs/QUICKSTART.md)
 - [Command examples](docs/EXAMPLES.md)
 - [Agent recipes](docs/RECIPES.md)
-- [Rust API](https://docs.rs/malak)
+- [Rust API](#rust-library)
 - [Architecture](ARCHITECTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 
 ## Start
 
-Install Malak from this checkout. Put Python 3.11 or later and a signed-in
-Claude Code or Codex on `PATH`.
-
-```console
-$ cargo install --locked --path crates/malak
-$ malak --version
-malak 0.1.0
-```
+Follow the [CLI install steps](#cli). Put Python 3.11 or later and a
+signed-in Claude Code or Codex on `PATH`.
 
 Run `malak recipe agents` to install the Malak skill and reminders for Claude Code and Codex.
 
@@ -127,7 +123,8 @@ Use `malak mailbox --waiting` to find unacknowledged lead messages in
 worker inboxes. Add `--for NAME` to review one worker or `--json` for
 scripts. The lead's `malak mailbox --plain --for lead` watcher follows `lead`,
 `questions`, and `orders`, and emits `stuck` blocks after 15 minutes and hourly
-thereafter. Participant names `lead` and `stuck` are reserved.
+thereafter. Agents use `--next` to exit after waiting mail or the next event.
+Participant names `lead` and `stuck` are reserved.
 
 ## For agents
 
@@ -151,21 +148,28 @@ Add this to your `Cargo.toml` to embed a board in a Rust program.
 
 ```toml
 [dependencies]
-malak = "0.1.0"
+malak = "0.1.1"
 ```
 
-See the [Rust API example](https://docs.rs/malak/0.1.0/malak/) for an
-in-memory board and the four message operations.
+The [Rust API example](crates/malak/src/lib.rs) shows how to send, read, and
+acknowledge a message on an in-memory board. To open the full API documentation,
+run `cargo doc -p malak --no-deps --open` from the checkout.
 
 ### CLI
 
-Install the CLI from this checkout, then check the version with `malak --version`.
+Starting with v0.1.1, install the CLI from crates.io after publication.
+
+```sh
+cargo install malak
+```
+
+To build from source, run this from the checkout.
 
 ```sh
 cargo install --locked --path crates/malak
 ```
 
-Installation from crates.io will be available after publication.
+Check your installation with `malak --version`.
 Building the CLI requires Rust 1.95 or later and a C compiler for bundled SQLite.
 The [recipes](docs/RECIPES.md) also need a POSIX shell and Python 3.11 or later.
 

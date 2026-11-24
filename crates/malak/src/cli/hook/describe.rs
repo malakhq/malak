@@ -219,7 +219,7 @@ fn describe(tool: Tool) -> Description {
         ],
         context_byte_limit: BUDGET,
         monitor: Monitor {
-            command: "malak mailbox --plain --for lead",
+            command: "malak mailbox --plain --for lead --next",
             fallback: "malak read --wait 60 lead questions",
         },
         events: EventName::ALL

@@ -1,6 +1,7 @@
 [package]
 name = "malak-testkit"
-description = "Contract tests for Malak layers"
+description = "Reusable contract tests for Malak layer implementations"
+categories = ["development-tools::testing"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,10 +11,10 @@ keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
-malak-layers = { path = "../malak-layers", version = "0.1.0" }
+malak-layers = { path = "../malak-layers", version = "0.1.1" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-malak-fs = { path = "../malak-fs", version = "0.1.0" }
+malak-fs = { path = "../malak-fs", version = "0.1.1" }
 nix = { version = "0.31", features = ["user"] }
 
 [lints]

@@ -1,6 +1,7 @@
 [package]
 name = "malak-core"
-description = "The core of the Malak message board"
+description = "Board lifecycle, participant permissions, and message operations for Malak"
+categories = ["concurrency", "development-tools"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -19,25 +20,25 @@ sha2 = { version = "0.11", default-features = false }
 smallvec = "1.16"
 zeroize = "1"
 mime = "0.3.17"
-malak-layers = { path = "../malak-layers", version = "0.1.0" }
-malak-proto = { path = "../malak-proto", version = "0.1.0" }
+malak-layers = { path = "../malak-layers", version = "0.1.1" }
+malak-proto = { path = "../malak-proto", version = "0.1.1" }
 
-malak-record = { path = "../malak-record", version = "0.1.0" }
+malak-record = { path = "../malak-record", version = "0.1.1" }
 
 [dev-dependencies]
-malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.0" }
-malak-store-memory = { path = "../malak-store-memory", version = "0.1.0" }
+malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.1" }
+malak-store-memory = { path = "../malak-store-memory", version = "0.1.1" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 arc-swap = "1"
-malak-journal = { path = "../malak-journal", version = "0.1.0" }
-malak-fs = { path = "../malak-fs", version = "0.1.0" }
+malak-journal = { path = "../malak-journal", version = "0.1.1" }
+malak-fs = { path = "../malak-fs", version = "0.1.1" }
 nix = { version = "0.31", features = ["fs", "user"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.0" }
-malak-testkit = { path = "../malak-testkit", version = "0.1.0" }
-malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.0" }
+malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.1" }
+malak-testkit = { path = "../malak-testkit", version = "0.1.1" }
+malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.1" }
 
 [lints]
 workspace = true

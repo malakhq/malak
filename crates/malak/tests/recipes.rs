@@ -389,7 +389,7 @@ fn agents_md_names_the_lead_monitor() {
     run(recipe);
 
     let agents = fs::read_to_string(board.home.path().join("AGENTS.md")).unwrap();
-    assert!(agents.contains("`malak mailbox --plain --for lead`"));
+    assert!(agents.contains("`malak mailbox --plain --for lead --next`"));
 }
 
 #[test]
@@ -1487,7 +1487,8 @@ fn lead_up_prints_the_required_watcher_and_ack_steps_before_the_guide() {
         "{diagnostics}"
     );
     let steps = [
-        "Start it now with `malak --board malak mailbox --plain --for lead`. Keep it running and restart it when it ends.",
+        "Run `malak --board malak mailbox --plain --for lead --next` in the background.",
+        "Handle the output, acknowledge lead messages, and run it again.",
         "Acknowledge each lead message once handled with `malak --board malak ack --creation CREATION lead POSITION`.",
         "Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.",
         "malak recipe --help",
@@ -2114,7 +2115,7 @@ fn worker_start_keeps_the_retry_hint_when_the_board_stays_stopped() {
     board.start();
     let mut worker = board.worker_start(&[], FINISH_ON_RELEASE);
     worker
-        .env("MALAK_TEST_REPORT_RETRY_SECONDS", "2")
+        .env("MALAK_TEST_REPORT_RETRY_SECONDS", "6")
         .stderr(Stdio::piped());
     let started = Instant::now();
     let result = finish_worker_with_board_stopped(&board, &mut worker)
@@ -2308,7 +2309,7 @@ fn worker_start_refuses_to_enrol_without_a_watcher_on_the_selected_board() {
     for text in [
         "Error: Could not run worker-start.",
         "no lead watcher is running on board malak; reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.",
-        "start it with `malak --board malak mailbox --plain --for lead` and keep it running, then run worker-start again (or pass --no-watcher).",
+        "start it in the background with `malak --board malak mailbox --plain --for lead --next`, then run worker-start again (or pass --no-watcher).",
     ] {
         assert!(diagnostics.contains(text), "{diagnostics}");
     }
@@ -3580,6 +3581,21 @@ fn answer_under_an_order_names_it_on_the_first_line() {
         String::from_utf8(body(&received[1])).unwrap(),
         format!("Under order: {creation} 1\n\nThe first.\n")
     );
+}
+
+#[test]
+fn answer_under_an_order_refuses_empty_stdin() {
+    let board = Fixture::new();
+    board.start();
+    board.lead(&["send", "lead", "question"]);
+    board.lead(&["send", "orders", "Until: 2999-01-01T00:00:00Z\n\nAnything."]);
+
+    let result = answer_under(&board, "1", "");
+
+    let diagnostic = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.status.code(), Some(2), "{diagnostic}");
+    assert!(diagnostic.contains("standard input"), "{diagnostic}");
+    assert_eq!(messages(&board.lead(&["read", "lead", "--json"])).len(), 1);
 }
 
 #[test]

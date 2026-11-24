@@ -44,7 +44,7 @@ USAGE = {
 
 def report_attempt(command, env, timeout):
     # The shell can pipe the result through a separate malak process. Bound
-    # the whole attempt so a stalled link cannot outlive the retry window.
+    # the whole process group so a stalled link cannot hold the launcher.
     with subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           process_group=0) as process:
         try:
@@ -62,19 +62,25 @@ def report_attempt(command, env, timeout):
 
 def send_final_report(command, env):
     window = int(env.get("MALAK_TEST_REPORT_RETRY_SECONDS", REPORT_RETRY_SECONDS))
-    deadline = time.monotonic() + min(max(window, 1), REPORT_RETRY_SECONDS)
+    window = min(max(window, 1), REPORT_RETRY_SECONDS)
+    call_timeout = min(10, window / 2)
+    deadline = time.monotonic() + window
     delay = 0.1
     attempt = 1
-    result = report_attempt(command, env, min(10, deadline - time.monotonic()))
-    while (result.returncode == REPORT_CONNECTION_EXIT
-           and (remaining := deadline - time.monotonic()) > 0):
-        time.sleep(min(delay, remaining))
-        if (remaining := deadline - time.monotonic()) <= 0:
+    result = report_attempt(command, env, min(call_timeout, max(0, deadline - time.monotonic())))
+    while result.returncode == REPORT_CONNECTION_EXIT:
+        # Even if scheduling ate the window, give the second call time to start.
+        retry_floor = 0.1 if attempt == 1 else 0
+        pause = min(delay, deadline - time.monotonic() - retry_floor)
+        if pause > 0:
+            time.sleep(pause)
+        remaining = deadline - time.monotonic()
+        if attempt > 1 and remaining <= 0:
             break
         attempt += 1
         out.details("Board connection unavailable. Retrying the worker report.",
                     (("Attempt", attempt),), stream=sys.stderr)
-        result = report_attempt(command, env, min(10, remaining))
+        result = report_attempt(command, env, min(call_timeout, max(retry_floor, remaining)))
         delay = min(delay * 2, 2)
     if result.stderr:
         sys.stderr.buffer.write(result.stderr)
@@ -331,7 +337,7 @@ class Worker:
         out.error(
             f"run {self.mode}",
             f"no lead watcher is running on board {name}; {LEAD_WATCHER_CONSEQUENCE}",
-            f"start it with `{command}` and keep it running, then run {self.mode} again (or pass --no-watcher).",
+            f"start it in the background with `{command}`, then run {self.mode} again (or pass --no-watcher).",
         )
         return False
 

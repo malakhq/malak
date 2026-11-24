@@ -67,27 +67,27 @@ reminders. `malak uninstall` removes them too.
 When you run `malak upgrade`, it refreshes the installed integration if its
 skill or hook definitions changed. With the Codex integration installed, open
 Codex app-server threads receive the upgrade notice. If the hooks changed,
-restart existing Claude Code chats or review the hooks in Codex. Restart each
-lead chat's watcher after its board restarts.
+restart existing Claude Code chats or review the hooks in Codex.
 
 ## 3. Start the lead watcher
 
-Start this command before launching the test worker. Keep it running for the
-whole session. It follows the lead inbox, questions, orders and stuck workers
-so updates reach you without the owner relaying them.
+Start this command in the background before launching the test worker. It
+follows the lead inbox, questions, orders and stuck workers.
 Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.
 
 ```sh
-malak --board "$board" mailbox --plain --for lead
+malak --board "$board" mailbox --plain --for lead --next
 ```
 
-Set `MALAK_HANDOVER` in the watcher command itself. Use your tool's background
-or monitor feature, such as Claude Code's background Bash or Monitor. In Codex CLI, start
-the command with a short yield, keep the running command session ID, and
-check its output as you work. Confirm the watcher is running before you send
-the test brief. Restart the watcher when it ends, including when a tool such
-as Claude Code Monitor reaches its time limit. Unacknowledged messages show
-again on restart.
+Set `MALAK_HANDOVER` in the watcher command itself. In Claude Code, use
+background Bash. In Codex, start the command with a short yield, keep the
+command session ID, and check its output as you work. The watcher prints
+waiting lead mail and open owner questions if present, or waits for the next
+event, then exits. Handle what it prints, acknowledge lead messages, and run
+it again. It reconnects through a brief board restart.
+
+For continuous output in a terminal, use
+`malak --board "$board" mailbox --plain --for lead`.
 
 If your tool cannot keep a background command running, poll at the start of
 each turn and after each step. Use the same handover and board name as above.

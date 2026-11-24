@@ -12,7 +12,8 @@ use malak::Error;
 use std::path::PathBuf;
 use std::{borrow::Borrow, cmp::Reverse, collections::HashMap};
 
-const CHANNEL: &str = "questions";
+pub(super) const CHANNEL: &str = "questions";
+pub(super) const INBOX_HINT: &str = "Answers arrive in your inbox";
 const LEAD: &str = "lead";
 pub(super) const OWNER_HEADING: &str = "For the owner";
 

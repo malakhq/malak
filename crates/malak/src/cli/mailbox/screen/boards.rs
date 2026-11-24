@@ -5,7 +5,7 @@ use crate::cli::{
     mailbox::{
         model::{Lane, Model, Question, QuestionKind},
         multiboard::{BoardEntry, BoardId, State},
-        text,
+        questions, summary, text,
         trace::LiveTrace,
     },
     output::display,
@@ -118,6 +118,7 @@ pub(super) struct Counts {
     owner: usize,
     orders: usize,
     questions_pending: bool,
+    pub question_inbox: bool,
     orders_pending: bool,
 }
 
@@ -131,14 +132,16 @@ impl Counts {
             self.workers += 1;
             self.waiting = self.waiting.saturating_add(waiting);
         }
-        if let Some(questions) = model.open_questions() {
+        if model.question_inbox_viewer().is_some() {
+            self.question_inbox = true;
+        } else if let Some(questions) = model.open_questions() {
             self.questions += questions.len();
             self.owner += questions
                 .iter()
                 .filter(|q| q.kind == QuestionKind::Owner)
                 .count();
         } else {
-            self.questions_pending |= model.has_retained("questions");
+            self.questions_pending |= model.has_retained(questions::CHANNEL);
         }
         if let Some(orders) = model.orders_in_force(now) {
             self.orders += orders;
@@ -149,9 +152,11 @@ impl Counts {
 
     pub fn labels(&self) -> Vec<String> {
         let questions = if self.questions_pending {
-            "loading…".into()
+            "questions loading…".into()
+        } else if self.question_inbox && self.questions == 0 {
+            summary::inbox_label()
         } else {
-            self.questions.to_string()
+            format!("questions {}", self.questions)
         };
         let orders = if self.orders_pending {
             "loading…".into()
@@ -160,7 +165,7 @@ impl Counts {
         };
         vec![
             format!("lead {}", self.lead),
-            format!("questions {questions}"),
+            questions,
             format!("orders {orders}"),
             format!("inboxes {} waiting", self.workers),
         ]

@@ -1,6 +1,6 @@
 # Security
 
-Report vulnerabilities privately to `SECURITY_CONTACT_EMAIL` with the affected Malak version and steps to reproduce.
+Report vulnerabilities privately through GitHub: open the repository's Security tab and choose "Report a vulnerability" (https://github.com/malakhq/malak/security/advisories/new). Include the affected Malak version and steps to reproduce. Please do not open a public issue.
 Malak trusts programs sharing the lead’s OS account. They can read the lead’s keys and store and use the owner door.
 An agent running under the owner's OS account can sign itself onto the owner's
 other boards because the owner door trusts that account. Use separate OS accounts

@@ -9,7 +9,6 @@ use std::collections::{HashMap, hash_map::Entry};
 
 pub(super) const ROWS: u16 = 5;
 const ORDERS: &str = "orders";
-const QUESTIONS: &str = "questions";
 
 /// Only channels this participant can get messages from contribute to a review.
 struct Sources<'a> {
@@ -32,7 +31,7 @@ impl<'a> Sources<'a> {
             .find(|channel| channel.name == ORDERS && channel.floor < channel.head);
         let questions = readable
             .iter()
-            .any(|channel| channel.name == QUESTIONS && channel.floor < channel.head)
+            .any(|channel| channel.name == questions::CHANNEL && channel.floor < channel.head)
             .then_some(readable);
         Self { questions, orders }
     }
@@ -132,7 +131,10 @@ impl<T> Review<T> {
 }
 
 /// Review only complete ranges from the same previews the activity view loaded.
-pub(super) fn update(model: &mut Model, viewer: &str) {
+pub(super) fn update(model: &mut Model) {
+    let Some(viewer) = model.viewer.as_deref() else {
+        return;
+    };
     let sources = Sources::new(model.channels(), review_viewer(model, viewer));
     let orders = if model.order_ends().is_none() {
         sources.orders.and_then(|channel| {
@@ -169,7 +171,8 @@ pub(super) fn update(model: &mut Model, viewer: &str) {
 
 /// After initial history, a new range can appear before its tail event or
 /// outside the selected participant's activity. Fill only missing previews.
-pub(super) fn missing(model: &Model, viewer: &str) -> Option<Address> {
+pub(super) fn missing(model: &Model) -> Option<Address> {
+    let viewer = model.viewer.as_deref()?;
     let sources = Sources::new(model.channels(), review_viewer(model, viewer));
     let orders = sources.orders.filter(|_| model.order_ends().is_none());
     let questions = sources
@@ -193,7 +196,7 @@ fn review_viewer<'a>(model: &'a Model, id: &str) -> Option<&'a Participant> {
 }
 
 fn question_counts(model: &Model) -> Option<(usize, usize)> {
-    if !model.has_retained(QUESTIONS) {
+    if !model.has_retained(questions::CHANNEL) {
         return Some((0, 0));
     }
     let open = model.open_questions()?;
@@ -220,6 +223,7 @@ pub(super) fn compact(
 ) -> [String; ROWS as usize] {
     let pending = if stopped { "unavailable" } else { "loading…" };
     let questions = match question_counts(model) {
+        _ if model.question_inbox_viewer().is_some() => inbox_label(),
         Some((count, 0)) => format!("questions {count}"),
         Some((count, owner)) => format!("questions {count} ({owner} you)"),
         None => format!("questions {pending}"),
@@ -243,6 +247,7 @@ pub(super) fn compact(
 
 pub(super) fn lines(model: &Model, now: u64, columns: usize) -> [String; ROWS as usize] {
     let questions = match question_counts(model) {
+        _ if model.question_inbox_viewer().is_some() => inbox_label(),
         None => "questions unavailable".into(),
         Some((count, 0)) => format!("questions {count} open"),
         Some((count, owner)) => {
@@ -269,6 +274,10 @@ pub(super) fn lines(model: &Model, now: u64, columns: usize) -> [String; ROWS as
         inboxes(model, columns),
         relay,
     ]
+}
+
+pub(super) fn inbox_label() -> String {
+    format!("questions · {}", questions::INBOX_HINT)
 }
 
 fn inboxes(model: &Model, columns: usize) -> String {
@@ -367,13 +376,14 @@ mod tests {
         let question = snapshot.channels[0].address(1);
         let answer = snapshot.channels[1].address(1);
         let mut model = Model::new(snapshot, None);
+        model.viewer = Some("lead".into());
 
         model.backfill(question.clone(), preview("a0123456", None), true);
-        update(&mut model, "lead");
+        update(&mut model);
         assert_eq!(question_counts(&model), None);
 
         model.backfill(answer, preview("lead", Some(question)), true);
-        update(&mut model, "lead");
+        update(&mut model);
         assert_eq!(question_counts(&model), Some((0, 0)));
     }
 
@@ -390,9 +400,10 @@ mod tests {
         snapshot.channels[0].name = "questions".into();
         snapshot.channels.push(orders);
         let mut model = Model::new(snapshot, None);
+        model.viewer = Some("lead".into());
 
         model.backfill(order, preview("lead", None), true);
-        update(&mut model, "lead");
+        update(&mut model);
 
         assert_eq!(order_count(&model, 1_001), Some(1));
         assert_eq!(question_counts(&model), None);

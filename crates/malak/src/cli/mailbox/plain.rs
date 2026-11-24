@@ -1,26 +1,25 @@
 //! Stream retained and live mailbox events as printable blocks.
 
 use super::{
-    REFRESH, Update, history,
-    messages::{RecordBody, add_quote, fetch, read_message},
+    REFRESH, Update, history, live_status,
+    messages::{LivePreviews, RecordBody, add_quote, read_message},
     model::{Event, Model, Status},
-    owner_commands, refresh, render, status_with_workers, stuck, summary,
+    owner_commands, refresh, render, stuck, summary,
 };
 use crate::cli::{
     board::OWNER_FOLDER,
-    config::{self, Config, io_error},
+    config::{self, io_error},
     output::{self, now_ms},
     participant::Session,
 };
-use malak::{Error, ParticipantId};
+use malak::Error;
 use malak_fs::Directory;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
 use std::time::{Duration, Instant};
 
-pub(super) fn register_lead_watcher(config: Option<PathBuf>) -> Option<Directory> {
-    let board = Config::read(config).ok()?.board;
+pub(super) fn register_lead_watcher(board: &config::Board) -> Option<Directory> {
     let door =
         config::open_owned_directory(&board.socket_folder.join(OWNER_FOLDER), true).ok()??;
     // A shared lock allows several watchers. The hook probes with a short
@@ -32,12 +31,13 @@ pub(super) fn register_lead_watcher(config: Option<PathBuf>) -> Option<Directory
 pub(super) fn run(
     model: &mut Model,
     rx: Receiver<Update>,
-    mut session: Option<(Session, ParticipantId)>,
+    mut previews: Option<LivePreviews>,
     title: &str,
     mut watch: Option<stuck::Watch>,
-    mut reader: owner_commands::Client,
-    state: &std::path::Path,
+    reader: owner_commands::Client,
+    settings: &config::Board,
 ) -> Result<(), Error> {
+    let mut reader = Some(reader);
     let mut output = io::stdout().lock();
     let mut loading = true;
     let title = format!("{title} ({})", output::local_zone(now_ms()));
@@ -55,7 +55,9 @@ pub(super) fn run(
     let mut next_refresh = Instant::now() + REFRESH;
     loop {
         if Instant::now() >= next_refresh {
-            refresh(model, status_with_workers(&mut reader, false, state)?)?;
+            if let Some(status) = live_status(&mut reader, false, settings)? {
+                refresh(model, status)?;
+            }
             next_refresh = Instant::now() + REFRESH;
         }
         // The local owner entrance and the board use the same host clock.
@@ -75,15 +77,18 @@ pub(super) fn run(
                 if watch.is_some()
                     && model.visible(&event)
                     && model.missing_event_participant(&event)
+                    && let Some(status) = live_status(&mut reader, false, settings)?
                 {
-                    refresh(model, status_with_workers(&mut reader, false, state)?)?;
+                    refresh(model, status)?;
                     next_refresh = Instant::now() + REFRESH;
                 }
                 let is_new = model.apply(event.clone());
                 if let Some(watch) = &mut watch {
                     watch.event(model, &event);
                 }
-                if !loading && is_new && !print_event(model, &event, session.as_mut(), &mut output)?
+                if !loading
+                    && is_new
+                    && !print_event(model, &event, previews.as_mut(), &mut output)?
                 {
                     return Ok(());
                 }
@@ -103,7 +108,7 @@ pub(super) fn run(
             Some(Update::BackfillDone) => {
                 let initial = model.feed().rev().cloned().collect::<Vec<_>>();
                 for event in &initial {
-                    ensure_preview(model, event, session.as_mut());
+                    ensure_preview(model, event, previews.as_mut());
                 }
                 for event in &initial {
                     if !write_plain(&mut output, &render::plain_event(model, event))? {
@@ -128,27 +133,27 @@ pub(super) fn run(
 fn print_event(
     model: &mut Model,
     event: &Event,
-    session: Option<&mut (Session, ParticipantId)>,
+    previews: Option<&mut LivePreviews>,
     output: &mut impl Write,
 ) -> Result<bool, Error> {
     if !model.visible(event) {
         return Ok(true);
     }
-    ensure_preview(model, event, session);
+    ensure_preview(model, event, previews);
     write_plain(output, &render::plain_event(model, event))
 }
 
-fn ensure_preview(
+pub(super) fn ensure_preview(
     model: &mut Model,
     event: &Event,
-    session: Option<&mut (Session, ParticipantId)>,
+    previews: Option<&mut LivePreviews>,
 ) {
     if let Some(address) = event.address()
         && !model.requested(&address)
     {
-        let preview = session.and_then(|(session, id)| {
-            let viewer = model.participant(id.as_str())?;
-            fetch(session, viewer, &address).ok().flatten()
+        let preview = previews.and_then(|previews| {
+            let viewer = model.participant(previews.id.as_str())?;
+            previews.fetch(viewer, &address).ok().flatten()
         });
         model.fetch_result(address, preview);
     }
