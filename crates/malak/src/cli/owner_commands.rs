@@ -1,5 +1,8 @@
 use super::{
-    Channel, board_version::BoardVersion, client_transport::ClientTransport, config, output,
+    Channel,
+    board_version::BoardVersion,
+    client_transport::{ClientTransport, link_io_error},
+    config, output,
 };
 use malak::{ChannelName, ChannelPattern, CreationId, Error, ParticipantId};
 use malak_core::LocalClient;
@@ -338,15 +341,21 @@ impl Tail {
             &[],
         )
         .map_err(|_| Error::refused("tail request does not fit"))?;
-        client.send_frame(frame, Duration::from_secs(5))?;
+        client
+            .send_frame(frame, Duration::from_secs(5))
+            .map_err(link_io_error)?;
         let ping = encode_frame(2, "PING", 0, |_| {}, &[]).map_err(|_| invalid())?;
-        client.send_frame(ping, Duration::from_secs(5))?;
+        client
+            .send_frame(ping, Duration::from_secs(5))
+            .map_err(link_io_error)?;
         let mut tail = Self {
             pending: VecDeque::new(),
             ended: false,
         };
         loop {
-            let frame = client.read_frame(Duration::from_secs(5))?;
+            let frame = client
+                .read_frame(Duration::from_secs(5))
+                .map_err(link_io_error)?;
             if frame.rid() == 2 {
                 Client::owner_reply(frame, 2)?;
                 return Ok(tail);
@@ -367,7 +376,9 @@ impl Tail {
         if self.ended {
             return Ok(None);
         }
-        let frame = client.read_frame(Duration::from_secs(24 * 60 * 60))?;
+        let frame = client
+            .read_frame(Duration::from_secs(24 * 60 * 60))
+            .map_err(link_io_error)?;
         self.event(frame)
     }
 

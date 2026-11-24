@@ -1,6 +1,7 @@
 [package]
 name = "malak-proto"
-description = "Transport-independent Malak protocol primitives"
+description = "Transport-independent handshake, wire frames, and message encoding. Internal to Malak; no stability promise."
+categories = ["encoding", "network-programming"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

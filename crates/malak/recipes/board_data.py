@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 import select
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -263,8 +264,9 @@ def lead_up(config, parent_config=None):
     selector = board_selector(config, name)
     fields += (
         ("Board commands", f"Pass {selector} on every board command."),
-        ("Lead watcher", f"Start it now with `{lead_watcher_command(config, name)}`. "
-                         "Keep it running and restart it when it ends."),
+        ("Lead watcher", f"Run `{lead_watcher_command(config, name)}` in the background. "
+                         "Use background Bash in Claude Code or a background command in Codex. "
+                         "Handle the output, acknowledge lead messages, and run it again."),
         ("Acknowledgements", "Acknowledge each lead message once handled with "
                              f"`malak {selector} ack --creation CREATION lead POSITION`."),
         ("Consequence", f"Without the watcher, {LEAD_WATCHER_CONSEQUENCE}"),
@@ -413,9 +415,21 @@ def reply_command(inbox, channel, creation, position, kind="note"):
     )
 
 
-def send_result(command, title, fields=(), *, handover=None, body=None):
+def send_result(command, title, fields=(), *, handover=None, body=None, stdin_prefix=None):
     env = None if handover is None else {**os.environ, "MALAK_HANDOVER": str(handover)}
-    result = subprocess.run(command, input=body, env=env, stdout=subprocess.PIPE)
+    if stdin_prefix is None:
+        result = subprocess.run(command, input=body, env=env, stdout=subprocess.PIPE)
+    else:
+        with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env) as send:
+            try:
+                with send.stdin:
+                    send.stdin.write(stdin_prefix)
+                    shutil.copyfileobj(sys.stdin.buffer, send.stdin)
+            except BrokenPipeError:
+                # The CLI reports a refusal, for example when the body exceeds its byte limit.
+                pass
+            stdout = send.stdout.read()
+            result = subprocess.CompletedProcess(command, send.wait(), stdout)
     if result.returncode == 0:
         value = json.loads(result.stdout)
         out.receipt(title(value["position"]), value, fields)
@@ -445,6 +459,13 @@ def answer_channel(config, position):
 
 def answer(config, order, kind, *address):
     use_board(config)
+    prefix = None
+    if order:
+        mark = order_mark(config, order)
+        if not sys.stdin.buffer.peek(1):
+            out.error("send the answer", "Message body is empty.", "Give the reply on standard input.")
+            return 2
+        prefix = f"{mark}\n\n".encode()
     if len(address) == 4:
         inbox, channel, creation, position = address
     else:
@@ -466,6 +487,7 @@ def answer(config, order, kind, *address):
         command,
         lambda _: f"Answered {channel} #{position}{suffix}.",
         (("Inbox", inbox),),
+        stdin_prefix=prefix,
     )
 
 
@@ -660,8 +682,6 @@ def main(action, *args):
         return answer(*args)
     elif action == "order":
         post_order(*args)
-    elif action == "order-mark":
-        print(order_mark(*args))
     elif action == "forward":
         return forward(*args)
     elif action == "wait-task":

@@ -5,6 +5,9 @@ use sha2::{Digest, Sha256};
 use std::io::Write;
 use std::sync::Arc;
 
+#[path = "../fixtures/codex_notice.rs"]
+mod codex_notice;
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HOOK_REVIEW: &str = "For chats opened before this upgrade";
 const INSTALL: &str = r#"
@@ -813,16 +816,17 @@ fn upgrade_notifies_a_codex_thread_that_already_received_the_installation_notice
     let source = checkout(&fixture.home, VERSION);
     let home = fixture.home.path();
     fs::create_dir(home.join(".codex")).unwrap();
-    let codex = fixture.tools.join("codex");
-    fs::write(&codex, include_str!("../fixtures/codex_notice.py")).unwrap();
-    fs::set_permissions(&codex, Permissions::from_mode(0o700)).unwrap();
-    run(&mut command(
-        &fixture,
-        &["recipe", "agents", "--yes", "--notify-open"],
-    ));
+    codex_notice::install(home, &fixture.tools);
+    let mut install_notice = command(&fixture, &["recipe", "agents", "--yes", "--notify-open"]);
+    let installation = run(codex_notice::wait_for_proxy(&mut install_notice, home));
+    assert!(
+        installation.contains("Notified 1 open Codex thread(s)."),
+        "{installation}"
+    );
     let previous = build(&fixture.exe);
 
-    let output = run(command(&fixture, &["upgrade", "--yes", "--path"]).arg(source));
+    let mut upgrade = command(&fixture, &["upgrade", "--yes", "--path"]);
+    let output = run(codex_notice::wait_for_proxy(&mut upgrade, home).arg(source));
 
     assert!(
         output.contains("Notified 1 open Codex thread(s)."),

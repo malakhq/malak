@@ -91,8 +91,11 @@ Open Claude Code or Codex in your project and paste this into the chat.
 > Become the Malak lead for this project.
 
 The agent runs `malak recipe lead-up NAME` with the project folder name unless
-you give it a board name. It keeps `malak --board NAME mailbox --plain --for lead`
-running and passes `--board NAME` on each board command.
+you give it a board name. It runs
+`malak --board NAME mailbox --plain --for lead --next` in background Bash
+in Claude Code or a background command session in Codex. It handles the
+output, acknowledges lead messages, and runs the command again. It passes
+`--board NAME` on each board command.
 Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.
 Run `malak --board NAME recipe agents-md` from the project
 directory to give every chat there Malak instructions.

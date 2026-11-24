@@ -1,6 +1,7 @@
 [package]
 name = "malak-transport-unix"
 description = "Unix-domain and Firecracker vsock transports for Malak"
+categories = ["network-programming", "os"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,7 +11,7 @@ keywords.workspace = true
 repository.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-malak-layers = { path = "../malak-layers", version = "0.1.0" }
+malak-layers = { path = "../malak-layers", version = "0.1.1" }
 nix = { version = "0.31", features = ["socket", "user"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -20,8 +21,8 @@ nix = { version = "0.31", features = ["poll"] }
 getrandom = "0.3"
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-malak-proto = { path = "../malak-proto", version = "0.1.0" }
-malak-testkit = { path = "../malak-testkit", version = "0.1.0" }
+malak-proto = { path = "../malak-proto", version = "0.1.1" }
+malak-testkit = { path = "../malak-testkit", version = "0.1.1" }
 
 [lints]
 workspace = true

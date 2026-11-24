@@ -1,0 +1,40 @@
+name: Bug report
+description: Malak did the wrong thing
+labels: ["bug"]
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you ran, what Malak printed, and what you expected instead. Include the full error output.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of commands that shows the problem.
+      placeholder: |
+        malak demo
+        malak --board NAME send lead ...
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Malak version
+      description: Output of `malak --version`
+      placeholder: malak 0.1.0
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Platform
+      description: Output of `uname -srm`
+      placeholder: Darwin 24.4.0 arm64
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Agent tool
+      description: Which agent tool was involved, if any?
+      options: ["None", "Claude Code", "Codex", "Other"]
+    validations:
+      required: false

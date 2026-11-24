@@ -40,7 +40,4 @@ case $# in
     1|2|4) set -- python3 "$recipes/board_data.py" answer "$config" "$order" "$kind" "$@" ;;
     *) usage error >&2; exit 2 ;;
 esac
-if [ -z "$order" ]; then exec "$@"; fi
-
-mark=$(python3 "$recipes/board_data.py" order-mark "$config" "$order")
-{ printf '%s\n\n' "$mark"; cat; } | "$@"
+exec "$@"

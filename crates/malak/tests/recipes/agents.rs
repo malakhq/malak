@@ -2,6 +2,9 @@ use super::*;
 use std::io::{BufRead, BufReader};
 use std::time::SystemTime;
 
+#[path = "../fixtures/codex_notice.rs"]
+mod codex_notice;
+
 const USER_HOOK: &str = r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"keep-me"}]}]},"key":true}"#;
 const SKILL_PATH: &str = ".claude/skills/malak/SKILL.md";
 const CLAUDE_SETTINGS: &str = ".claude/settings.json";
@@ -551,6 +554,34 @@ fn lead_status_reminder_notices_when_its_watcher_exits() {
 }
 
 #[test]
+fn lead_status_reminder_recognizes_a_one_shot_watcher() {
+    let board = fixture();
+    board.start();
+    let mut command = board.owner(&["mailbox", "--plain", "--for", "lead", "--next"]);
+    board.recipe_environment(&mut command);
+    let _watcher = RunningWorker(command.spawn().unwrap());
+    let door = fs::File::open(board.home.path().join("d/o")).unwrap();
+    wait_for_event("the one-shot watcher to register", || {
+        match door.try_lock() {
+            Err(std::fs::TryLockError::WouldBlock) => Some(()),
+            Ok(()) => {
+                door.unlock().unwrap();
+                None
+            }
+            Err(error) => panic!("could not check watcher lock: {error}"),
+        }
+    });
+
+    let notice = context(&reminder(&board, prompt()));
+
+    assert!(!notice.contains("watcher is not running"), "{notice}");
+    assert!(
+        !notice.contains("could not tell whether your watcher is running"),
+        "{notice}"
+    );
+}
+
+#[test]
 fn lead_status_reminder_is_silent_when_the_board_stops_responding() {
     let board = fixture();
     board.start();
@@ -658,7 +689,7 @@ fn fake_codex(board: &Fixture, script: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-fn notify(board: &Fixture) -> String {
+fn notify(board: &Fixture) -> Command {
     let mut command = agents(board, &["--yes", "--notify-open"]);
     let path = env::join_paths(
         std::iter::once(board.home.path().to_path_buf())
@@ -666,14 +697,14 @@ fn notify(board: &Fixture) -> String {
     )
     .unwrap();
     command.env("PATH", path);
-    run(command)
+    command
 }
 
 #[test]
 fn unavailable_app_server_does_not_block_installation() {
     let board = fixture();
     fake_codex(&board, "#!/bin/sh\nexit 1\n");
-    assert!(notify(&board).contains("No reachable Codex app-server"));
+    assert!(run(notify(&board)).contains("No reachable Codex app-server"));
     assert!(board.home.path().join(SKILL_PATH).is_file());
 }
 
@@ -681,19 +712,35 @@ fn unavailable_app_server_does_not_block_installation() {
 fn missing_client_directories_still_report_the_notice_attempt() {
     let board = Fixture::new();
     fake_codex(&board, "#!/bin/sh\nexit 1\n");
-    assert!(notify(&board).contains("No reachable Codex app-server"));
+    assert!(run(notify(&board)).contains("No reachable Codex app-server"));
     assert!(!board.home.path().join(MANIFEST).exists());
 }
 
 #[test]
 fn opt_in_injects_a_user_notice_once_per_loaded_thread() {
     let board = fixture();
-    fake_codex(&board, include_str!("../fixtures/codex_notice.py"));
+    let home = board.home.path();
+    codex_notice::install(home, home);
     run(agents(&board, &["--yes"]));
-    let log = board.home.path().join("injected.jsonl");
+    let log = home.join("injected.jsonl");
     assert!(!log.exists());
-    assert!(notify(&board).contains("Notified 1 open Codex thread(s)."));
-    assert!(notify(&board).contains("No new Codex threads were notified."));
+
+    let notify_ready = || {
+        let mut command = notify(&board);
+        codex_notice::wait_for_proxy(&mut command, home);
+        run(command)
+    };
+    let first = notify_ready();
+    assert!(
+        first.contains("Notified 1 open Codex thread(s)."),
+        "{first}"
+    );
+    let second = notify_ready();
+    assert!(
+        second.contains("No new Codex threads were notified.")
+            && !second.contains("No reachable Codex app-server"),
+        "{second}"
+    );
     let content = fs::read_to_string(log).unwrap();
     let injected: Value = serde_json::from_str(&content).unwrap();
     assert_eq!(injected["threadId"], "opened-thread");

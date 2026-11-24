@@ -17,6 +17,7 @@ mod terminal;
 use terminal::{TerminalOutput, terminal_pair, terminal_text};
 
 const MALAK: &str = env!("CARGO_BIN_EXE_malak");
+const QUESTION_INBOX_HINT: &str = "Answers arrive in your inbox";
 // An upper bound for a missing event, independent of when the board is expected to respond.
 const WATCHDOG: Duration = Duration::from_secs(60);
 
@@ -87,6 +88,32 @@ impl Board {
     fn ask(&self, handover: &Path, body: &str) -> Receipt {
         let mut command = command(self.root.path(), &["send", "--json", "questions", body]);
         Receipt::parse(&run(command.env("MALAK_HANDOVER", handover)))
+    }
+
+    fn recipe_ask(&self, handover: &Path, question: &str) {
+        let mut ask = command(
+            self.root.path(),
+            &[
+                "recipe",
+                "ask",
+                "--blocks",
+                "the test",
+                "--option",
+                "review now",
+                "--recommend",
+                "review now",
+            ],
+        )
+        .env("MALAK_HANDOVER", handover)
+        .env("TMPDIR", self.root.path())
+        .env_remove("MALAK_TASK_TRACE")
+        .env_remove("MALAK_TASK_CREATION")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+        writeln!(ask.stdin.take().unwrap(), "{question}").unwrap();
+        assert!(ask.wait().unwrap().success());
     }
 
     fn plain_questions(&self) -> Vec<String> {
@@ -172,7 +199,15 @@ impl Board {
     }
 
     fn startup_summary(&self) -> Vec<String> {
-        let (_mailbox, lines) = launch_plain(command(self.root.path(), &["mailbox", "--plain"]));
+        self.startup_summary_as(None)
+    }
+
+    fn startup_summary_as(&self, handover: Option<&Path>) -> Vec<String> {
+        let mut command = command(self.root.path(), &["mailbox", "--plain"]);
+        if let Some(handover) = handover {
+            command.env("MALAK_HANDOVER", handover);
+        }
+        let (_mailbox, lines) = launch_plain(command);
         assert!(
             lines
                 .recv_timeout(WATCHDOG)
@@ -212,19 +247,24 @@ impl Board {
     }
 
     fn terminal_with(&self, rows: u16, columns: u16, args: &[&str]) -> (Running, TerminalOutput) {
-        let (master, slave) = terminal_pair(rows, columns);
-        let mailbox = Running(
-            command(self.root.path(), &["mailbox"])
-                .args(args)
-                .env("TERM", "xterm")
-                .env("NO_COLOR", "1")
-                .stdin(slave.try_clone().unwrap())
-                .stdout(slave)
-                .spawn()
-                .unwrap(),
-        );
-        (mailbox, TerminalOutput::new(master))
+        let mut command = command(self.root.path(), &["mailbox"]);
+        command.args(args);
+        launch_terminal(command, rows, columns)
     }
+}
+
+fn launch_terminal(mut command: Command, rows: u16, columns: u16) -> (Running, TerminalOutput) {
+    let (master, slave) = terminal_pair(rows, columns);
+    let mailbox = Running(
+        command
+            .env("TERM", "xterm")
+            .env("NO_COLOR", "1")
+            .stdin(slave.try_clone().unwrap())
+            .stdout(slave)
+            .spawn()
+            .unwrap(),
+    );
+    (mailbox, TerminalOutput::new(master))
 }
 
 fn launch_board(root: &Path) -> Running {
@@ -500,6 +540,24 @@ fn a_task_in_the_terminal_feed_shows_its_full_reply_address() {
 
     let address = format!("lead {} {}", task.creation, task.position);
     view.wait_for(&address);
+}
+
+#[test]
+fn a_plain_lead_watcher_recovers_a_preview_link_lost_while_idle() {
+    let board = Board::start();
+    let (_, worker) = board.asker("reviewer");
+    let (_mailbox, lines) = board.plain_with(None, &["--for", "lead"]);
+    board.ask(&worker, "preview before idle");
+    block_with(&lines, "preview before idle");
+
+    // Close the idle preview connection while leaving the owner tail connected.
+    let replacement = board.root.path().join("replacement.handover");
+    board.run(&["rekey", "lead", "--out", replacement.to_str().unwrap()]);
+    std::fs::rename(&replacement, board.root.path().join("st/lead.handover")).unwrap();
+    let arrived = board.ask(&worker, "preview after idle");
+
+    let block = block_with(&lines, &format!("to questions #{}", arrived.position));
+    assert!(block.contains("preview after idle"), "{block}");
 }
 
 #[test]
@@ -1273,6 +1331,53 @@ fn the_mailbox_opens_with_all_five_standard_channels_on_an_empty_board() {
             "relay none",
         ]
     );
+}
+
+#[test]
+fn a_workers_plain_summary_points_to_its_inbox_after_asking() {
+    let board = Board::start();
+    let (_, worker) = board.asker("alpha");
+    board.recipe_ask(&worker, "Which fixture?");
+
+    let summary = board.startup_summary_as(Some(&worker));
+
+    assert_eq!(summary[1], format!("questions · {QUESTION_INBOX_HINT}"));
+}
+
+#[test]
+fn a_workers_live_question_points_to_its_inbox() {
+    let board = Board::start();
+    let (_, worker) = board.asker("alpha");
+    let (_mailbox, lines) = board.plain_as(Some(&worker));
+
+    board.recipe_ask(&worker, "Which fixture?");
+
+    let block = block_with(&lines, "alpha sent a note to questions #1");
+    assert!(block.contains(QUESTION_INBOX_HINT), "{block}");
+    assert!(!block.contains("Body preview unavailable"), "{block}");
+}
+
+#[test]
+fn a_workers_plain_mailbox_hides_another_workers_live_question() {
+    let board = Board::start();
+    let (_, worker) = board.asker("alpha");
+    let (_, other) = board.asker("bravo");
+    let (_mailbox, lines) = board.plain_as(Some(&worker));
+
+    board.recipe_ask(&other, "Question from the other worker?");
+    board.recipe_ask(&worker, "Which fixture?");
+
+    let deadline = Instant::now() + WATCHDOG;
+    loop {
+        let line = lines
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap();
+        assert!(!line.contains("bravo sent a note to questions"), "{line}");
+        assert!(!line.contains("Question from the other worker?"), "{line}");
+        if line.contains("alpha sent a note to questions #2") {
+            break;
+        }
+    }
 }
 
 #[test]
@@ -2185,10 +2290,17 @@ fn activity_trace_opens_the_same_retained_and_live_conversation_at_each_supporte
         terminal.wait_for("ARRIVED TRACE ENTRY");
         terminal.bytes.clear();
         terminal.resize(&mailbox, 62, width);
-        terminal.wait_for("trace task");
+        terminal.wait_for_output("live and retained rows after repaint", |bytes| {
+            terminal_text(bytes)
+                .split_once(&title)
+                .is_some_and(|(_, trace)| {
+                    trace.contains("ARRIVEDTRACEENTRY") && trace.contains("tracetask")
+                })
+        });
         let screen = terminal_text(&terminal.bytes);
+        let (_, screen) = screen.split_once(&title).unwrap();
         assert_in_order(
-            &screen,
+            screen,
             &["ARRIVEDTRACEENTRY", "traceworkerreport", "tracetask"],
         );
         assert_eq!(screen.matches("ARRIVEDTRACEENTRY").count(), 1);
@@ -2530,6 +2642,51 @@ fn the_questions_tab_contains_only_open_questions() {
 }
 
 #[test]
+fn a_workers_questions_tab_points_to_its_inbox() {
+    let board = Board::start();
+    let (_, worker) = board.asker("alpha");
+    board.recipe_ask(&worker, "Which fixture?");
+    let mut command = command(board.root.path(), &["mailbox"]);
+    command.env("MALAK_HANDOVER", &worker);
+    let (mailbox, mut terminal) = launch_terminal(command, 30, 120);
+    terminal.wait_for("in your inbox");
+
+    terminal.press(b"2");
+
+    terminal.wait_for("[Questions]");
+    terminal.bytes.clear();
+    terminal.resize(&mailbox, 31, 120);
+    terminal.wait_for_output(QUESTION_INBOX_HINT, |bytes| {
+        terminal_text(bytes)
+            .split_once("[Questions]")
+            .is_some_and(|(_, body)| body.contains("Answersarriveinyourinbox"))
+    });
+}
+
+#[test]
+fn the_default_interactive_mailbox_points_a_worker_to_its_inbox() {
+    let board = Board::start();
+    let (_, worker) = board.asker("alpha");
+    board.recipe_ask(&worker, "Which fixture?");
+    let root = board.root.path();
+    let config = root.join("malak");
+    std::fs::create_dir(&config).unwrap();
+    std::fs::copy(root.join("board.toml"), config.join("board.toml")).unwrap();
+    let mut command = Command::new(MALAK);
+    command
+        .arg("mailbox")
+        .env("HOME", root)
+        .env("XDG_CONFIG_HOME", root)
+        .env("MALAK_HANDOVER", &worker);
+    let (mailbox, mut terminal) = launch_terminal(command, 30, 120);
+
+    terminal.wait_for("in your inbox");
+    terminal.bytes.clear();
+    terminal.resize(&mailbox, 31, 120);
+    terminal.wait_for(QUESTION_INBOX_HINT);
+}
+
+#[test]
 fn the_questions_tab_adds_new_questions_at_the_top_of_their_group() {
     let board = Board::start();
     let (_, handover) = board.asker("alpha");
@@ -2609,3 +2766,5 @@ fn the_orders_tab_adds_new_orders_above_earlier_decisions_and_orders() {
 
 #[path = "mailbox/multiboard.rs"]
 mod multiboard;
+#[path = "mailbox/next.rs"]
+mod next;

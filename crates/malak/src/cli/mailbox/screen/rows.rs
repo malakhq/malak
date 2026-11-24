@@ -4,7 +4,7 @@ use super::super::{
         Address, Event, EventOrder, Lane, MessageOrder, Model, Preview, PreviewState, QuestionKind,
     },
     multiboard::BoardEntry,
-    orders, render, text,
+    orders, questions, render, text,
     trace::LiveTrace,
     view::{RowKey, Tab},
     waiting,
@@ -426,6 +426,7 @@ impl<'a> Row<'a> {
             }
             PreviewState::Pending => "Loading body preview…",
             PreviewState::Unavailable => "Body preview unavailable",
+            PreviewState::AnswersInInbox => questions::INBOX_HINT,
         };
         let metadata = match self.context {
             Context::Order => {
