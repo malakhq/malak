@@ -45,14 +45,16 @@ enum EventName {
     SessionStart,
     Prompt,
     Step,
+    TurnEnd,
     SessionEnd,
 }
 
 impl EventName {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::SessionStart,
         Self::Prompt,
         Self::Step,
+        Self::TurnEnd,
         Self::SessionEnd,
     ];
 }
@@ -132,6 +134,11 @@ fn deliver(
     let Some(event) = format.read(input)? else {
         return Ok(());
     };
+    if event.name == EventName::TurnEnd {
+        // Only the lead's reminder command (recipe observe) knows the lead's
+        // session, so this hook says nothing and leaves its receipt alone.
+        return format.write(output, event.name, "");
+    }
     let configured = Configured::read(config).map_err(io::Error::other)?;
     let inbox = &configured.inbox;
     let pending = configured.pending(inbox, &event.session)?;

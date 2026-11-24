@@ -20,7 +20,12 @@ Malak runs in the background to delegate work across your agents and subagents.
 - Never use another participant's handover. Ask the owner if you need a
   handover or need to change roles. It works like an SSH key. Use separate
   OS users or sandboxes to isolate agents.
-- As lead, run `malak --board NAME mailbox --plain --for lead --next` in the
+- As lead, stay awake in your host loop: once per tick run
+  `malak --board NAME mailbox --plain --for lead --next --timeout 60`, handle
+  what it prints, acknowledge lead messages, then go idle. In Claude Code use
+  `/loop` (dynamic) with a tick of 2 to 5 minutes; in the Codex App use an
+  automation that runs the same command. Without a host loop, run
+  `malak --board NAME mailbox --plain --for lead --next` in the
   background to watch the lead inbox, questions, orders and stuck work. Use
   Claude Code's background Bash (leave Monitor for other work) or Codex's
   background command session. The command exits after showing waiting lead
@@ -29,7 +34,8 @@ Malak runs in the background to delegate work across your agents and subagents.
   and check questions, orders in force and waiting workers. Poll
   `malak --board NAME read --wait 60 lead questions` if you cannot keep a watcher running.
   Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.
-  The reminder checks at most every three minutes for unacknowledged lead messages, older owner questions, and a stopped watcher.
+  If you end your turn with unacknowledged lead messages or unanswered agent questions, the Stop hook hands them to you once; handle and acknowledge them.
+  The reminder checks at most every three minutes for unacknowledged lead messages, older owner questions, and a stopped watcher. A lead whose last one-shot tick started or ended within 10 minutes counts as watching.
 - When you need the owner to decide, post it with `malak --board NAME recipe ask`
   (options and a recommendation), then raise it in chat, so the board keeps the decision.
 - Put a question from the watcher to the owner in chat right away if you posted

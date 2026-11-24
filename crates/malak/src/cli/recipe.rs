@@ -176,6 +176,7 @@ const SUPPORT: &[Script] = &[
     script!("codex_notice.py"),
     script!("demo.py"),
     script!("lead_status.py"),
+    script!("lead_turn_end.py"),
     script!("malak-skill.md"),
     script!("recipe_board.py"),
     script!("recipe_output.py"),

@@ -97,6 +97,11 @@ in Claude Code or a background command session in Codex. It handles the
 output, acknowledges lead messages, and runs the command again. It passes
 `--board NAME` on each board command.
 Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.
+To stay awake in the host's own loop instead, the lead runs
+`malak --board NAME mailbox --plain --for lead --next --timeout 60` once per
+tick: from `/loop` (dynamic, a tick of two to five minutes) in Claude Code, or
+from an automation in the Codex App. A person can keep
+`malak --board NAME mailbox --plain --for lead` running in a terminal.
 Run `malak --board NAME recipe agents-md` from the project
 directory to give every chat there Malak instructions.
 

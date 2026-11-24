@@ -125,6 +125,7 @@ impl Hook {
                 "SessionStart" => "session_start",
                 "UserPromptSubmit" => "prompt",
                 "PostToolUse" => "step",
+                "Stop" => "turn_end",
                 "SessionEnd" => "session_end",
                 _ => event,
             };
@@ -303,6 +304,57 @@ fn the_hook_ignores_other_events_without_hook_environment() {
 }
 
 #[test]
+fn turn_end_shows_nothing_and_leaves_the_previous_delivery_due() {
+    Hook::for_each_tool(|hook| {
+        hook.send("first");
+        let _ = hook.context(&hook.invoke("PostToolUse"), "PostToolUse");
+
+        let ended = hook.invoke("Stop");
+
+        assert!(ended.status.success(), "{:?}", ended.stderr);
+        if hook.tool == "generic" {
+            assert_eq!(hook.context(&ended, "Stop"), "");
+        } else {
+            assert!(ended.stdout.is_empty());
+        }
+        assert_eq!(hook.due().len(), 1);
+    });
+}
+
+#[test]
+fn describe_maps_turn_end_to_stop_and_the_leads_reminder_command() {
+    let json = |tool: &str| -> Value {
+        let output = run(Command::new(MALAK).env_clear().args([
+            "hook",
+            "--describe",
+            "--json",
+            "--tool",
+            tool,
+        ]));
+        serde_json::from_str(&output).unwrap()
+    };
+    let turn_end = |description: &Value| {
+        description["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|event| event["command"] == "malak recipe observe --reminder")
+            .unwrap()
+            .clone()
+    };
+
+    let generic = turn_end(&json("generic"));
+    assert_eq!(generic["input"]["event"], "turn_end");
+    assert_eq!(generic["output"]["decision"], "continue");
+    for tool in AGENT_TOOLS {
+        let native = turn_end(&json(tool));
+        assert_eq!(native["input"]["hook_event_name"], "Stop");
+        assert_eq!(native["output"]["decision"], "block");
+        assert!(native["output"]["reason"].is_string());
+    }
+}
+
+#[test]
 fn a_generic_hook_with_no_waiting_message_returns_empty_context() {
     let hook = Hook::new("generic");
 
@@ -319,7 +371,7 @@ fn a_fake_tool_can_configure_its_hooks_from_the_description() {
         .args(["hook", "--describe", "--json"]));
     let description: Value = serde_json::from_str(&description).unwrap();
     let events = description["events"].as_array().unwrap();
-    assert_eq!(events.len(), 4);
+    assert_eq!(events.len(), 5);
     assert_eq!(description["context_byte_limit"], 32768);
 
     let hook = Hook::new("generic");
@@ -330,6 +382,10 @@ fn a_fake_tool_can_configure_its_hooks_from_the_description() {
         worker.get_envs().find(|(key, _)| *key == name).unwrap()
     });
     for (index, event) in events.iter().enumerate() {
+        if event["input"]["event"] == "turn_end" {
+            // The lead's reminder command answers it; see the observe tests.
+            continue;
+        }
         let mut words = event["command"].as_str().unwrap().split_whitespace();
         assert_eq!(words.next(), Some("malak"));
         let mut command = Command::new(MALAK);
@@ -383,10 +439,23 @@ fn describe_includes_questions_in_the_lead_read_loop() {
         .env_clear()
         .args(["hook", "--describe", "--json"]));
     let description: Value = serde_json::from_str(&output).unwrap();
-    assert_eq!(
-        description["monitor"],
-        json!({"command": command, "fallback": fallback})
-    );
+    assert_eq!(description["monitor"]["command"], command);
+    assert_eq!(description["monitor"]["fallback"], fallback);
+}
+
+#[test]
+fn describe_gives_the_lead_a_per_tick_wait_for_the_host_loop() {
+    let tick = "malak mailbox --plain --for lead --next --timeout 60";
+    let plain = run(Command::new(MALAK).env_clear().args(["hook", "--describe"]));
+    assert!(plain.contains(tick));
+    assert!(plain.contains("/loop (dynamic)"));
+    assert!(plain.contains("Codex App"));
+
+    let output = run(Command::new(MALAK)
+        .env_clear()
+        .args(["hook", "--describe", "--json"]));
+    let description: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(description["monitor"]["tick"], tick);
 }
 
 #[test]

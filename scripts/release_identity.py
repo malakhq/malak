@@ -24,7 +24,7 @@ def local_value(repo, key, env):
     return os.fsdecode(result.stdout.removesuffix(b"\0"))
 
 
-def release_identity(repo, settings_file, env, allow_email):
+def public_identity(repo, settings_file, env):
     try:
         with settings_file.open("rb") as source:
             settings = tomllib.load(source)
@@ -42,7 +42,16 @@ def release_identity(repo, settings_file, env, allow_email):
             "  Next    Set release_name and release_email in maintainer settings or "
             "configure user.name and user.email in the public clone with git config --local."
         )
-    if not re.fullmatch(r"[^@\s<>]+@users\.noreply\.github\.com", email, re.IGNORECASE | re.ASCII):
+    return name, email
+
+
+def is_noreply_email(email):
+    return re.fullmatch(r"[^@\s<>]+@users\.noreply\.github\.com", email, re.IGNORECASE | re.ASCII) is not None
+
+
+def release_identity(repo, settings_file, env, allow_email):
+    name, email = public_identity(repo, settings_file, env)
+    if not is_noreply_email(email):
         if not allow_email:
             raise ReleaseIdentityError(
                 "refusing to use the public Git email\n"

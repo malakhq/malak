@@ -28,6 +28,46 @@ pub(super) fn register_lead_watcher(board: &config::Board) -> Option<Directory> 
     Some(door)
 }
 
+/// The file whose modification time tells the reminder when a one-shot lead
+/// watcher last started or ended a tick.
+pub(in crate::cli) const LEAD_TICK: &str = "lead-next";
+
+/// Stamps the owner folder when a one-shot watcher starts and when it ends, so
+/// a lead that runs the watcher once per host-loop tick counts as watching.
+pub(super) struct TickMark(Option<Directory>);
+
+impl TickMark {
+    pub(super) fn start(board: &config::Board) -> Self {
+        let door = config::open_owned_directory(&board.socket_folder.join(OWNER_FOLDER), true)
+            .ok()
+            .flatten();
+        let mark = Self(door);
+        mark.stamp();
+        mark
+    }
+
+    fn stamp(&self) {
+        let Some(door) = &self.0 else { return };
+        let stamped = door
+            .open_file(
+                LEAD_TICK,
+                nix::fcntl::OFlag::O_WRONLY | nix::fcntl::OFlag::O_CREAT,
+            )
+            .and_then(|mut file| {
+                file.set_len(0)?;
+                file.write_all(now_ms().to_string().as_bytes())
+            });
+        // A reminder that cannot see the stamp only misses a quiet watcher.
+        drop(stamped);
+    }
+}
+
+impl Drop for TickMark {
+    fn drop(&mut self) {
+        self.stamp();
+    }
+}
+
 pub(super) fn run(
     model: &mut Model,
     rx: Receiver<Update>,

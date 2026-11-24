@@ -56,18 +56,22 @@ impl Format for Generic {
         }))
     }
 
-    fn reply(&self, _: EventName, context: &str) -> Option<Value> {
+    fn reply(&self, event: EventName, context: &str) -> Option<Value> {
+        if event == EventName::TurnEnd && !context.is_empty() {
+            return Some(json!({ "decision": "continue", "context": context }));
+        }
         Some(json!({ "context": context }))
     }
 }
 
-// Claude Code and Codex use the same wire format for these four events.
+// Claude Code and Codex use the same wire format for these five events.
 struct AgentJson;
 
-const AGENT_EVENTS: [(EventName, &str); 4] = [
+const AGENT_EVENTS: [(EventName, &str); 5] = [
     (EventName::SessionStart, "SessionStart"),
     (EventName::Prompt, "UserPromptSubmit"),
     (EventName::Step, "PostToolUse"),
+    (EventName::TurnEnd, "Stop"),
     (EventName::SessionEnd, "SessionEnd"),
 ];
 
@@ -111,6 +115,10 @@ impl Format for AgentJson {
     fn reply(&self, event: EventName, context: &str) -> Option<Value> {
         if context.is_empty() {
             return None;
+        }
+        if event == EventName::TurnEnd {
+            // A Stop hook continues the turn by blocking it with a reason.
+            return Some(json!({ "decision": "block", "reason": context }));
         }
         Some(json!({
             "hookSpecificOutput": { "hookEventName": agent_event(event), "additionalContext": context }

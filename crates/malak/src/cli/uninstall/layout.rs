@@ -2,6 +2,7 @@ use super::recipe_data;
 use crate::cli::board::{GENERAL_FOLDER, LEAD_FOLDER, LOG_FILE, OWNER_FOLDER, SOCKET_FILE};
 use crate::cli::board_version::RECORD;
 use crate::cli::config::{LEAD_HANDOVER_FILE, MARKDOWN_FOLDER, SQLITE_FOLDER};
+use crate::cli::mailbox::LEAD_TICK;
 use malak_core::OwnerCredential;
 use malak_journal::StateFolder;
 use malak_store_markdown::MarkdownStore;
@@ -31,7 +32,7 @@ impl Kind {
             (Self::SocketTree, OWNER_FOLDER) => Some(Self::OwnerDoor),
             (Self::SocketTree, LEAD_FOLDER | GENERAL_FOLDER) => Some(Self::Door),
             (Self::Door | Self::OwnerDoor, SOCKET_FILE) => Some(Self::Socket),
-            (Self::OwnerDoor, RECORD) => Some(Self::PrivateFile),
+            (Self::OwnerDoor, RECORD | LEAD_TICK) => Some(Self::PrivateFile),
             (Self::StateTree, MARKDOWN_FOLDER) => Some(Self::Markdown),
             (Self::StateTree, SQLITE_FOLDER) => Some(Self::Sqlite),
             (Self::StateTree, OwnerCredential::FILE_NAME | LEAD_HANDOVER_FILE | LOG_FILE) => {

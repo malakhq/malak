@@ -251,11 +251,69 @@ def should_show(path, marker, *, once=False, cooldown=COOLDOWN_SECONDS):
         os.close(directory)
 
 
+def turn_end_key(board):
+    return f"turn-end-{digest(str(board))}"
+
+
+def recall_hand_over(path, key):
+    try:
+        directory = open_session(path)
+    except OSError:
+        return None
+    try:
+        fd = os.open(key, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(fd) as source:
+            return source.read(64) or None
+    except OSError:
+        return None
+    finally:
+        os.close(directory)
+
+
+def remember_hand_over(path, key, value):
+    path.mkdir(mode=0o700, exist_ok=True)
+    directory = open_session(path)
+    try:
+        fd = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600, dir_fd=directory)
+        with os.fdopen(fd, "w") as target:
+            target.write(value)
+    finally:
+        os.close(directory)
+
+
+def turn_end_reply(payload, path, config, session_id):
+    """Answer a lead's Stop: hand over pending mail once per set, otherwise remind."""
+    from lead_turn_end import turn_end
+
+    active = payload.get("stop_hook_active") is True
+    blocks, reminders = [], []
+    for name, board, status in matching_leads(config, session_id):
+        if (handover := lead_handover_for(board)) is None:
+            continue
+        key = turn_end_key(board)
+        try:
+            reply, current = turn_end(name, board, handover, status, recall_hand_over(path, key), active)
+        except (RecipeError, OSError, ValueError, KeyError, TypeError):
+            continue
+        if reply is None:
+            continue
+        if "decision" in reply:
+            remember_hand_over(path, key, current)
+            blocks.append(reply["reason"])
+        else:
+            reminders.append(reply["systemMessage"])
+    if blocks:
+        return {"decision": "block", "reason": "\n\n".join(blocks)}
+    if reminders:
+        return {"systemMessage": " ".join(reminders)}
+    return None
+
+
 def end_session(path):
     directory = open_session(path)
     try:
         for marker in os.listdir(directory):
-            if marker in {"startup", "activity", "lead-status"} or re.fullmatch(r"agent-[a-f0-9]{64}", marker):
+            if marker in {"startup", "activity", "lead-status"} or re.fullmatch(r"(agent|turn-end)-[a-f0-9]{64}", marker):
                 os.unlink(marker, dir_fd=directory)
         path.rmdir()
     finally:
@@ -280,6 +338,11 @@ def main(installed, config):
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return
+        generic = payload.get("event") == "turn_end"
+        if generic:
+            # The generic hook format: {"event": "turn_end", "session": ID}.
+            payload = {"hook_event_name": "Stop", "session_id": payload.get("session"),
+                       "stop_hook_active": payload.get("stop_hook_active")}
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             session_id = None
@@ -289,6 +352,12 @@ def main(installed, config):
         path = session_directory(session_id or f"process:{process['pid']}:{process['start_time']}")
         if event == "SessionEnd":
             end_session(path)
+            return
+        if event == "Stop":
+            if installed and (reply := turn_end_reply(payload, path, config, session_id)):
+                if generic and "reason" in reply:
+                    reply = {"decision": "continue", "context": reply["reason"]}
+                print(json.dumps(reply))
             return
         handover = os.environ.get("MALAK_HANDOVER")
         marker = (reminder_marker(payload) if installed
