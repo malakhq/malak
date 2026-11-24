@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export a checked build tag to the local Malak release repository."""
+"""Export a checked build tag or private main to a local public repository."""
 
 import argparse
 import fcntl
@@ -77,13 +77,18 @@ def resolve(repo, ref, env):
         raise
 
 
+def run_check(checkout, description, env):
+    try:
+        subprocess.run([checkout / "scripts/check"], cwd=checkout, env=env, check=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReleaseError(f"scripts/check failed at {description}") from error
+
+
 def run_tag_check(build, commit, scratch, env):
     checkout = scratch / "check"
     git(build, "worktree", "add", "--quiet", "--detach", checkout, commit, env=env)
     try:
-        subprocess.run([checkout / "scripts/check"], cwd=checkout, env=env, check=True)
-    except (OSError, subprocess.CalledProcessError) as error:
-        raise ReleaseError("scripts/check failed at the build tag") from error
+        run_check(checkout, "the build tag", env)
     finally:
         git(build, "worktree", "remove", "--force", checkout, env=env)
 
@@ -168,14 +173,34 @@ def existing_release_repo(build, release, env):
     return False
 
 
-def release_tree(repo, files, scratch, env):
-    index_env = {**env, "GIT_INDEX_FILE": str(scratch / "index")}
+def release_tree(repo, files, index, env):
+    index_env = {**env, "GIT_INDEX_FILE": str(index)}
     index_entries = []
     for path, mode, data in files:
         blob = git_output(repo, "hash-object", "-w", "--stdin", input=data, env=env).strip()
         index_entries.append(mode + b" " + blob + b"\t" + os.fsencode(path) + b"\0")
     git(repo, "update-index", "-z", "--index-info", input=b"".join(index_entries), env=index_env)
     return git_output(repo, "write-tree", env=index_env).strip()
+
+
+def export_commit(repo, tree, parent, message, author, env):
+    name, email = map(os.fsdecode, author)
+    identity = {
+        **env,
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+    }
+    parents = ("-p", parent) if parent else ()
+    return git_output(repo, "commit-tree", "--no-gpg-sign", tree, *parents,
+                      input=message.encode(), env=identity).strip()
+
+
+def require_clean(repo, env):
+    if git_output(repo, "--no-optional-locks", "status", "--porcelain", "--untracked-files=all",
+                  "--ignored", env=env):
+        raise ReleaseError("release repository has local changes")
 
 
 def publish(repo, tag, files, scratch, author, env):
@@ -185,26 +210,15 @@ def publish(repo, tag, files, scratch, author, env):
         ref = f"refs/tags/{tag}"
         if resolve(repo, ref, env):
             return False
-        if git_output(repo, "status", "--porcelain", "--untracked-files=all", "--ignored", env=env):
-            raise ReleaseError("release repository has local changes")
+        require_clean(repo, env)
         parent = resolve(repo, "HEAD", env)
         old_tree = resolve(repo, "HEAD^{tree}", env)
         if old_tree is None:
             old_tree = git_output(repo, "mktree", input=b"", env=env).strip()
-        tree = release_tree(repo, files, scratch, env)
-        name, email = map(os.fsdecode, author)
-        identity = {
-            **env,
-            "GIT_AUTHOR_NAME": name,
-            "GIT_AUTHOR_EMAIL": email,
-            "GIT_COMMITTER_NAME": name,
-            "GIT_COMMITTER_EMAIL": email,
-        }
+        tree = release_tree(repo, files, scratch / "index", env)
         trailers = [f"Co-authored-by: {person} <noreply@{domain}>" for person, domain in COAUTHORS]
         message = "\n".join((f"Malak {tag}", "", *trailers, ""))
-        parents = ("-p", parent) if parent else ()
-        commit = git_output(repo, "commit-tree", "--no-gpg-sign", tree, *parents,
-                            input=message.encode(), env=identity).strip()
+        commit = export_commit(repo, tree, parent, message, author, env)
         previous = parent or b"0" * len(commit)
         updates = b"update HEAD %s %s\ncreate %s %s\n" % (commit, previous, ref.encode(), commit)
         git(repo, "read-tree", "-m", "-u", old_tree, tree, env=env)
@@ -216,7 +230,52 @@ def publish(repo, tag, files, scratch, author, env):
     return True
 
 
-def release_tag(tag, release):
+def incremental_base(repo, branch, env):
+    require_clean(repo, env)
+    if resolve(repo, f"refs/heads/{branch}", env):
+        raise ReleaseError(f"release branch {branch!r} already exists")
+    main = resolve(repo, "refs/heads/main^{commit}", env)
+    origin_main = resolve(repo, "refs/remotes/origin/main^{commit}", env)
+    if main is None or main != origin_main:
+        local = os.fsdecode(main or b"missing")
+        upstream = os.fsdecode(origin_main or b"missing")
+        raise ReleaseError(
+            f"main ({local}) must match origin/main ({upstream}). "
+            "Fetch origin and fast-forward local main before retrying."
+        )
+    return main
+
+
+def check_branch(repo, branch, env):
+    try:
+        validated = git_output(repo, "check-ref-format", "--branch", branch,
+                               env=env, stderr=subprocess.DEVNULL)
+    except subprocess.CalledProcessError:
+        validated = None
+    if validated != os.fsencode(branch) + b"\n":
+        raise ReleaseError(f"invalid release branch name: {branch!r}")
+
+
+def check_export(message, files, scratch, author, env):
+    checkout = scratch / "check"
+    git(scratch, "init", "--quiet", checkout, env=env)
+    tree = release_tree(checkout, files, scratch / "check-index", env)
+    commit = export_commit(checkout, tree, None, message, author, env)
+    git(checkout, "switch", "--quiet", "--detach", commit, env=env)
+    run_check(checkout, "the clean release export", env)
+
+
+def publish_incremental(repo, branch, base, message, files, scratch, author, env):
+    with (repo / ".git" / "malak-release.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if incremental_base(repo, branch, env) != base:
+            raise ReleaseError("main changed while checking the release export; retry the export")
+        tree = release_tree(repo, files, scratch / "index", env)
+        commit = export_commit(repo, tree, base, message, author, env)
+        git(repo, "switch", "--quiet", "--create", branch, commit, env=env)
+
+
+def export_release(tag, release, branch, fixes):
     # Inherited Git repository and index overrides must never redirect a command
     # from the build or release repository named by this script.
     local_vars = subprocess.check_output(["git", "rev-parse", "--local-env-vars"], text=True)
@@ -224,12 +283,20 @@ def release_tag(tag, release):
     env = {key: value for key, value in os.environ.items() if key not in overrides}
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
     build = git_path(Path(__file__).resolve().parents[1], "--show-toplevel", env)
-    commit = resolve(build, f"refs/tags/{tag}^{{commit}}", env)
+    source = f"refs/tags/{tag}" if tag is not None else "refs/heads/main"
+    commit = resolve(build, f"{source}^{{commit}}", env)
     if commit is None:
+        if tag is None:
+            raise ReleaseError("private main does not exist or does not point to a commit")
         raise ReleaseError(f"build tag {tag} does not exist or does not point to a commit")
     release = release.expanduser().resolve()
     existing = existing_release_repo(build, release, env)
-    if existing and resolve(release, f"refs/tags/{tag}", env):
+    if branch is not None:
+        if not existing:
+            raise ReleaseError("--onto must name an existing Git clone")
+        check_branch(release, branch, env)
+        base = incremental_base(release, branch, env)
+    elif existing and resolve(release, f"refs/tags/{tag}", env):
         print(f"{tag} is already in the release repository.")
         return
     try:
@@ -243,9 +310,17 @@ def release_tag(tag, release):
         raise ReleaseError("configure user.name and user.email in the build repository")
     with tempfile.TemporaryDirectory(prefix="malak-release-") as temp:
         scratch = Path(temp)
-        run_tag_check(build, commit, scratch, env)
+        if branch is None:
+            run_tag_check(build, commit, scratch, env)
         files = list(archived_files(build, commit, scratch, env))
         scan(files, author[1])
+        if branch is not None:
+            title = f"Malak {tag}" if tag is not None else "Sync main"
+            message = "\n".join((title, "", *(f"Fixes #{issue}" for issue in fixes), ""))
+            check_export(message, files, scratch, author, env)
+            publish_incremental(release, branch, base, message, files, scratch, author, env)
+            print(f"Created {title} on {branch} in {release}.")
+            return
         if not existing:
             git(build, "init", "--quiet", release, env=env)
         if publish(release, tag, files, scratch, author, env):
@@ -254,15 +329,40 @@ def release_tag(tag, release):
             print(f"{tag} is already in the release repository.")
 
 
+def issue_number(text):
+    number = text.lstrip("0")
+    if not re.fullmatch(r"[0-9]+", text) or not number:
+        raise argparse.ArgumentTypeError("issue number must be a positive integer")
+    return number
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tag", help="build tag in vX.Y.Z form")
-    parser.add_argument("--release-repo", type=Path, default=Path.home() / "Projects/malak-release")
+    parser.add_argument("tag", nargs="?", help="build tag in vX.Y.Z form")
+    parser.add_argument("--sync", action="store_true", help="export private main instead of a tag")
+    destination = parser.add_mutually_exclusive_group()
+    destination.add_argument("--release-repo", type=Path,
+                             default=Path.home() / "Projects/malak-release",
+                             help="repository for the local tagged export")
+    destination.add_argument("--onto", type=Path, help="public clone for an incremental export")
+    parser.add_argument("--branch", help="new branch in the public clone")
+    parser.add_argument("--fixes", action="append", type=issue_number, metavar="ISSUE",
+                        help="positive issue number to close, repeatable")
     args = parser.parse_args()
-    if not VERSION.fullmatch(args.tag):
+    if args.sync:
+        if args.tag is not None:
+            parser.error("--sync does not take a build tag")
+        if args.onto is None:
+            parser.error("--sync requires --onto")
+    elif args.tag is None or not VERSION.fullmatch(args.tag):
         parser.error("tag must be in vX.Y.Z form")
+    if args.onto is not None:
+        if args.branch is None or not args.fixes:
+            parser.error("--onto requires --branch and at least one --fixes issue number")
+    elif args.branch is not None or args.fixes:
+        parser.error("--branch and --fixes require --onto")
     try:
-        release_tag(args.tag, args.release_repo)
+        export_release(args.tag, args.onto or args.release_repo, args.branch, args.fixes)
     except (ReleaseError, OSError, subprocess.CalledProcessError, tarfile.TarError) as error:
         sys.exit(f"release: {error}")
 

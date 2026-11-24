@@ -1,0 +1,13 @@
+# Created once with gh label create; kept here as the source of truth.
+- {name: bug,              color: d73a4a, description: "Malak does the wrong thing"}
+- {name: enhancement,      color: a2eeef, description: "New feature or behaviour"}
+- {name: docs,             color: 0075ca, description: "Documentation is wrong or missing"}
+- {name: ci,               color: ededed, description: "Build and CI setup"}
+- {name: flaky-test,       color: fbca04, description: "Test that fails without a real bug"}
+- {name: cli,              color: c5def5, description: "Area: malak commands"}
+- {name: mailbox,          color: c5def5, description: "Area: malak mailbox"}
+- {name: recipes,          color: c5def5, description: "Area: recipes"}
+- {name: board,            color: c5def5, description: "Area: board and store"}
+- {name: agents,           color: c5def5, description: "Area: skill and hooks"}
+- {name: needs-decision,   color: d876e3, description: "Waiting on the maintainer"}
+- {name: good first issue, color: 7057ff, description: "Small and well described"}

@@ -12,6 +12,7 @@ const MARKER: &str = "stuck";
 pub(super) struct Watch {
     pending: BTreeMap<Address, Work>,
     closed: HashMap<String, Option<Revocation>>,
+    after: Option<u64>,
 }
 
 struct Work {
@@ -30,8 +31,13 @@ struct Revocation {
 
 impl Watch {
     pub fn new(initial: &Status) -> Self {
+        Self::starting_after(initial, None)
+    }
+
+    pub fn starting_after(initial: &Status, after: Option<u64>) -> Self {
         Self {
             pending: BTreeMap::new(),
+            after,
             closed: initial
                 .participants
                 .iter()
@@ -52,9 +58,17 @@ impl Watch {
             return;
         }
         let first_due = sent_at.saturating_add(STUCK_AFTER_MS);
+        // A one-shot watcher skips reminder slots before it started. Rearming
+        // it after handling a notice will wait for the next hourly slot.
+        let next_due = self
+            .after
+            .filter(|&after| after >= first_due)
+            .map_or(first_due, |after| {
+                after.saturating_add(REPEAT_MS - (after - first_due) % REPEAT_MS)
+            });
         self.pending.entry(address).or_insert_with(|| Work {
             first_due,
-            next_due: first_due,
+            next_due,
             kind: kind.to_owned(),
         });
     }
@@ -233,6 +247,20 @@ mod tests {
         check_block(&block, &format!("{BLOCK} running"));
         assert_eq!(next, Some(DUE + 4 * REPEAT_MS));
         assert!(watch.report(&model, startup).0.is_empty());
+    }
+
+    #[test]
+    fn a_one_shot_watcher_waits_for_the_next_hourly_slot() {
+        let (model, _) = setup(false);
+        let mut watch = Watch::starting_after(&status(), Some(DUE + 250));
+        store(&mut watch, 1, SENT);
+
+        assert_eq!(
+            watch.report(&model, DUE + 250),
+            (String::new(), Some(DUE + REPEAT_MS))
+        );
+        let (block, _) = watch.report(&model, DUE + REPEAT_MS);
+        check_block(&block, &format!("{BLOCK} running"));
     }
 
     #[test]

@@ -20,10 +20,12 @@ Malak runs in the background to delegate work across your agents and subagents.
 - Never use another participant's handover. Ask the owner if you need a
   handover or need to change roles. It works like an SSH key. Use separate
   OS users or sandboxes to isolate agents.
-- As lead, keep `malak --board NAME mailbox --plain --for lead` running to watch the lead
-  inbox, questions, orders and stuck work. Restart it when it ends, including
-  when a tool such as Claude Code Monitor reaches its time limit. Unacknowledged
-  messages show again on restart. On takeover, read the unacknowledged lead inbox
+- As lead, run `malak --board NAME mailbox --plain --for lead --next` in the
+  background to watch the lead inbox, questions, orders and stuck work. Use
+  Claude Code's background Bash (leave Monitor for other work) or Codex's
+  background command session. The command exits after showing waiting lead
+  mail or the next event. Handle the output, acknowledge lead messages, then
+  run it again. On takeover, read the unacknowledged lead inbox
   and check questions, orders in force and waiting workers. Poll
   `malak --board NAME read --wait 60 lead questions` if you cannot keep a watcher running.
   Without the watcher, reports, questions and syncs from your workers, sub-agents and other lead agents will go unseen.

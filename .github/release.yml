@@ -1,0 +1,12 @@
+changelog:
+  categories:
+    - title: Features
+      labels: ["enhancement"]
+    - title: Bug fixes
+      labels: ["bug"]
+    - title: Documentation
+      labels: ["docs"]
+    - title: CI and tests
+      labels: ["ci", "flaky-test"]
+    - title: Other changes
+      labels: ["*"]

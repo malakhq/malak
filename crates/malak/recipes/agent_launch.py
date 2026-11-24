@@ -72,7 +72,7 @@ def codex_session_trust(workspace, definitions):
     ) as server:
         try:
             send_request(server, {"id": 0, "method": "initialize", "params": {
-                "clientInfo": {"name": "malak", "version": "0.1.0"},
+                "clientInfo": {"name": "malak", "version": "0.1.1"},
                 "capabilities": {"experimentalApi": True},
             }})
             receive_response(server, 0)

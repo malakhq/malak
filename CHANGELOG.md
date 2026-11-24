@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.1 (2026-11-24)
+
+- Reject empty message bodies and require `-` when piping a body to `send`.
+- Reconnect waiting reads within their original timeout and recover plain
+  mailbox previews after a connection drops.
+- Add GitHub issue and pull request templates, release notes, and private
+  security reporting instructions.
+
 ## v0.1.0
 
 Initial release for macOS and Linux.

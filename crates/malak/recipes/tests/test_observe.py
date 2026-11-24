@@ -261,7 +261,7 @@ class RunningBoardsTests(unittest.TestCase):
             capture_output=True, check=True, timeout=12, env=self.env,
         )
         context = run_observe(PAYLOADS["codex_start"], self.env)["additionalContext"]
-        self.assertIn(" mailbox --plain --for lead`", context)
+        self.assertIn(" mailbox --plain --for lead --next`", context)
 
     def test_observe_posts_nothing_to_any_running_board(self):
         def channels():

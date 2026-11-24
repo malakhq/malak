@@ -1,12 +1,72 @@
 use super::board_version::BoardVersion;
 use malak_core::LocalClient;
-use malak_layers::{Error, Link, Received, Source, Transport, TransportInfo};
+use malak_layers::{Error, Link, Outcome, Received, Source, Transport, TransportInfo};
 use malak_transport_unix::{
     UnixLink, UnixTransport,
     vsock::{VsockLink, VsockTransport},
 };
 use nix::unistd::geteuid;
 use std::sync::{Arc, Mutex, Weak};
+use std::time::{Duration, Instant};
+
+pub(super) const LINK_DROPPED: &str =
+    "the link dropped and could not reconnect before the wait ended";
+pub(super) const LINK_HINT: &str =
+    "Check whether the board stopped or is restarting, then retry when it is running.";
+
+pub(super) fn link_failed(error: &Error) -> bool {
+    if error.outcome() != Outcome::Unavailable {
+        return false;
+    }
+    let reason = error.to_string();
+    matches!(
+        reason.as_str(),
+        "board has stopped"
+            | "link is closed"
+            | "link closed while reading a segment"
+            | "link stopped while writing a segment"
+            | "link closed before writing bytes"
+            | "the link deadline passed"
+            | LINK_DROPPED
+    ) || [
+        "no board is answering at ",
+        "read link: ",
+        "write link: ",
+        "connect guest vsock: ",
+        "connect to Firecracker VMM: ",
+    ]
+    .iter()
+    .any(|prefix| reason.starts_with(prefix))
+}
+
+// Keep this distinction at link I/O boundaries. A board can use the same
+// worker timeout wording for a store call in an authenticated ERR reply.
+pub(super) fn link_io_error(error: Error) -> Error {
+    if error == Error::unavailable("worker did not answer in time") {
+        Error::unavailable("the link deadline passed")
+    } else {
+        error
+    }
+}
+
+pub(super) fn reconnect<T>(
+    deadline: Instant,
+    mut attempt: impl FnMut(Duration) -> Result<T, Error>,
+) -> Result<T, Error> {
+    let mut delay = Duration::ZERO;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::unavailable(LINK_DROPPED));
+        }
+        match attempt(remaining) {
+            Err(error) if link_failed(&error) => {}
+            result => return result,
+        }
+        delay = (delay * 2).clamp(Duration::from_millis(50), Duration::from_secs(2));
+        std::thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
+    }
+}
 
 /// Select the participant's transport from its private handover address.
 #[derive(Default)]

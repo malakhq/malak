@@ -109,6 +109,74 @@ fn ack_works_with_wait() {
 }
 
 #[test]
+fn a_waiting_read_survives_a_board_restart() {
+    let mut inbox = Inbox::with_messages(0);
+    let reader = start_waiting_read(&inbox, "15");
+    inbox.board.restart();
+    inbox.send("arrived after restart");
+
+    let output = reader.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let received = messages(&String::from_utf8(output.stdout).unwrap());
+    assert_eq!(received.len(), 1);
+    assert_eq!(received[0]["text"], "arrived after restart");
+    assert!(inbox.bodies().is_empty());
+}
+
+#[test]
+fn a_waiting_read_reports_a_link_that_does_not_return() {
+    let mut inbox = Inbox::with_messages(0);
+    let reader = start_waiting_read(&inbox, "3");
+    inbox.board.board.kill().unwrap();
+    inbox.board.board.wait().unwrap();
+
+    let output = reader.wait_with_output().unwrap();
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(3), "{diagnostic}");
+    assert!(diagnostic.contains("link dropped"), "{diagnostic}");
+    assert!(
+        diagnostic.contains("board stopped or is restarting"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("handover"), "{diagnostic}");
+    assert!(output.stdout.is_empty());
+}
+
+fn start_waiting_read(inbox: &Inbox, seconds: &str) -> Child {
+    let mut reader = Command::new(MALAK)
+        .args(["read", &inbox.name, "--wait", seconds, "--ack", "--json"])
+        .env("MALAK_HANDOVER", &inbox.handover)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let id = inbox.name.strip_prefix("to/").unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        let status = inbox.board.status();
+        if status["participants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|participant| participant["id"] == id && participant["connections"] == 1)
+        {
+            return reader;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let _ = reader.kill();
+    let output = reader.wait_with_output().unwrap();
+    panic!(
+        "waiting reader did not attach: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn ack_with_nothing_printed_succeeds() {
     let inbox = Inbox::with_messages(0);
 

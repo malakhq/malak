@@ -1,6 +1,6 @@
 //! Fold public owner data and authorized previews into mailbox state.
 
-use super::{activity, sender::Sender, summary::Review};
+use super::{activity, questions, sender::Sender, summary::Review};
 use crate::cli::output::sender_name_or_id;
 use malak::{ChannelName, ChannelPattern, ParticipantId};
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,10 @@ pub(super) struct Participant {
 
 impl Participant {
     pub fn can_get(&self, channel: &str) -> bool {
+        self.allows(GrantAction::Get, channel)
+    }
+
+    fn allows(&self, action: GrantAction, channel: &str) -> bool {
         !self.revoked
             && self
                 .grant
@@ -50,7 +54,7 @@ impl Participant {
                 .is_none_or(|end| end > i128::from(super::now_ms()))
             && channel
                 .parse::<ChannelName>()
-                .is_ok_and(|name| self.grant.covers(GrantAction::Get, &name))
+                .is_ok_and(|name| self.grant.covers(action, &name))
     }
 
     fn inbox(&self) -> String {
@@ -182,7 +186,7 @@ impl Event {
         })
     }
 
-    fn historical(address: &Address, preview: &Preview) -> Self {
+    pub(super) fn historical(address: &Address, preview: &Preview) -> Self {
         Self {
             event: "stored".into(),
             at_ms: Some(preview.at_ms()),
@@ -247,6 +251,7 @@ pub(super) struct Quote {
 pub(super) enum PreviewState<'a> {
     Pending,
     Unavailable,
+    AnswersInInbox,
     Ready(&'a Preview),
 }
 
@@ -310,6 +315,7 @@ pub(super) struct Model {
     order_ends: Option<Vec<u64>>,
     reviewed_questions: Option<Review<Vec<Question>>>,
     reviewed_orders: Option<Review<Vec<u64>>>,
+    pub viewer: Option<String>,
     pub previews_enabled: bool,
     pub missed: u64,
 }
@@ -393,6 +399,7 @@ impl Model {
             order_ends: None,
             reviewed_questions: None,
             reviewed_orders: None,
+            viewer: None,
             previews_enabled: false,
             missed: 0,
         };
@@ -506,6 +513,13 @@ impl Model {
 
     pub fn participant(&self, id: &str) -> Option<&Participant> {
         self.participants.iter().find(|p| p.id == id)
+    }
+
+    pub fn question_inbox_viewer(&self) -> Option<&str> {
+        let viewer = self.participant(self.viewer.as_deref()?)?;
+        (viewer.allows(GrantAction::Send, questions::CHANNEL)
+            && !viewer.can_get(questions::CHANNEL))
+        .then_some(viewer.id.as_str())
     }
 
     pub fn worker_inbox(&self, name: &str) -> Option<(&Participant, &Channel)> {
@@ -662,6 +676,11 @@ impl Model {
         if let Some(activity) = &mut self.activity {
             activity.observe(&event);
         }
+        self.apply_cursors(&event);
+        self.record(event, false)
+    }
+
+    pub fn apply_cursors(&mut self, event: &Event) {
         if let Some(name) = &event.channel
             && let Some(creation) = &event.creation
             && let Some(position) = event.position
@@ -685,7 +704,6 @@ impl Model {
                 _ => {}
             }
         }
-        self.record(event, false)
     }
 
     fn record(&mut self, mut event: Event, ordered_backfill: bool) -> bool {
@@ -739,6 +757,16 @@ impl Model {
     }
 
     pub fn visible(&self, event: &Event) -> bool {
+        // Interactive tail events can arrive before the preview viewer is known.
+        if event.channel.as_deref() == Some(questions::CHANNEL)
+            && matches!(event.event.as_str(), "stored" | "read" | "acked")
+            && ((self.previews_enabled && self.viewer.is_none())
+                || self
+                    .question_inbox_viewer()
+                    .is_some_and(|viewer| event.id.as_deref() != Some(viewer)))
+        {
+            return false;
+        }
         if self.lead_watch {
             let channel = event.channel.as_deref();
             if event.id.as_deref() == Some("lead") {
@@ -871,6 +899,9 @@ impl Model {
     }
 
     pub fn preview(&self, address: &Address) -> PreviewState<'_> {
+        if address.channel == questions::CHANNEL && self.question_inbox_viewer().is_some() {
+            return PreviewState::AnswersInInbox;
+        }
         match self.previews.get(address) {
             Some(Some(preview)) => PreviewState::Ready(preview),
             Some(None) => PreviewState::Unavailable,

@@ -2,6 +2,11 @@
 
 Add new entries at the top. Start each line with its date and keep existing lines stable so upgrades can find the previous build's place in the list.
 
+- 2026-11-24 · Run `mailbox --plain --for lead --next` in the background. Handle its output, acknowledge lead messages, and run it again.
+- 2026-11-24 · The worker mailbox points to the worker's inbox for answers and shows the worker's own question positions as they are posted.
+- 2026-11-24 · Worker launchers retry a timed-out final report at least once with the same ID.
+- 2026-11-24 · Malak 0.1.1 release.
+- 2026-11-24 · `send` refuses empty bodies and requires `-` for piped text. Waiting reads reconnect within the original wait and plain mailbox previews recover from a stale link.
 - 2026-11-24 · `recipe guest` gives cross-board guests a reply inbox and prints the send and watch commands. Run it again with the existing handover to upgrade a guest in place.
 - 2026-11-24 · The reminder names only boards your chat leads or has joined as a worker. After restarting a lead chat, run `recipe lead-up` with the same board name.
 - 2026-11-24 · Ask the owner with `recipe ask`, then in chat. Check on a worker by asking it on its inbox, not by inspecting its processes. `recipe workers` says when a worker has no launch record.

@@ -64,6 +64,35 @@ behavior that depends on the existing rule. Wait for the project owner to
 accept the change and document the updated behavior before implementing it.
 Link the decision in your pull request.
 
+## How changes land
+
+1. Every change starts as an issue. Bugs, features and docs have their own forms. Security problems are reported privately (Security tab).
+2. The maintainer labels it: one kind (`bug`, `enhancement`, `docs`, `ci`, `flaky-test`) and an area (`cli`, `mailbox`, `recipes`, `board`, `agents`).
+3. The fix arrives as a pull request whose description says `Fixes #N`.
+4. CI runs `scripts/check` on Linux. `main` only accepts pull requests with a green check. Nobody pushes to it directly.
+5. Merging closes the issue. Releases are tagged from `main`, and their notes list the merged pull requests by label.
+
+## Sync fixes and cut releases
+
+Maintainers bring private `main` to public `main` in a sync pull request. Use
+a clean public clone with local `main` at the same commit as `origin/main`.
+Refresh both refs before exporting.
+
+```sh
+scripts/release --sync --onto ../malak-public \
+    --branch "sync/$(git rev-parse --short main)" --fixes 1 --fixes 2
+```
+
+The exporter scans and checks the filtered tree in a temporary checkout, then
+creates one `Sync main` commit on top of public `main`. Each `--fixes` adds a
+`Fixes #N` line to the commit. Push the sync branch, open its pull request,
+and merge when CI is green.
+
+When it is time to release, land the version bump through the same sync
+process. Check that the exact public `main` commit has the intended workspace
+version and a successful CI run from a `main` push. Tag that commit with
+`vX.Y.Z`, push the tag, and create the GitHub release with generated notes.
+
 ## Commit and open a pull request
 
 Keep each commit focused and passing. Use an imperative subject of up to 60

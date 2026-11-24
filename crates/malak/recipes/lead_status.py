@@ -16,6 +16,7 @@ GET_GRANT = 4
 
 
 def watcher_running(config):
+    # Both the long-running and one-shot lead watchers hold this shared lock.
     try:
         path = Path(board_settings(config)["socket_folder"]) / "o"
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)

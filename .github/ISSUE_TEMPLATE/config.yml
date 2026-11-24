@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/malakhq/malak/security/advisories/new
+    about: Report privately. Do not open a public issue for security problems.
+  - name: Quickstart
+    url: https://github.com/malakhq/malak/blob/main/docs/QUICKSTART.md
+    about: Setup and first steps.

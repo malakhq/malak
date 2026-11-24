@@ -373,7 +373,7 @@ fn describe_prints_plain_text_by_default() {
 
 #[test]
 fn describe_includes_questions_in_the_lead_read_loop() {
-    let command = "malak mailbox --plain --for lead";
+    let command = "malak mailbox --plain --for lead --next";
     let fallback = "malak read --wait 60 lead questions";
     let plain = run(Command::new(MALAK).env_clear().args(["hook", "--describe"]));
     assert!(plain.contains(command));

@@ -4,6 +4,7 @@ use super::{
     LiveBoard, REFRESH,
     interactive::BoardUpdates,
     model::{Address, Model},
+    summary,
     trace::LiveTrace,
     view::Startup,
 };
@@ -179,7 +180,7 @@ impl BoardEntry {
                     .updates
                     .request_preview(&mut running.model, &running.startup, preview);
                 if batch.redraw {
-                    running.updates.update_summary(&mut running.model);
+                    summary::update(&mut running.model);
                 }
                 (redraw || batch.redraw, batch.more_updates)
             }

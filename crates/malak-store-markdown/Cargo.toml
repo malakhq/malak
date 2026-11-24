@@ -1,6 +1,7 @@
 [package]
 name = "malak-store-markdown"
-description = "Malak's durable Markdown store"
+description = "Durable storage for Malak boards backed by Markdown files"
+categories = ["database-implementations", "filesystem"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,14 +14,14 @@ repository.workspace = true
 bytes = "1"
 data-encoding = "2"
 getrandom = "0.3"
-malak-fs = { path = "../malak-fs", version = "0.1.0" }
-malak-layers = { path = "../malak-layers", version = "0.1.0" }
-malak-record = { path = "../malak-record", version = "0.1.0" }
+malak-fs = { path = "../malak-fs", version = "0.1.1" }
+malak-layers = { path = "../malak-layers", version = "0.1.1" }
+malak-record = { path = "../malak-record", version = "0.1.1" }
 nix = { version = "0.31", features = ["fs", "ioctl", "poll", "socket", "user"] }
 sha2 = { version = "0.11", default-features = false }
 
 [dev-dependencies]
-malak-testkit = { path = "../malak-testkit", version = "0.1.0" }
+malak-testkit = { path = "../malak-testkit", version = "0.1.1" }
 
 [lints]
 workspace = true

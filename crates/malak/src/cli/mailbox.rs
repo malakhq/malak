@@ -1,5 +1,6 @@
 use super::{
     board_group, board_names,
+    client_transport::{link_failed, link_io_error, reconnect},
     config::{self, io_error},
     output::{self, now_ms},
     owner, owner_commands, owner_for_board,
@@ -7,13 +8,14 @@ use super::{
     worker_launch,
 };
 use malak::{Error, ParticipantId};
-use messages::{PreviewRequest, RecordBody, preview_worker, read_message};
+use messages::{LivePreviews, PreviewRequest, RecordBody, preview_worker, read_message};
 use model::{Address, Event, Model, Preview, Status};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod activity;
 mod history;
@@ -21,6 +23,7 @@ mod interactive;
 mod messages;
 mod model;
 mod multiboard;
+mod next;
 mod orders;
 mod plain;
 mod questions;
@@ -36,6 +39,7 @@ mod view;
 mod waiting;
 mod who;
 
+pub(super) use next::run as next;
 pub(super) use trace::{id as trace_id, run as trace};
 pub(super) use waiting::run as waiting;
 
@@ -113,9 +117,9 @@ fn watch(
     initial_trace: Option<String>,
 ) -> Result<(), Error> {
     let lead_watch = plain && name.as_deref() == Some("lead");
-    let settings = config::Config::read(config.clone())?.board;
+    let settings = Arc::new(config::Config::read(config.clone())?.board);
     let (mut watcher, _) = owner_for_board(&settings)?;
-    let mut tail = owner_commands::Tail::start(&mut watcher, None)?;
+    let tail = owner_commands::Tail::start(&mut watcher, None)?;
     let (mut reader, _) = owner_for_board(&settings)?;
     let initial = status_with_workers(&mut reader, roster, &settings.state)?;
     let title = name.as_ref().map_or_else(
@@ -129,10 +133,11 @@ fn watch(
     let (tx, rx) = mpsc::sync_channel(128);
     let plain = plain || !output::Format::stdout().interactive();
     let events = tx.clone();
+    let tail_settings = Arc::clone(&settings);
     thread::Builder::new()
         .name("mailbox-tail".into())
         .spawn(move || {
-            let end = read_tail(&mut watcher, &mut tail, |event| {
+            let end = follow_tail(&tail_settings, watcher, tail, None, |event| {
                 events.send(Update::Event(event)).is_ok()
             });
             let _ = events.send(Update::End(end));
@@ -145,33 +150,30 @@ fn watch(
         });
         let _watch_registration = watch
             .as_ref()
-            .and_then(|_| plain::register_lead_watcher(config.clone()));
+            .and_then(|_| plain::register_lead_watcher(&settings));
         let mut session = Session::open_preview(config.clone());
         let reviewed = session.as_mut().map(|(session, viewer)| {
+            model.viewer = Some(viewer.to_string());
             let previews = summary::load(&mut model, &initial, viewer.as_str(), |address| {
                 read_message(session, address, RecordBody::Full)
             });
             (viewer.clone(), previews)
         });
+        let previews = session.map(|(session, id)| {
+            LivePreviews::new(PreviewDoor::Single(config.clone()), session, id)
+        });
         thread::Builder::new()
             .name("mailbox-backfill".into())
             .spawn(move || plain::backfill(initial, config, reviewed, &tx))
             .map_err(io_error)?;
-        return plain::run(
-            &mut model,
-            rx,
-            session,
-            &title,
-            watch,
-            reader,
-            &settings.state,
-        );
+        return plain::run(&mut model, rx, previews, &title, watch, reader, &settings);
     }
     let snapshots = tx.clone();
     let (trace_snapshots, requests) = mpsc::channel::<SnapshotRequest>();
     thread::Builder::new()
         .name("mailbox-status".into())
         .spawn(move || {
+            let mut reader = Some(reader);
             loop {
                 let request = if !roster {
                     match requests.recv_timeout(REFRESH) {
@@ -183,12 +185,16 @@ fn watch(
                     thread::sleep(REFRESH);
                     None
                 };
-                let current = status_with_workers(&mut reader, roster, &settings.state);
+                let current = live_status(&mut reader, roster, &settings);
                 if let Some(request) = request {
-                    let _ = request.send(current.clone());
+                    let reply = current.clone().and_then(|status| {
+                        status.ok_or_else(|| Error::unavailable("mailbox status link dropped"))
+                    });
+                    let _ = request.send(reply);
                 }
                 let update = match current {
-                    Ok(status) => Update::Status(status),
+                    Ok(Some(status)) => Update::Status(status),
+                    Ok(None) => continue,
                     Err(error) => {
                         // The activity view ends with its tail. When the board
                         // stops, this separate connection can close before the
@@ -279,6 +285,36 @@ fn read_tail(
     Ok(())
 }
 
+fn follow_tail(
+    settings: &config::Board,
+    mut watcher: owner_commands::Client,
+    mut tail: owner_commands::Tail,
+    mut resumed: Option<&mut dyn FnMut() -> bool>,
+    mut observe: impl FnMut(Event) -> bool,
+) -> Result<(), Error> {
+    loop {
+        let mut listening = true;
+        let result = read_tail(&mut watcher, &mut tail, |event| {
+            listening = observe(event);
+            listening
+        });
+        match result {
+            Ok(()) if resumed.is_some() && listening => {}
+            Err(error) if link_failed(&error) => {}
+            result => return result,
+        }
+        drop(watcher);
+        (watcher, tail) = reconnect(Instant::now() + Duration::from_secs(30), |_| {
+            let (mut watcher, _) = owner_for_board(settings).map_err(link_io_error)?;
+            let tail = owner_commands::Tail::start(&mut watcher, None)?;
+            Ok((watcher, tail))
+        })?;
+        if resumed.as_mut().is_some_and(|resumed| !resumed()) {
+            return Ok(());
+        }
+    }
+}
+
 fn roster_snapshot(model: &mut Model, rx: Receiver<Update>) -> Result<(), Error> {
     while let Ok(update) = rx.recv() {
         match update {
@@ -323,6 +359,26 @@ fn status_with_workers(
         }
     }
     Ok(snapshot)
+}
+
+fn live_status(
+    reader: &mut Option<owner_commands::Client>,
+    roster: bool,
+    settings: &config::Board,
+) -> Result<Option<Status>, Error> {
+    let result = (|| {
+        if reader.is_none() {
+            *reader = Some(owner_for_board(settings)?.0);
+        }
+        status_with_workers(reader.as_mut().unwrap(), roster, &settings.state)
+    })();
+    match result {
+        Err(error) if link_failed(&error) => {
+            *reader = None;
+            Ok(None)
+        }
+        result => result.map(Some),
+    }
 }
 
 pub(super) fn board_counts(client: &mut owner_commands::Client) -> Result<(usize, u64), Error> {

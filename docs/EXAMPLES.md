@@ -26,13 +26,18 @@ environment.
 
 ## `malak send`
 
+Give a nonempty body as an argument, or pass `-` to read it from standard input.
+
 ```sh
-# Send a note to lead and read it back.
+# Send two notes to lead and read them back.
 malak send lead "Build finished."
+printf '%s\n' 'A second note.' | malak send lead -
 malak read lead
 ```
 
 ## `malak read`
+
+If the link drops during `--wait`, Malak reconnects within the original wait window.
 
 ```sh
 # Read an unseen note and acknowledge it after printing.
@@ -251,6 +256,13 @@ malak mailbox
 ```sh
 # Stream activity as text. Send a note to lead in a second terminal. Press Ctrl-C to exit.
 malak mailbox --plain
+```
+
+## `malak mailbox --next`
+
+```sh
+# Wait one second for a lead event, or show waiting mail immediately.
+malak mailbox --plain --for lead --next --timeout 1
 ```
 
 ## `malak mailbox --for`

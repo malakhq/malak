@@ -1,6 +1,7 @@
 [package]
 name = "malak-journal"
-description = "Journal encoding and replay for the Malak board core"
+description = "Board journal encoding and replay. Internal to Malak; no stability promise."
+categories = ["encoding", "filesystem"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,11 +15,11 @@ cobs = "0.5"
 sha2 = { version = "0.11", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-malak-fs = { path = "../malak-fs", version = "0.1.0" }
+malak-fs = { path = "../malak-fs", version = "0.1.1" }
 nix = { version = "0.31", features = ["dir", "fs", "user"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-malak-testkit = { path = "../malak-testkit", version = "0.1.0" }
+malak-testkit = { path = "../malak-testkit", version = "0.1.1" }
 
 [lints]
 workspace = true

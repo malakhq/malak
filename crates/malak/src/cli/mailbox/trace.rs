@@ -2,15 +2,15 @@
 
 use super::sender::Sender as SenderTrace;
 use super::{
-    LiveBoard, history,
+    LiveBoard, follow_tail, history,
     messages::{RecordBody, message_body, read_record, reply_to, sent_at},
     model::{Address, Channel, Preview, Status},
     owner, owner_commands,
     plain::write_plain,
-    read_tail, render, status,
+    render, status,
 };
 use crate::cli::{
-    config::io_error,
+    config::{Config, io_error},
     output::{self, display},
     participant::{Session, check_preview_board, json_message},
 };
@@ -56,11 +56,11 @@ pub(in crate::cli) fn run(
     } else {
         status(&mut owner, false)?
     };
-    let (mut session, viewer) = Session::open_preview(config)
+    let (mut session, viewer) = Session::open_preview(config.clone())
         .ok_or_else(|| Error::unavailable("could not open mailbox message previews"))?;
     let title = format!("Trace {trace}");
     output::diagnostic(&format!("{title} is a label any sender can set."), &[]);
-    let Some(mut tail) = tail else {
+    let Some(tail) = tail else {
         let records = retained(&snapshot, viewer.as_str());
         let found = load(&mut session, &records, &trace, || false)?;
         note_empty(found.is_empty());
@@ -74,11 +74,12 @@ pub(in crate::cli) fn run(
         return Ok(());
     };
 
+    let settings = Config::read(config)?.board;
     let (events, stores) = mpsc::channel();
     thread::Builder::new()
         .name("mailbox-trace-tail".into())
         .spawn(move || {
-            let end = read_tail(&mut owner, &mut tail, |event| {
+            let end = follow_tail(&settings, owner, tail, None, |event| {
                 event
                     .address()
                     .is_none_or(|address| events.send(Ok(address)).is_ok())

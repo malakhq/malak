@@ -125,9 +125,10 @@ malak recipe agents-md --board team --dir path/to/project
 
 The recipe puts the managed Malak block at the top of `AGENTS.md` and
 `CLAUDE.md`, creating either file when needed. The block names
-`malak mailbox --plain --for lead` as the lead's watcher. The recipe updates an existing block
-in place between the `malak:begin` and `malak:end` comments. Repeating the
-command with the same board and handover leaves both files as they are.
+`malak mailbox --plain --for lead --next` as the lead's background watcher.
+The recipe updates an existing block in place between the `malak:begin` and
+`malak:end` comments. Repeating the command with the same board and handover
+leaves both files as they are.
 
 Run `malak recipe agents-md --remove --dir path/to/project` to remove the
 block and restore the original contents. If the recipe created an instruction
@@ -186,13 +187,20 @@ An agent with a shell can wait in its own inbox with
 `malak read --agent --wait 60 to/<id>`. An agent with hook support can
 use the hooks below.
 
-As the lead, run `malak --board NAME mailbox --plain --for lead` to follow new messages on
-`lead`, `questions`, and `orders`. Read orders in force with `malak --board NAME mailbox --orders`
-before acting. The watcher flags unacknowledged lead messages in worker
-inboxes after 15 minutes and every hour after that until acknowledged or the worker
-is revoked. At revocation it prints one final `revoked` block for each stuck
-message. A watcher that starts prints any already-stuck blocks for active workers
-before following the schedule. The first word after the timestamp is `stuck`.
+As the lead, run `malak --board NAME mailbox --plain --for lead --next` in
+the background. It shows waiting lead messages and open owner questions at
+startup or waits for the next event on `lead`, `questions`, and `orders`,
+or the next stuck-work notice. Handle what it prints, acknowledge lead messages,
+and run it again. Read orders in force with `malak --board NAME mailbox --orders`
+before acting. Add `--timeout SECONDS` to end a quiet wait with `No events.`
+The watcher flags unacknowledged lead messages in worker inboxes after
+15 minutes and every hour thereafter until the worker acknowledges them or
+is revoked. The first word after the timestamp is `stuck`.
+
+For a continuous terminal stream, run
+`malak --board NAME mailbox --plain --for lead`. That watcher prints
+already-stuck blocks for active workers at startup and a final `revoked`
+block for each stuck message when its worker is revoked.
 Use `malak mailbox --waiting` to see which workers have unacknowledged messages
 from the lead. Add `--json` for scripts or `--for NAME` for one worker.
 Revoked inboxes drop out of this list and their messages stay in history.
@@ -546,7 +554,9 @@ With a position alone, `malak recipe answer` prefers an open question at that
 position on `questions`, then looks on `lead`. The receipt names the channel
 answered. Pass `CHANNEL POSITION` to choose the channel explicitly. The recipe
 looks up the current creation and sends a linked note. Pass the reply body
-from standard input. The full form lets you choose the destination and give
+from standard input. An empty reply is refused, including with `--under-order`.
+For a direct `malak send`, pass the text as an argument or use `-` for standard input.
+The full form lets you choose the destination and give
 the source channel and creation.
 
 ```sh
@@ -580,6 +590,11 @@ malak recipe ask --blocks "the migration" --option "run it now" --option "wait f
 Should the migration run before the review is done?
 EOF
 ```
+
+`ask` prints the posted question's position. With the standard worker grant,
+`malak mailbox` and `malak mailbox --plain` direct you to your own inbox for
+answers. A question you post while the mailbox is open appears in Activity
+with its position. Read the lead's reply with `malak read to/<your-id>`.
 
 ```sh
 # Lead: list open questions, oldest first within each group
@@ -686,7 +701,7 @@ hook's PATH.
 Run `malak hook --describe` for the generic contract and the command and
 JSON examples for all four events. Add `--json` for machine-readable
 output or `--tool claude` or `--tool codex` for the native formats.
-The description gives tools `malak mailbox --plain --for lead` as the lead's
+The description gives tools `malak mailbox --plain --for lead --next` as the lead's
 background watcher for messages on `lead`, `questions`, and `orders` and for stuck work.
 Acknowledge each message after handling it.
 Use `malak mailbox --questions` to see open questions.

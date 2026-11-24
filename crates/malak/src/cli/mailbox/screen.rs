@@ -1,7 +1,7 @@
 use super::{
     model::{Lane, Model},
     multiboard::{BoardEntry, BoardId, State},
-    summary, text,
+    questions, summary, text,
     trace::LiveTrace,
     view::{Pane, RowKey, Tab, View, Visible},
 };
@@ -96,7 +96,8 @@ pub(super) fn draw(
             opening: false,
             partial,
             question: None,
-            empty: None,
+            empty: (view.tab == Tab::Questions && model.question_inbox_viewer().is_some())
+                .then_some(questions::INBOX_HINT),
         },
     );
 }
@@ -150,11 +151,15 @@ pub(super) fn draw_boards(
         .or_else(|| entries.is_empty().then_some("No boards"));
     let active_trace = trace.filter(|(id, _)| selected.is_none_or(|board| board.id == **id));
     let messages = boards::messages(entries, view, active_trace);
+    let counts = boards::counts(models, now);
     let labels = if empty.is_some() {
         Vec::new()
     } else {
-        boards::counts(models, now).labels()
+        counts.labels()
     };
+    let empty = empty.or_else(|| {
+        (view.tab == Tab::Questions && counts.question_inbox).then_some(questions::INBOX_HINT)
+    });
     draw_page(
         frame,
         view,

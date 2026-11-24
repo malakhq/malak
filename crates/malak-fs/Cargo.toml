@@ -1,6 +1,7 @@
 [package]
 name = "malak-fs"
-description = "Descriptor-relative filesystem operations for Malak"
+description = "Descriptor-relative filesystem operations for board state. Internal to Malak; no stability promise."
+categories = ["filesystem"]
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
