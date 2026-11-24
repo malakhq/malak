@@ -40,6 +40,7 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
     let initial = status(&mut reader, false)?;
     let mut reader = Some(reader);
     let mut _registration = plain::register_lead_watcher(&settings);
+    let _tick = plain::TickMark::start(&settings);
     let (tx, rx) = mpsc::sync_channel(128);
     let tail_settings = Arc::clone(&settings);
     thread::Builder::new()

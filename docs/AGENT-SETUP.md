@@ -51,13 +51,16 @@ Run `malak recipe agents` from a terminal and confirm the prompt. When the
 owner has approved installation and you are running without a terminal,
 use `malak recipe agents --yes`. Use `--dry-run` to preview the changes.
 The recipe installs the Malak skill and prompt reminders for the user in
-existing Claude Code and Codex configuration directories.
+existing Claude Code and Codex configuration directories. It also registers
+`Stop`, so a lead about to end its turn with unacknowledged lead messages or
+unanswered agent questions is handed them once and asked to handle and
+acknowledge them first.
 On prompts and tool use, the reminder checks at most every three minutes for unacknowledged lead messages, older owner questions, and a stopped watcher.
 
 In Codex CLI, open `/hooks` and press Enter on `UserPromptSubmit`,
-`SubagentStart` or `PreToolUse`. Select the Malak command from
+`SubagentStart`, `PreToolUse` or `Stop`. Select the Malak command from
 `hooks.json`, review it and press `t` to trust it. Press Esc and repeat
-for the other two events. In Codex desktop use **Settings > Hooks**.
+for the other three events. In Codex desktop use **Settings > Hooks**.
 If the owner also wants a one-time notice in already open local Codex
 app-server chats, add `--notify-open`.
 
@@ -85,6 +88,18 @@ command session ID, and check its output as you work. The watcher prints
 waiting lead mail and open owner questions if present, or waits for the next
 event, then exits. Handle what it prints, acknowledge lead messages, and run
 it again. It reconnects through a brief board restart.
+
+To stay awake inside the host's own loop, run the watcher once per tick:
+
+```sh
+malak --board "$board" mailbox --plain --for lead --next --timeout 60
+```
+
+In Claude Code, run it from `/loop` (dynamic) with a tick of two to five
+minutes. In the Codex App, make an automation that runs the same command. Each
+tick handles what the command prints, acknowledges lead messages and goes idle.
+The reminder counts a lead whose last tick started or ended within ten minutes
+as watching.
 
 For continuous output in a terminal, use
 `malak --board "$board" mailbox --plain --for lead`.

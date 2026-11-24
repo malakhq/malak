@@ -26,6 +26,7 @@ mod multiboard;
 mod next;
 mod orders;
 mod plain;
+pub(in crate::cli) use plain::LEAD_TICK;
 mod questions;
 mod render;
 mod screen;

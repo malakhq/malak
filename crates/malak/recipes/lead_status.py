@@ -12,11 +12,16 @@ from recipe_board import board_settings, lead_watcher_command
 
 
 OWNER_QUESTION_AGE_SECONDS = 3 * 60
+# A lead that runs the one-shot watcher once per host-loop tick is idle between
+# ticks. It counts as watching while its last tick started or ended this recently.
+TICK_WINDOW_SECONDS = 10 * 60
+TICK_FILE = "lead-next"
 GET_GRANT = 4
 
 
 def watcher_running(config):
     # Both the long-running and one-shot lead watchers hold this shared lock.
+    # Between host-loop ticks the one-shot watcher's own stamp stands in for it.
     try:
         path = Path(board_settings(config)["socket_folder"]) / "o"
         fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -28,11 +33,23 @@ def watcher_running(config):
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return True
-            return False
+            return ticked_recently(fd)
         finally:
             os.close(fd)
     except (KeyError, OSError, TypeError, ValueError):
         return None
+
+
+def ticked_recently(directory):
+    try:
+        mark = os.stat(TICK_FILE, dir_fd=directory, follow_symlinks=False)
+    except OSError:
+        return False
+    return (
+        stat.S_ISREG(mark.st_mode)
+        and mark.st_uid == os.geteuid()
+        and 0 <= time.time() - mark.st_mtime < TICK_WINDOW_SECONDS
+    )
 
 
 def oldest_lead(config, handover, status, now):

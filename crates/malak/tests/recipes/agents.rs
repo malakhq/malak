@@ -42,7 +42,7 @@ fn installs_skills_and_hooks_for_existing_clients() {
         assert!(skill.starts_with("---\nname: malak\n"));
         assert!(skill.contains("malak recipe --help"));
         let hooks = settings(&board, settings_path);
-        for event in ["UserPromptSubmit", "SubagentStart", "PreToolUse"] {
+        for event in ["UserPromptSubmit", "SubagentStart", "PreToolUse", "Stop"] {
             let command = hooks["hooks"][event][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap();
@@ -535,6 +535,50 @@ fn lead_status_reminder_shares_the_cooldown_across_prompt_and_tool_hooks() {
     assert!(context(&reminder(&board, tool_use())).contains("watcher is not running"));
 }
 
+fn finish_lead_tick(board: &Fixture) {
+    let mut command = board.owner(&[
+        "mailbox",
+        "--plain",
+        "--for",
+        "lead",
+        "--next",
+        "--timeout",
+        "1",
+    ]);
+    board.recipe_environment(&mut command);
+    let output = command.output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No events."));
+}
+
+#[test]
+fn lead_status_reminder_counts_a_lead_between_one_shot_ticks_as_watching() {
+    let board = fixture();
+    board.start();
+    finish_lead_tick(&board);
+
+    let notice = context(&reminder(&board, prompt()));
+
+    assert!(!notice.contains("watcher is not running"), "{notice}");
+}
+
+#[test]
+fn lead_status_reminder_reports_a_lead_whose_last_tick_is_old() {
+    let board = fixture();
+    board.start();
+    finish_lead_tick(&board);
+    fs::OpenOptions::new()
+        .write(true)
+        .open(board.home.path().join("d/o/lead-next"))
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(11 * 60))
+        .unwrap();
+
+    let notice = context(&reminder(&board, prompt()));
+
+    assert!(notice.contains("watcher is not running"), "{notice}");
+}
+
 #[test]
 fn lead_status_reminder_notices_when_its_watcher_exits() {
     let board = fixture();
@@ -753,4 +797,211 @@ fn opt_in_injects_a_user_notice_once_per_loaded_thread() {
             .unwrap()
             .contains("Malak is installed")
     );
+}
+
+fn stop(session: &str, active: bool) -> Value {
+    json!({"session_id": session, "hook_event_name": "Stop", "stop_hook_active": active})
+}
+
+fn turn_end_board() -> Fixture {
+    let board = fixture();
+    board.start();
+    lead_up_with_agent_id(&board, "lead-reminder");
+    board
+}
+
+fn worker_says(board: &Fixture, channel: &str, text: &str) -> PathBuf {
+    let worker = board.enrol("turn-worker", &["lead:send", "questions:send"]);
+    run(participant_command(&worker, &["send", channel, text]));
+    worker
+}
+
+fn reply(output: &str) -> Value {
+    serde_json::from_str(output).unwrap_or_else(|_| panic!("{output:?}"))
+}
+
+#[test]
+fn turn_end_hands_a_lead_its_pending_mail_once_with_the_bodies() {
+    let board = turn_end_board();
+    worker_says(&board, "lead", "Report: the parser is done");
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", false)));
+
+    assert_eq!(answer["decision"], "block");
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(reason.contains("lead #"), "{reason}");
+    assert!(reason.contains("Report: the parser is done"), "{reason}");
+    assert!(reason.contains("acknowledge"), "{reason}");
+}
+
+#[test]
+fn a_second_turn_end_with_the_same_pending_set_ends_with_a_reminder() {
+    let board = turn_end_board();
+    worker_says(&board, "lead", "Still pending");
+    let _ = reminder(&board, stop("lead-reminder", false));
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", true)));
+
+    assert!(answer.get("decision").is_none(), "{answer}");
+    assert!(
+        answer["systemMessage"]
+            .as_str()
+            .unwrap()
+            .contains("1 lead message unacknowledged"),
+        "{answer}"
+    );
+}
+
+#[test]
+fn a_new_pending_set_is_handed_over_again() {
+    let board = turn_end_board();
+    let worker = worker_says(&board, "lead", "First");
+    let _ = reminder(&board, stop("lead-reminder", false));
+    run(participant_command(&worker, &["send", "lead", "Second"]));
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", true)));
+
+    assert_eq!(answer["decision"], "block");
+    assert!(answer["reason"].as_str().unwrap().contains("Second"));
+}
+
+#[test]
+fn turn_end_hands_over_an_unanswered_agent_question() {
+    let board = turn_end_board();
+    worker_says(&board, "questions", "Which parser should I use?");
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", false)));
+
+    assert_eq!(answer["decision"], "block");
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(reason.contains("questions #"), "{reason}");
+    assert!(reason.contains("Which parser should I use?"), "{reason}");
+}
+
+#[test]
+fn open_owner_questions_alone_do_not_continue_the_turn() {
+    let board = turn_end_board();
+    board.lead(&["send", "questions", "Should we ship?"]);
+
+    assert_eq!(reminder(&board, stop("lead-reminder", false)), "");
+}
+
+#[test]
+fn turn_end_mentions_a_waiting_owner_question_without_waiting_on_it() {
+    let board = turn_end_board();
+    board.lead(&["send", "questions", "Should we ship?"]);
+    worker_says(&board, "lead", "Done");
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", false)));
+
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("1 owner question is waiting on the owner"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn turn_end_gives_a_worker_nothing() {
+    let board = turn_end_board();
+    let worker = worker_says(&board, "lead", "Pending for the lead");
+
+    let output = reminder_with_handover(&board, stop("worker-chat", false), Some(&worker));
+
+    assert_eq!(output, "");
+}
+
+#[test]
+fn turn_end_gives_a_chat_that_does_not_lead_the_board_nothing() {
+    let board = turn_end_board();
+    worker_says(&board, "lead", "Pending for the lead");
+
+    assert_eq!(reminder(&board, stop("another-chat", false)), "");
+}
+
+#[test]
+fn turn_end_with_nothing_pending_says_nothing() {
+    let board = turn_end_board();
+
+    assert_eq!(reminder(&board, stop("lead-reminder", false)), "");
+}
+
+#[test]
+fn the_generic_format_gets_a_continue_reply() {
+    let board = turn_end_board();
+    worker_says(&board, "lead", "Generic pending");
+
+    let answer = reply(&reminder(
+        &board,
+        json!({"event": "turn_end", "session": "lead-reminder"}),
+    ));
+
+    assert_eq!(answer["decision"], "continue");
+    assert!(
+        answer["context"]
+            .as_str()
+            .unwrap()
+            .contains("Generic pending")
+    );
+}
+
+#[test]
+fn a_long_pending_message_is_shortened_within_the_32_kib_limit() {
+    let board = turn_end_board();
+    let worker = board.enrol("turn-worker", &["lead:send"]);
+    let mut command = participant_command(&worker, &["send", "lead", "-"]);
+    command.stdin(Stdio::piped()).stdout(Stdio::null());
+    let mut child = command.spawn().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all("x".repeat(60 * 1024).as_bytes()).unwrap();
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", false)));
+
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(reason.len() <= 32 * 1024, "{}", reason.len());
+    assert!(reason.contains("[shortened: "), "{reason}");
+}
+
+const WITHOUT_STOP: &str = r#"
+import base64, json, sys
+manifest = sys.argv[1]
+state = json.load(open(manifest))
+for change in state["settings"]:
+    change["added"].pop("Stop")
+    doc = json.load(open(change["path"]))
+    del doc["hooks"]["Stop"]
+    data = (json.dumps(doc, indent=2) + "\n").encode()
+    open(change["path"], "wb").write(data)
+    change["after"] = base64.b64encode(data).decode()
+open(manifest, "w").write(json.dumps(state, indent=2) + "\n")
+"#;
+
+#[test]
+fn a_refresh_adds_the_stop_hook_to_an_install_made_before_it_existed() {
+    let board = fixture();
+    run(agents(&board, &["--yes"]));
+    let manifest = board.home.path().join(MANIFEST);
+    let mut doctor = Command::new("python3");
+    doctor.args(["-c", WITHOUT_STOP]).arg(&manifest);
+    run(doctor);
+    assert!(
+        settings(&board, CLAUDE_SETTINGS)["hooks"]
+            .get("Stop")
+            .is_none()
+    );
+
+    let status = agents(&board, &["--yes", "--upgrade-refresh"])
+        .status()
+        .unwrap();
+
+    assert_eq!(status.code(), Some(10));
+    for path in [CLAUDE_SETTINGS, CODEX_HOOKS] {
+        let command = settings(&board, path)["hooks"]["Stop"][0]["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(command.ends_with(" recipe observe --reminder"), "{command}");
+    }
 }

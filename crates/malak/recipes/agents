@@ -23,8 +23,8 @@ REFRESHED_HOOKS = 10
 REFRESH_PENDING = 11
 TRUST_STEPS = (
     "In Codex CLI, open /hooks and press Enter on UserPromptSubmit, SubagentStart, "
-    "or PreToolUse. Select the Malak command from hooks.json, review it, then press t "
-    "to trust it. Press Esc and repeat for the other two events. "
+    "PreToolUse or Stop. Select the Malak command from hooks.json, review it, then press t "
+    "to trust it. Press Esc and repeat for the other three events. "
     "In Codex desktop, open Settings > Hooks to review and trust the Malak commands."
 )
 
@@ -40,6 +40,7 @@ def registrations(command):
         "UserPromptSubmit": {"hooks": [handler]},
         "SubagentStart": {"hooks": [handler]},
         "PreToolUse": {"hooks": [handler]},
+        "Stop": {"hooks": [handler]},
     }
 
 
@@ -148,7 +149,8 @@ def remove(plan, dry_run):
 
 
 def refresh_settings(change, hooks, say):
-    if all(group == hooks.get(event) for event, group in change["added"].items()):
+    if all(group == hooks.get(event) for event, group in change["added"].items()) and set(hooks) <= set(change["added"]):
+        # An earlier install lacks any event added since, such as Stop.
         return None
     path = Path(change["path"])
     if not directory_exists(path.parent):

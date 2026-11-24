@@ -18,7 +18,7 @@ use workers::Worker;
 pub(super) const FINISH: &str = "__upgrade-finish";
 const HANDOFF: &str = "malak upgrade continuation 1";
 const NOTICE_HANDOFF: &str = "malak upgrade continuation 2";
-const HOOK_REVIEW: &str = "For chats opened before this upgrade, restart Claude Code or review and approve the Malak hooks in Codex /hooks or Settings > Hooks before reminders can reach them.";
+const HOOK_REVIEW: &str = "For chats opened before this upgrade, restart Claude Code or review and approve the Malak hooks in Codex /hooks or Settings > Hooks before reminders and the turn-end hand-over (Stop hook) can reach them.";
 
 #[derive(Args)]
 pub(super) struct Options {

@@ -2,6 +2,8 @@
 
 Add new entries at the top. Start each line with its date and keep existing lines stable so upgrades can find the previous build's place in the list.
 
+- 2026-11-24 · A lead about to end its turn with unacknowledged lead messages or unanswered agent questions is handed them once through the Stop hook, to handle and acknowledge first. Run `recipe agents` upgrade to register it; Codex asks you to trust the new `Stop` hook.
+- 2026-11-24 · Stay awake in your host loop: once per tick run `mailbox --plain --for lead --next --timeout 60` (Claude Code `/loop`, a Codex App automation), handle its output and acknowledge lead messages. A tick within 10 minutes counts as watching.
 - 2026-11-24 · Run `mailbox --plain --for lead --next` in the background. Handle its output, acknowledge lead messages, and run it again.
 - 2026-11-24 · The worker mailbox points to the worker's inbox for answers and shows the worker's own question positions as they are posted.
 - 2026-11-24 · Worker launchers retry a timed-out final report at least once with the same ID.

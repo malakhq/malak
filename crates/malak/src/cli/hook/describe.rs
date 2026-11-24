@@ -30,6 +30,8 @@ struct Example {
 #[derive(Serialize)]
 struct Monitor {
     command: &'static str,
+    /// The same wait, bounded, for a host loop that runs it once per tick.
+    tick: &'static str,
     fallback: &'static str,
 }
 
@@ -65,9 +67,15 @@ pub(super) fn write(output: &mut dyn Write, tool: Tool, json: bool) -> io::Resul
         &render,
         &format!(
             "\nPut malak on the hook's PATH. Send one JSON object on standard input.\n\
-         Use the tool's session ID consistently across all four events.\n\
-         Each event acknowledges the previous delivery in that session.\n\
+         Use the tool's session ID consistently across all five events.\n\
+         Each event but turn_end acknowledges the previous delivery in that session.\n\
          session_start, prompt and step show one waiting message.\n\
+         malak hook shows nothing at turn_end. A lead answers it with the\n\
+         reminder command, malak recipe observe --reminder, which hands a lead\n\
+         with unacknowledged lead messages or unanswered agent questions those\n\
+         messages once, and asks it to handle and acknowledge them before it\n\
+         stops. Claude Code maps turn_end to its Stop hook, and so does Codex.\n\
+         A tool with no hook that can continue a turn relies on the lead's loop.\n\
          session_end acknowledges the previous delivery only if a prompt or step\n\
          event came after it in the same session. Otherwise the message stays due.\n\
          session_end shows nothing. Context is limited to {BUDGET} UTF-8 bytes."
@@ -140,13 +148,20 @@ pub(super) fn write(output: &mut dyn Write, tool: Tool, json: bool) -> io::Resul
             ("Lead read loop", description.monitor.fallback),
             ("Open questions", "malak mailbox --questions"),
             ("Background command", description.monitor.command),
+            ("Once per loop tick", description.monitor.tick),
             ("Example payloads", "malak hook --describe --json"),
         ],
     )?;
     prose(
         output,
         &render,
-        "The background command follows new messages on lead, questions, and orders. It flags lead work still unacknowledged after 15 minutes.",
+        "The background command follows new messages on lead, questions, and orders. It flags lead work still unacknowledged after 15 minutes.\n\
+         To stay awake inside the host's own loop, run it once per tick as\n\
+         malak --board NAME mailbox --plain --for lead --next --timeout 60,\n\
+         handle what it prints, acknowledge lead messages and go idle. In Claude Code\n\
+         use /loop (dynamic) with a tick of 2 to 5 minutes. In the Codex App use an\n\
+         automation that runs the same command. A person can keep\n\
+         malak mailbox --plain --for lead running in a terminal.",
     )?;
     let next = "Acknowledge messages after handling them.";
     if render.interactive() {
@@ -220,13 +235,19 @@ fn describe(tool: Tool) -> Description {
         context_byte_limit: BUDGET,
         monitor: Monitor {
             command: "malak mailbox --plain --for lead --next",
+            tick: "malak mailbox --plain --for lead --next --timeout 60",
             fallback: "malak read --wait 60 lead questions",
         },
         events: EventName::ALL
             .into_iter()
             .map(|event| Example {
                 event,
-                command: command.clone(),
+                command: if event == EventName::TurnEnd {
+                    // This binary's own hook says nothing at turn_end.
+                    "malak recipe observe --reminder".to_owned()
+                } else {
+                    command.clone()
+                },
                 input: format.input(event, "<the tool's session ID>"),
                 output: format.reply(
                     event,

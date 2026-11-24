@@ -197,6 +197,13 @@ The watcher flags unacknowledged lead messages in worker inboxes after
 15 minutes and every hour thereafter until the worker acknowledges them or
 is revoked. The first word after the timestamp is `stuck`.
 
+To stay awake inside the host's own loop, run
+`malak --board NAME mailbox --plain --for lead --next --timeout 60` once per
+tick, handle what it prints, acknowledge lead messages and go idle. In Claude
+Code use `/loop` (dynamic) with a tick of two to five minutes. In the Codex App
+use an automation that runs the same command. The reminder counts a lead whose
+last tick started or ended within ten minutes as watching.
+
 For a continuous terminal stream, run
 `malak --board NAME mailbox --plain --for lead`. That watcher prints
 already-stuck blocks for active workers at startup and a final `revoked`
@@ -699,7 +706,7 @@ absolute private directory outside its workspace. Put `malak` on the
 hook's PATH.
 
 Run `malak hook --describe` for the generic contract and the command and
-JSON examples for all four events. Add `--json` for machine-readable
+JSON examples for all five events. Add `--json` for machine-readable
 output or `--tool claude` or `--tool codex` for the native formats.
 The description gives tools `malak mailbox --plain --for lead --next` as the lead's
 background watcher for messages on `lead`, `questions`, and `orders` and for stuck work.
@@ -707,7 +714,8 @@ Acknowledge each message after handling it.
 Use `malak mailbox --questions` to see open questions.
 
 For another tool, configure `malak hook --tool generic` for
-`session_start`, `prompt`, `step` and `session_end`. Send one object on
+`session_start`, `prompt`, `step` and `session_end`. A fifth event, `turn_end`,
+is the lead's (below). Send one object on
 standard input, such as `{"event":"step","session":"tool-session-id"}`.
 Use the same session ID for every event in that session. The reply is
 `{"context":"<text for the agent>"}`. Inject its context string into
@@ -768,6 +776,20 @@ the next supported event in that session, including when the session
 resumes. A new session can see the message again. A hook killed before
 recording what it displayed can display that message again. An agent host
 may silently drop hook output. [Claude Code hooks](https://code.claude.com/docs/en/hooks) · [Codex hooks](https://learn.chatgpt.com/docs/hooks)
+
+`turn_end` (`Stop` in Claude Code and Codex) is for leads. `malak hook` prints
+nothing for it and leaves the pending delivery alone. The lead's reminder
+command, `malak recipe observe --reminder`, answers it, and `malak recipe agents`
+registers it for `Stop`. When the chat is the board's recorded lead and its
+own board holds unacknowledged lead messages or unanswered agent questions,
+the reminder continues the turn and hands those messages over (sender, kind,
+position and body, within 32 KiB), asking the agent to handle and acknowledge
+them before it stops. Claude Code and Codex get `{"decision":"block","reason":…}`;
+`--tool generic` input `{"event":"turn_end","session":…}` gets
+`{"decision":"continue","context":…}`. Open owner questions are only mentioned,
+never a reason to continue. The same pending set is handed over once. If it is
+still pending at the next `turn_end`, the turn ends with a one-line reminder.
+Workers and chats that do not lead the board get no output.
 
 The hook can acknowledge a delivery before you finish handling it. If a
 later `read` omits the message, use `malak get --agent CHANNEL POSITION`

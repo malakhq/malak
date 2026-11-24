@@ -74,19 +74,23 @@ Link the decision in your pull request.
 
 ## Sync fixes and cut releases
 
-Maintainers bring private `main` to public `main` in a sync pull request. Use
-a clean public clone with local `main` at the same commit as `origin/main`.
-Refresh both refs before exporting.
+Maintainers open one public pull request per lane after merging it into private
+`main`. Use a clean public clone and refresh local `main` and `origin/main` to
+the same public commit. Run the maintainer commands from the private checkout.
 
 ```sh
-scripts/release --sync --onto ../malak-public \
-    --branch "sync/$(git rev-parse --short main)" --fixes 1 --fixes 2
+internal/lane-merge NAME --sync
 ```
 
-The exporter scans and checks the filtered tree in a temporary checkout, then
-creates one `Sync main` commit on top of public `main`. Each `--fixes` adds a
-`Fixes #N` line to the commit. Push the sync branch, open its pull request,
-and merge when CI is green.
+Include `Fixes #N` in the lane's commit messages. The exporter scans and checks
+the filtered lane changes on top of public `main` in a temporary checkout. The
+public pull request describes the changes and checks, links the fixed issues,
+and inherits their labels. For a batch of pending changes, run
+`internal/sync-pr --fixes 1 --fixes 2` with all the issue numbers.
+
+After the required check goes green, run `internal/merge-pr N` with the public
+pull request number. It uses the pull request title as the squash commit
+subject, deletes the branch, and verifies the commit's GitHub no-reply author.
 
 When it is time to release, land the version bump through the same sync
 process. Check that the exact public `main` commit has the intended workspace

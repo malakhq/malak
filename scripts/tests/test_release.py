@@ -39,7 +39,7 @@ class ReleaseTests(unittest.TestCase):
         self.git(self.build, "config", "--global", "user.email", GLOBAL_EMAIL)
         self.configure_identity(release_name=AUTHOR, release_email=AUTHOR_EMAIL)
         (self.build / "scripts").mkdir()
-        for name in ("release", "release_identity.py"):
+        for name in ("release", "release_export.py", "release_identity.py"):
             shutil.copy2(ROOT / "scripts" / name, self.build / "scripts")
         shutil.copy2(ROOT / ".release-exclude", self.build / ".release-exclude")
         self.write("README", "tagged contents\n")
@@ -394,7 +394,7 @@ class ReleaseTests(unittest.TestCase):
         paths = self.git(self.destination, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
         self.assertEqual(paths, [
             b".release-exclude", b"README", b"scripts/check", b"scripts/release",
-            b"scripts/release_identity.py",
+            b"scripts/release_export.py", b"scripts/release_identity.py",
         ])
 
     def test_incremental_export_runs_checks_in_the_clean_filtered_tree(self):

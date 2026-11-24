@@ -18,8 +18,10 @@ def hook_definitions(tool, env=None):
         [MALAK_EXE, "hook", "--describe", "--json", "--tool", tool], text=True, env=env,
     ))
     command = "MALAK_RECIPE_NATIVE_HOOK=1 " + shlex.join([MALAK_EXE, "hook", "--tool", tool])
+    # turn_end is the lead's: a worker's hook says nothing at Stop.
     return {event["input"]["hook_event_name"]: command
-            for event in description["events"]}
+            for event in description["events"]
+            if event["input"].get("hook_event_name") != "Stop"}
 
 
 def hook_arguments(tool, env):
