@@ -85,81 +85,19 @@ struct Screen {
 
 impl Screen {
     fn text(&self) -> String {
-        render(&self.terminal.bytes, self.columns, self.rows)
+        render_screen(&self.terminal.bytes, self.columns, self.rows)
     }
 
     fn wait_for(&mut self, text: &str) {
         let (columns, rows) = (self.columns, self.rows);
-        self.terminal
-            .wait_for_output(text, |bytes| render(bytes, columns, rows).contains(text));
+        self.terminal.wait_for_output(text, |bytes| {
+            render_screen(bytes, columns, rows).contains(text)
+        });
     }
 
     fn press(&mut self, bytes: &[u8]) {
         self.terminal.press(bytes);
     }
-}
-
-// Ratatui's PTY output is a cell diff. Interpret the cursor positioning and
-// clears so successive assertions see the screen instead of past frames.
-fn render(bytes: &[u8], columns: u16, rows: u16) -> String {
-    let (width, height) = (usize::from(columns), usize::from(rows));
-    let mut cells = vec![vec![' '; width]; height];
-    let text = String::from_utf8_lossy(bytes);
-    let mut chars = text.chars().peekable();
-    let (mut row, mut col) = (0, 0);
-    while let Some(ch) = chars.next() {
-        match ch {
-            '\x1b' if chars.next_if_eq(&'[').is_some() => {
-                let mut params = String::new();
-                for code in chars.by_ref() {
-                    if !('@'..='~').contains(&code) {
-                        params.push(code);
-                        continue;
-                    }
-                    let mut params = params.split(';');
-                    let first = params
-                        .next()
-                        .and_then(|n| n.parse::<usize>().ok())
-                        .unwrap_or(1);
-                    let second = params
-                        .next()
-                        .and_then(|n| n.parse::<usize>().ok())
-                        .unwrap_or(1);
-                    match code {
-                        'H' | 'f' => {
-                            row = first.saturating_sub(1);
-                            col = second.saturating_sub(1);
-                        }
-                        'J' if first == 2 => cells.iter_mut().for_each(|row| row.fill(' ')),
-                        'K' if row < height && col < width => cells[row][col..].fill(' '),
-                        _ => {}
-                    }
-                    break;
-                }
-            }
-            '\x1b' if chars.next_if_eq(&']').is_some() => {
-                for ch in chars.by_ref() {
-                    if ch == '\x07' {
-                        break;
-                    }
-                }
-            }
-            '\r' => col = 0,
-            '\n' => row += 1,
-            ch if !ch.is_control() => {
-                if row < height && col < width {
-                    cells[row][col] = ch;
-                }
-                col += 1;
-            }
-            _ => {}
-        }
-    }
-    cells
-        .into_iter()
-        .map(|line| line.into_iter().collect::<String>())
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 fn board(name: &str) -> Board {
@@ -208,7 +146,7 @@ fn a_board_added_stopped_and_removed_updates_the_open_mailbox() {
     terminal
         .terminal
         .wait_for_output("the removed board to disappear", |bytes| {
-            let screen = render(bytes, terminal.columns, terminal.rows);
+            let screen = render_screen(bytes, terminal.columns, terminal.rows);
             !screen.contains("arriving") && !screen.contains("All boards")
         });
 }

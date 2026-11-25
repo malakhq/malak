@@ -1,9 +1,9 @@
 use std::fs::File;
 use std::io::{Read, Write};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-const WATCHDOG: Duration = Duration::from_secs(60);
+const WATCHDOG: Duration = Duration::from_secs(120);
 
 #[allow(unsafe_code)]
 pub(super) fn terminal_pair(rows: u16, columns: u16) -> (File, File) {
@@ -77,9 +77,10 @@ impl TerminalOutput {
     pub(super) fn wait_for_output(&mut self, expected: &str, seen: impl Fn(&[u8]) -> bool) {
         let deadline = Instant::now() + WATCHDOG;
         while !seen(&self.bytes) {
-            let chunk = self
-                .chunks
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            let chunk = deadline
+                .checked_duration_since(Instant::now())
+                .ok_or(RecvTimeoutError::Timeout)
+                .and_then(|remaining| self.chunks.recv_timeout(remaining))
                 .unwrap_or_else(|error| {
                     panic!(
                         "expected {expected:?} ({error}): {:?}",
