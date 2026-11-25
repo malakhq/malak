@@ -341,7 +341,14 @@ impl LocalEntrances {
         uid: u32,
         only_user: Option<u32>,
     ) -> Result<ParticipantId, Error> {
-        self.enrol_at(name, grant, path, uid, only_user.map(Source::LocalUser))
+        self.enrol_at(
+            name,
+            grant,
+            path,
+            uid,
+            only_user.map(Source::LocalUser),
+            None,
+        )
     }
 
     /// Enrol a participant whose key is valid only in the named VM launch.
@@ -362,6 +369,7 @@ impl LocalEntrances {
             path.as_ref(),
             self.settings.board_user,
             Some(Source::VirtualMachine(vm)),
+            None,
         );
         self.board.events.owner(
             "ENROL",
@@ -378,6 +386,7 @@ impl LocalEntrances {
         path: &Path,
         uid: u32,
         place: Option<Source>,
+        session: Option<malak_layers::ClaimedSession>,
     ) -> Result<ParticipantId, Error> {
         let provision = self.provisioning()?;
         let guest = guest_address(&provision.general_address);
@@ -421,6 +430,7 @@ impl LocalEntrances {
                 credentials,
                 record,
             } = self.make_handover(&id, uid, place.clone())?;
+            self.check_session_running(session.as_ref())?;
             #[cfg(test)]
             crate::enrol_kill::checkpoint(path, "keys");
             let mut table = self.board.table.save_until(deadline)?;
@@ -440,6 +450,7 @@ impl LocalEntrances {
                 mechanism: &provision.mechanism_name,
                 record: record.as_deref(),
                 enrolled_at_ms,
+                session: session.as_ref(),
             })?;
             table.channels.insert(inbox, channel);
             table
@@ -448,6 +459,16 @@ impl LocalEntrances {
             table
                 .authority
                 .register_socket(&id, Some(key), place, Some(uid), record);
+            if let Some(session) = session {
+                table.authority.restore_claim(
+                    &id,
+                    crate::authority::ClaimChange::Event(crate::ClaimEvent::Issued {
+                        at_ms: enrolled_at_ms,
+                        session,
+                        issuer: ParticipantId::lead(),
+                    }),
+                )?;
+            }
             self.board.publish(&table);
             drop(table);
             self.board.changes.notify();
@@ -472,7 +493,7 @@ impl LocalEntrances {
         expected: &str,
         path: impl AsRef<Path>,
     ) -> Result<PathBuf, Error> {
-        let result = self.rekey_local(id, expected, path.as_ref());
+        let result = self.rekey_local(id, expected, path.as_ref(), None);
         self.board.events.owner(
             "REKEY",
             super::super::OwnerTarget::Participant(Some(id.as_str())),
@@ -486,6 +507,7 @@ impl LocalEntrances {
         id: &ParticipantId,
         expected: &str,
         path: &Path,
+        session: Option<malak_layers::ClaimedSession>,
     ) -> Result<PathBuf, Error> {
         if expected.len() != 64
             || !expected
@@ -532,13 +554,14 @@ impl LocalEntrances {
             credentials,
             record,
         } = self.make_handover(id, account, place)?;
+        self.check_session_running(session.as_ref())?;
         #[cfg(test)]
         crate::durable_kill::handover(path, "keys");
         let links = {
             let mut table = self.board.table.save_until(owner_save_deadline())?;
             table
                 .authority
-                .replace_key(id, expected, key, record, |entry| {
+                .replace_key(id, expected, key, record, session, |entry| {
                     self.board.store.save(entry)
                 })?;
             self.board.publish(&table);

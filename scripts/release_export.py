@@ -1,6 +1,7 @@
 """Export a checked build tag or private main to a local public repository."""
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path, PurePosixPath
@@ -10,6 +11,7 @@ import sys
 import tarfile
 import tempfile
 
+from process_cleanup import cleanup_on_interrupt, command_process
 from release_identity import identity_environment, release_identity
 
 
@@ -81,29 +83,38 @@ def resolve(repo, ref, env):
 def run_check(checkout, description, env, log=None):
     try:
         command = [checkout / "scripts/check"]
-        if log is None:
-            subprocess.run(command, cwd=checkout, env=env, check=True)
-        else:
-            with subprocess.Popen(command, cwd=checkout, env=env, stdout=subprocess.PIPE,
-                                  stderr=subprocess.STDOUT) as check:
+        capture = {} if log is None else {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
+        with command_process(command, cwd=checkout, env=env, **capture) as check:
+            if log is not None:
                 for line in check.stdout:
                     log.write(line)
                     sys.stdout.buffer.write(line)
                     sys.stdout.buffer.flush()
-                if check.wait():
-                    raise subprocess.CalledProcessError(check.returncode, command)
-            log.seek(0)
+            if check.wait():
+                raise subprocess.CalledProcessError(check.returncode, command)
+            if log is not None:
+                log.seek(0)
     except (OSError, subprocess.CalledProcessError) as error:
         raise ReleaseError(f"scripts/check failed at {description}") from error
 
 
-def run_tag_check(build, commit, scratch, env):
-    checkout = scratch / "check"
-    git(build, "worktree", "add", "--quiet", "--detach", checkout, commit, env=env)
+@contextmanager
+def checked_worktree(repo, checkout, commit, env):
+    checkout = checkout.resolve()
     try:
-        run_check(checkout, "the build tag", env)
+        git(repo, "worktree", "add", "--quiet", "--detach", checkout, commit, env=env)
+        yield checkout
     finally:
-        git(build, "worktree", "remove", "--force", checkout, env=env)
+        # An interrupted add can leave a registration before checkout completes.
+        worktrees = git_output(repo, "worktree", "list", "--porcelain", "-z", env=env)
+        if b"worktree " + os.fsencode(checkout) in worktrees.split(b"\0"):
+            # Git can leave its own initializing lock on the registered worktree.
+            git(repo, "worktree", "remove", "--force", "--force", checkout, env=env)
+
+
+def run_tag_check(build, commit, scratch, env):
+    with checked_worktree(build, scratch / "check", commit, env) as checkout:
+        run_check(checkout, "the build tag", env)
 
 
 def exclusions(build, commit, env):
@@ -337,7 +348,7 @@ def export_release(tag, release, branch, fixes, allow_email, *, source_commit=No
     settings_file = settings_file or Path(
         env.get("MALAK_INTERNAL_SETTINGS") or build / "internal/settings.toml").expanduser()
     identity = release_identity(release if existing else None, settings_file, env, allow_email)
-    with tempfile.TemporaryDirectory(prefix="malak-release-") as temp:
+    with cleanup_on_interrupt(), tempfile.TemporaryDirectory(prefix="malak-release-") as temp:
         scratch = Path(temp)
         if branch is None:
             run_tag_check(build, commit, scratch, env)

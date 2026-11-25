@@ -248,8 +248,26 @@ impl Replay {
                         Some(socket.uid),
                         socket.record,
                     );
+                    if let Some(session) = socket.session {
+                        self.table
+                            .authority
+                            .restore_claim(
+                                &id,
+                                crate::authority::ClaimChange::Event(crate::ClaimEvent::Issued {
+                                    at_ms: enrolled_at_ms.ok_or_else(invalid)?,
+                                    session,
+                                    issuer: ParticipantId::lead(),
+                                }),
+                            )
+                            .map_err(|_| invalid())?;
+                    }
                 }
             }
+            Change::Claim(id, change) => self
+                .table
+                .authority
+                .restore_claim(&id, change)
+                .map_err(|_| invalid())?,
             Change::Grant(id, generation, grant, changed_at_ms) => {
                 self.table
                     .authority
@@ -263,7 +281,13 @@ impl Replay {
                     .map_err(|_| invalid())?;
                 self.table.readers.revoke(&id);
             }
-            Change::Rekey(id, generation, key, record) => {
+            Change::Rekey {
+                id,
+                generation,
+                key,
+                record,
+                issue,
+            } => {
                 if local.is_none() {
                     return Err(invalid());
                 }
@@ -271,6 +295,9 @@ impl Replay {
                     .authority
                     .restore_key(&id, generation, key, record)
                     .map_err(|_| invalid())?;
+                if let Some((session, at_ms)) = issue {
+                    self.table.authority.issue_session(&id, session, at_ms)?;
+                }
             }
             Change::Create(name, creation, creator) => {
                 if !self.table.authority.has_id(&creator) {

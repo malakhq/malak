@@ -91,6 +91,7 @@ impl Drop for RecipeProcess {
 
 fn worker(board: &Fixture, name: &str, options: &[&str], command: &[&str]) -> Command {
     let mut recipe = board.recipe("worker-start");
+    recipe.arg("--unbound");
     recipe
         .args([name, "--board", BOARD, "--no-watcher"])
         .args(options)
@@ -1035,7 +1036,15 @@ fn refused_forward_keeps_the_queued_command_unstarted() {
 fn predecessor_launch_failure_leaves_its_queue_unstarted() {
     let board = scratch();
     let mut command = fault_recipe(&board, "worker-start", "hold-hook");
-    command.args(["a", "--board", BOARD, "--no-watcher", "--", "./claude"]);
+    command.args([
+        "a",
+        "--unbound",
+        "--board",
+        BOARD,
+        "--no-watcher",
+        "--",
+        "./claude",
+    ]);
     let mut a = RecipeProcess::start(&board, command, "a");
     a.wait_for("Worker a ready.");
     wait_for_file(&board, "hook-check-waiting");

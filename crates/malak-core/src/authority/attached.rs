@@ -185,18 +185,26 @@ impl Authority {
         expected: &str,
         key: [u8; 32],
         record: Option<Vec<u8>>,
+        session: Option<malak_layers::ClaimedSession>,
         save: impl FnOnce(Entry<'_>) -> Result<(), Error>,
     ) -> Result<(), Error> {
         self.rekey_target(id, expected)?;
         self.require_new_key(&key)?;
         let generation = self.participants[id].next_generation()?;
+        let issued_at_ms = crate::epoch_millis(SystemTime::now());
         save(Entry::Rekey {
             participant: id,
             generation,
             key,
             record: record.as_deref(),
+            session: session.as_ref(),
+            issued_at_ms,
         })?;
-        self.install_key(id, generation, key, record)
+        self.install_key(id, generation, key, record)?;
+        if let Some(session) = session {
+            self.issue_session(id, session, issued_at_ms)?;
+        }
+        Ok(())
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -4,8 +4,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 
@@ -28,6 +30,7 @@ class ReleaseTests(unittest.TestCase):
         self.destination = scratch / "release repo"
         self.settings = scratch / "settings.toml"
         self.env = {**os.environ, "HOME": str(home), "XDG_CONFIG_HOME": str(home / "config"),
+                    "TMPDIR": str(scratch),
                     "GIT_CONFIG_GLOBAL": str(home / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
                     "GIT_ALLOW_PROTOCOL": "file", "MALAK_INTERNAL_SETTINGS": str(self.settings)}
         for role in ("AUTHOR", "COMMITTER"):
@@ -39,7 +42,7 @@ class ReleaseTests(unittest.TestCase):
         self.git(self.build, "config", "--global", "user.email", GLOBAL_EMAIL)
         self.configure_identity(release_name=AUTHOR, release_email=AUTHOR_EMAIL)
         (self.build / "scripts").mkdir()
-        for name in ("release", "release_export.py", "release_identity.py"):
+        for name in ("process_cleanup.py", "release", "release_export.py", "release_identity.py"):
             shutil.copy2(ROOT / "scripts" / name, self.build / "scripts")
         shutil.copy2(ROOT / ".release-exclude", self.build / ".release-exclude")
         self.write("README", "tagged contents\n")
@@ -89,6 +92,44 @@ class ReleaseTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode == 0, success, result.stdout + result.stderr)
         return result
+
+    def interrupt_check(self, *args):
+        ready = self.build.parent / "check-pid"
+        self.env["RELEASE_TEST_READY"] = str(ready)
+        self.write_check('printf "%s\\n" "$$" > "$RELEASE_TEST_READY"\nexec sleep 60')
+        self.tag()
+        process = subprocess.Popen([self.build / "scripts/release", *args],
+                                   cwd=self.build, env=self.env)
+        self.addCleanup(process.wait)
+        self.addCleanup(process.kill)
+        deadline = time.monotonic() + 10
+        while not (ready.exists() and (pid := ready.read_text().strip())):
+            self.assertIsNone(process.poll(), "release exited before the check started")
+            self.assertLess(time.monotonic(), deadline, "release check did not start")
+            time.sleep(0.02)
+        pid = int(pid)
+        try:
+            process.send_signal(signal.SIGTERM)
+            self.assertNotEqual(process.wait(timeout=10), 0)
+        finally:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def assert_release_temp_is_clean(self):
+        self.assertEqual(list(self.build.parent.glob("malak-release-*")), [])
+        worktrees = self.git(self.build, "worktree", "list", "--porcelain")
+        self.assertEqual(worktrees.count(b"worktree "), 1, worktrees)
+
+    def test_terminated_tag_check_removes_its_temporary_worktree(self):
+        self.interrupt_check(TAG, "--release-repo", self.destination)
+        self.assert_release_temp_is_clean()
+
+    def test_terminated_incremental_check_removes_its_temporary_checkout(self):
+        self.clone_public()
+        self.interrupt_check(TAG, "--onto", self.destination, "--branch", BRANCH, "--fixes", "23")
+        self.assert_release_temp_is_clean()
 
     def clone_public(self):
         self.settings.unlink()
@@ -393,7 +434,7 @@ class ReleaseTests(unittest.TestCase):
 
         paths = self.git(self.destination, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
         self.assertEqual(paths, [
-            b".release-exclude", b"README", b"scripts/check", b"scripts/release",
+            b".release-exclude", b"README", b"scripts/check", b"scripts/process_cleanup.py", b"scripts/release",
             b"scripts/release_export.py", b"scripts/release_identity.py",
         ])
 

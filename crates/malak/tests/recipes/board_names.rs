@@ -186,7 +186,9 @@ fn board_recipes_run_against_each_named_board() {
         let diagnostics = String::from_utf8_lossy(&setup.stderr).into_owned();
         assert!(stdout(setup).contains(board.fixture.state.to_str().unwrap()));
         assert!(diagnostics.contains(&format!("Pass --board {}", board.name)));
-        board.run(&["send", "lead", board.name]);
+        let sent: Value =
+            serde_json::from_str(&board.run(&["send", "--json", "lead", board.name])).unwrap();
+        let position = sent["position"].as_u64().unwrap().to_string();
 
         let question = format!("What should {} do?", board.name);
         let recipes: &[(&str, &[&str], &str, &str)] = &[
@@ -244,7 +246,7 @@ fn board_recipes_run_against_each_named_board() {
                 ],
             ),
             ("handoff", &["alice", "1", "--to", "bob"]),
-            ("forward", &["lead", "1", "bob"]),
+            ("forward", &["lead", &position, "bob"]),
             ("agents-md", &["--dir", root.to_str().unwrap()]),
         ];
         for (recipe, args) in launches {
@@ -275,42 +277,43 @@ fn board_recipes_run_against_each_named_board() {
         let worker = board
             .fixture
             .enrol(&format!("wrapped-{}", board.name), &["lead:send"]);
+        let report_id = format!("wrapper-{}", board.name);
         stdout(
             board
                 .recipe("wrapper", &["--", "printf", board.name])
                 .env("MALAK_WORKER_HANDOVER", worker)
-                .env("MALAK_REPORT_ID", format!("wrapper-{}", board.name))
+                .env("MALAK_REPORT_ID", &report_id)
                 .env("MALAK_WRAPPER_STATE", &root)
                 .output()
                 .unwrap(),
         );
         let reports = messages(&board.run(&["read", "--json", "lead"]));
+        let report = reports
+            .iter()
+            .find(|report| report["id"] == report_id)
+            .expect("the wrapper posted its report");
         assert_eq!(
-            reports.last().unwrap()["text"],
+            report["text"],
             format!("Worker exit status: 0\n\n{}", board.name)
         );
+    }
+}
 
-        let mut demo = board.recipe("demo", &["claude", "Fixture goal"]);
-        let path = env::var_os("PATH").unwrap();
-        let path = env::join_paths(
-            std::iter::once(board.fixture.home.path().to_owned()).chain(env::split_paths(&path)),
-        )
-        .unwrap();
-        demo.env("PATH", path);
-        configure_demo_agent(
-            &board.fixture,
-            &mut demo,
-            "claude",
-            "#!/bin/sh\nmalak get --json lead 1 || exit 39\nexit 37\n",
-        );
-        demo.env("MALAK_TEST_DEMO_WAIT_FOR_LEAD_EXIT", "1");
-        let result = output(demo);
-        assert_eq!(result.status.code(), Some(37), "{result:?}");
-        let log = fs::read_to_string(demo_workspace(&board.fixture).join("lead.log")).unwrap();
-        assert!(
-            log.contains(&format!(r#""text":"{}""#, board.name)),
-            "{log}"
-        );
+#[test]
+fn the_demo_leaves_other_named_boards_running() {
+    let boards = NamedBoard::pair();
+    for board in &boards {
+        board.run(&["board", "start", "--detach"]);
+        board.run(&["send", "lead", board.name]);
+    }
+    let before = boards.each_ref().map(|board| board.fixture.status());
+
+    run(demo_fixture(&boards[0].fixture, "claude", "success"));
+
+    for (board, status) in boards.iter().zip(before) {
+        let current = board.fixture.status();
+        assert_eq!(status["run"], current["run"]);
+        assert_eq!(status["channels"], current["channels"]);
     }
 }
 

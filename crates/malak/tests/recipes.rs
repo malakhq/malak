@@ -14,6 +14,8 @@ use std::process::{Child, Command, Output, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+#[path = "recipes/adopt.rs"]
+mod adopt;
 #[path = "fixtures/retained.rs"]
 mod retained;
 #[path = "recipes/worker_await.rs"]
@@ -94,6 +96,7 @@ impl Fixture {
         command
             .env("PATH", path.unwrap())
             .env("HOME", self.home.path())
+            .env("TMPDIR", self.home.path())
             .env_remove("CLAUDE_CONFIG_DIR")
             .env_remove("CODEX_HOME")
             .env_remove("CLAUDE_CODE_SESSION_ID")
@@ -144,9 +147,18 @@ impl Fixture {
     }
 
     fn start(&self) {
-        let mut command = self.recipe("lead-up");
-        command.arg("--config").arg(&self.config);
-        run(command);
+        // Most recipe fixtures deliberately reuse credentials across processes.
+        // Tests that exercise lead-up run it explicitly.
+        run(self.owner(&["board", "start", "--detach"]));
+        run(self.owner(&["channel", "create", "selftest/lead"]));
+        self.lead(&[
+            "send",
+            "--id",
+            "lead-up-test-fixture",
+            "selftest/lead",
+            "Malak lead-up self-test",
+        ]);
+        self.lead(&["read", "--ack", "selftest/lead"]);
     }
 
     fn worker_start(&self, options: &[&str], worker_command: &[&str]) -> Command {
@@ -156,6 +168,7 @@ impl Fixture {
 
     fn worker_start_command(&self, options: &[&str], worker_command: &[&str]) -> Command {
         let mut command = self.recipe("worker-start");
+        command.arg("--unbound");
         command
             .args(["alice", "--board", BOARD])
             .args(options)
@@ -174,6 +187,11 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        if Rc::strong_count(&self.home) == 1 {
+            for folder in demo_folders(self) {
+                let _ = demo_owner(self, &folder, &["board", "stop"]).output();
+            }
+        }
         let _ = self.owner(&["board", "stop"]).output();
     }
 }
@@ -185,6 +203,59 @@ fn output(mut command: Command) -> Output {
 fn recipe_python_startup(board: &Fixture, recipe: &mut Command, startup: &[u8]) {
     fs::write(board.home.path().join("sitecustomize.py"), startup).unwrap();
     recipe.env("PYTHONPATH", board.home.path());
+}
+
+fn terminate_worker_during_startup(during_detach: bool) {
+    use nix::sys::signal::{Signal, kill};
+    use nix::unistd::Pid;
+
+    let board = Fixture::new();
+    let mut recipe = board.recipe("worker-start");
+    if during_detach {
+        recipe.args(["worker", "--detach", "--", "true"]);
+    } else {
+        recipe.arg("--help");
+    }
+    recipe_python_startup(
+        &board,
+        &mut recipe,
+        b"import os, pathlib, time\n\
+          temporary = pathlib.Path(os.environ['TMPDIR'])\n\
+          (temporary / 'pid').write_text(str(os.getpid()))\n\
+          (temporary / 'ready').touch()\n\
+          time.sleep(60)\n",
+    );
+    let mut parent = RunningWorker(recipe.stdout(Stdio::null()).spawn().unwrap());
+    let directory = board.home.path();
+    wait_for_event("the recipe interpreter to start", || {
+        directory.join("ready").is_file().then_some(())
+    });
+    let child_pid = fs::read_to_string(directory.join("pid")).unwrap();
+    let child = Pid::from_raw(child_pid.parse().unwrap());
+    let pid = Pid::from_raw(parent.0.id() as i32);
+    kill(pid, Signal::SIGTERM).unwrap();
+    let status = wait_for_event("the terminated launcher to exit", || {
+        parent.0.try_wait().unwrap()
+    });
+    let _ = kill(child, Signal::SIGKILL);
+    assert!(!status.success());
+    let leftovers: Vec<_> = directory
+        .read_dir()
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().starts_with("malak-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[test]
+fn terminated_foreground_recipe_removes_temporary_directories() {
+    terminate_worker_during_startup(false);
+}
+
+#[test]
+fn terminated_worker_detach_removes_temporary_directories_before_handoff() {
+    terminate_worker_during_startup(true);
 }
 
 fn wait_for_event<T>(description: &str, mut observe: impl FnMut() -> Option<T>) -> T {
@@ -634,7 +705,6 @@ fn demo_refuses_to_start_when_codex_hook_trust_is_declined() {
 #[test]
 fn demo_returns_an_immediate_lead_failure() {
     let board = Fixture::new();
-    board.start();
     let mut demo = demo_with_claude(&board, "exit 37");
     demo.arg("Fixture goal")
         .env("MALAK_TEST_DEMO_WAIT_FOR_LEAD_EXIT", "1");
@@ -652,6 +722,7 @@ fn demo_returns_an_immediate_lead_failure() {
         "{error}"
     );
     assert!(error.contains("Lead exit  37"), "{error}");
+    assert_demo_removed(&board, &demo_name(&String::from_utf8_lossy(&result.stdout)));
 }
 
 #[test]
@@ -673,10 +744,14 @@ fn demo_shows_terminal_progress_while_the_lead_is_writing_briefs() {
             .unwrap(),
     );
     assert_eq!(next_demo_event(&events), "lead");
-    let mut expected = String::from(
-        "Open malak mailbox in another terminal to watch the demo.\n\
+    let board_folder = demo_folder(&board);
+    let name = board_folder.file_name().unwrap().to_string_lossy();
+    let mut expected = format!(
+        "The demo runs on its own board, {name}.\n\
+         Open env -u MALAK_HANDOVER malak --config {} mailbox in another terminal to watch the demo.\n\
          Starting claude lead.\n\
          Waiting for 5 briefs.\n",
+        board_folder.join("board.toml").display()
     );
     screen.wait_for_output(&expected, |bytes| {
         String::from_utf8_lossy(bytes).replace('\r', "") == expected
@@ -705,52 +780,36 @@ fn demo_shows_terminal_progress_while_the_lead_is_writing_briefs() {
         lines.next(),
         Some("Demo lead and five workers started with claude.")
     );
-    demo_outcome(&board);
 }
 
 #[test]
-fn demo_mailbox_hint_uses_the_selected_board() {
-    let default = Fixture::new();
-    let custom = default.sibling("demo board", "e");
-    for (board, config) in [(&default, false), (&custom, true)] {
-        board.start();
-        let mut demo = demo_command(board, "claude", config);
-        configure_demo_agent(board, &mut demo, "claude", "#!/bin/sh\nexit 37\n");
-        demo.arg("Fixture goal")
-            .env("MALAK_TEST_DEMO_WAIT_FOR_LEAD_EXIT", "1");
-        let result = output(demo);
-        assert_eq!(result.status.code(), Some(37), "{result:?}");
-
-        let command = if config {
-            format!("malak --config '{}' mailbox", board.config.display())
-        } else {
-            "malak mailbox".to_owned()
-        };
-        let stdout = String::from_utf8_lossy(&result.stdout);
+fn demo_refuses_a_board_selector_before_resolving_it() {
+    let board = Fixture::new();
+    let mut leading = Command::new(MALAK);
+    leading.args(["--board", "missing", "recipe", "demo", "claude", "Goal"]);
+    board.recipe_environment(&mut leading);
+    let mut recipe_option = board.recipe("demo");
+    recipe_option.args(["--board", "missing", "claude", "Goal"]);
+    let mut trailing = board.recipe("demo");
+    trailing.args(["claude", "Goal", "--board=missing"]);
+    for command in [leading, recipe_option, trailing] {
+        let result = output(command);
+        assert_eq!(result.status.code(), Some(2), "{result:?}");
+        assert!(result.stdout.is_empty(), "{result:?}");
         assert_eq!(
-            stdout,
-            format!("Open {command} in another terminal to watch the demo.\n")
+            String::from_utf8_lossy(&result.stderr),
+            "The demo runs on its own board. Omit --board and --config.\n"
         );
     }
 }
 
 #[test]
-fn demo_piped_output_ends_with_the_startup_summary() {
+fn demo_finishes_and_removes_the_board_and_its_registration() {
     let board = Fixture::new();
-    board.start();
     let stdout = run(demo_fixture(&board, "claude", "success"));
-
-    let workspace = demo_workspace(&board);
-    assert_eq!(
-        stdout,
-        format!(
-            "Open malak mailbox in another terminal to watch the demo.\n\
-             Demo lead and five workers started with claude.\n  Lead log  {}\n  Outcome   {}\n",
-            workspace.join("lead.log").display(),
-            workspace.join("outcome.txt").display(),
-        )
-    );
-    demo_outcome(&board);
+    assert!(stdout.contains("Fixture demo summary"), "{stdout}");
+    assert!(stdout.contains("5 of 5 workers reported"), "{stdout}");
+    assert_demo_removed(&board, &demo_name(&stdout));
 }
 
 #[test]
@@ -771,12 +830,11 @@ fn demo_succeeds_when_all_workers_and_the_lead_succeed() {
 #[test]
 fn demo_revokes_its_workers_and_retains_their_reports() {
     let board = Fixture::new();
-    board.start();
-    run(demo_fixture(&board, "claude", "success"));
+    run(kept_demo_fixture(&board, "claude", "success"));
 
     assert_demo_workers_revoked(&board, 5);
-    let status = board.status();
-    let reports = messages(&board.lead(&["read", "lead", "--json"]));
+    let status = demo_status(&board);
+    let reports = messages(&demo_lead(&board, &["read", "lead", "--json"]));
     let workers = demo_workers(&status);
     assert_eq!(reports.len(), 5);
     for worker in workers {
@@ -789,61 +847,229 @@ fn demo_revokes_its_workers_and_retains_their_reports() {
 }
 
 #[test]
-fn demo_leaves_an_existing_participant_with_the_same_name_active() {
+fn demo_does_not_touch_the_existing_bound_board() {
     let board = Fixture::new();
     board.start();
-    let existing = board.enrol("demo-a1b2c3-1", &["lead:send"]);
-    let mut demo = demo_fixture(&board, "claude", "refused");
-    demo.env("MALAK_TEST_DEMO_PREFIX", "a1b2c3");
-
-    let result = output(demo);
-    assert_eq!(result.status.code(), Some(3), "{result:?}");
-    let outcome = demo_outcome(&board);
-    assert!(outcome.contains("Revoked    4 of 4 workers"), "{outcome}");
+    let mut bind = board.owner(&["recipe", "lead-up"]);
+    board.recipe_environment(&mut bind);
+    run(bind);
+    let notices = messages(&board.lead(&["read", "--json", "--wait", "5", "lead"]));
+    assert!(notices.iter().any(|message| {
+        message["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("claim-lead-") && id.ends_with("-accepted"))
+    }));
+    let handover = board.state.join("lead.handover");
+    let before = fs::read(&handover).unwrap();
     let status = board.status();
-    assert_eq!(participant(&status, "demo-a1b2c3-1")["revoked"], false);
-    assert_eq!(
-        demo_workers(&status)
-            .iter()
-            .filter(|worker| worker["revoked"] == true)
-            .count(),
-        4
-    );
-    assert!(existing.is_file());
+    let claim = &participant(&status, "lead")["claim"];
+    assert_eq!(claim["state"], "bound");
+    let registry = board_registry(&board);
+
+    run(demo_fixture(&board, "claude", "success"));
+
+    let current = board.status();
+    assert_eq!(&participant(&current, "lead")["claim"], claim);
+    assert_eq!(current["participants"], status["participants"]);
+    assert_eq!(current["channels"], status["channels"]);
+    assert_eq!(fs::read(handover).unwrap(), before);
+    assert_eq!(board_registry(&board), registry);
 }
 
 #[test]
-fn a_second_demo_can_finish_on_the_same_board() {
+fn consecutive_demos_use_different_boards() {
     let board = Fixture::new();
-    board.start();
     let mut command = demo_fixture(&board, "claude", "success");
-    let mut demo = || {
-        let result = command.output().unwrap();
-        assert!(result.status.success(), "{result:?}");
-        let outcome = demo_outcome_at(&demo_startup_outcome(&result));
-        assert!(outcome.contains("5 of 5 workers reported"), "{outcome}");
-        assert!(outcome.contains("Revoked    5 of 5 workers"), "{outcome}");
-    };
+    let first = demo_name(&stdout(command.output().unwrap()));
+    let second = demo_name(&stdout(command.output().unwrap()));
+    assert_ne!(first, second);
+}
 
-    demo();
-    demo();
-    let status = board.status();
-    let workers = demo_workers(&status);
-    assert_eq!(workers.len(), 10);
-    assert!(workers.iter().all(|worker| worker["revoked"] == true));
+#[test]
+fn demo_keep_preserves_the_board_and_outcome() {
+    let board = Fixture::new();
+    let stdout = run(kept_demo_fixture(&board, "claude", "success"));
+    let name = demo_name(&stdout);
+    let folder = demo_folder(&board);
+    assert!(folder.join("state/lead.handover").is_file());
+    assert!(board_registry(&board).contains(&name));
+    assert!(demo_outcome(&board).contains("5 of 5 workers reported"));
+    assert!(stdout.contains("board stop"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("malak recipe demo --remove {name}")),
+        "{stdout}"
+    );
+    assert_eq!(
+        messages(&demo_lead(&board, &["read", "lead", "--json"])).len(),
+        5
+    );
+}
+
+#[test]
+fn the_printed_demo_mailbox_command_ignores_the_callers_handover() {
+    let board = Fixture::new();
+    let stdout = run(kept_demo_fixture(&board, "claude", "success"));
+    let mailbox = stdout
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("Open ")?
+                .strip_suffix(" in another terminal to watch the demo.")
+        })
+        .unwrap();
+    let mut command = Command::new("sh");
+    board.recipe_environment(&mut command);
+    command.arg("-c").arg(format!("{mailbox} --who"));
+
+    assert!(run(command).contains("lead"));
+}
+
+#[test]
+fn a_kept_board_survives_later_demos_after_it_stops() {
+    let board = Fixture::new();
+    run(kept_demo_fixture(&board, "claude", "success"));
+    let folder = demo_folder(&board);
+    run(demo_owner(&board, &folder, &["board", "stop"]));
+
+    run(demo_fixture(&board, "claude", "success"));
+
+    assert_eq!(demo_folders(&board), [folder]);
+}
+
+#[test]
+fn demo_remove_refuses_a_running_board() {
+    let board = Fixture::new();
+    let stdout = run(kept_demo_fixture(&board, "claude", "success"));
+    let name = demo_name(&stdout);
+    let mut remove = board.recipe("demo");
+    remove.args(["--remove", &name]);
+
+    let result = output(remove);
+
+    assert_eq!(result.status.code(), Some(2), "{result:?}");
+    assert!(String::from_utf8_lossy(&result.stderr).contains("first with"));
+    assert!(demo_folder(&board).join("state/lead.handover").is_file());
+}
+
+#[test]
+fn demo_remove_clears_a_stopped_kept_board() {
+    let board = Fixture::new();
+    let stdout = run(kept_demo_fixture(&board, "claude", "success"));
+    let name = demo_name(&stdout);
+    run(demo_owner(&board, &demo_folder(&board), &["board", "stop"]));
+    let mut remove = board.recipe("demo");
+    remove.args(["--remove", &name]);
+
+    run(remove);
+
+    assert_demo_removed(&board, &name);
+}
+
+#[test]
+fn demo_reaps_the_stopped_board_from_a_crashed_run() {
+    let board = Fixture::new();
+    let (events, address) = demo_events(&board);
+    let mut crashed = RunningWorker(
+        demo_fixture(&board, "claude", "start-signal")
+            .env("MALAK_TEST_DEMO_EVENTS", address)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    assert_eq!(next_demo_event(&events), "lead");
+    let folder = demo_folder(&board);
+    let name = folder.file_name().unwrap().to_str().unwrap();
+    let workspace = demo_workspace(&board);
+    let host = fs::read_to_string(workspace.join("host.running")).unwrap();
+    let lead = fs::read_to_string(workspace.join("lead.running")).unwrap();
+    signal_demo_process("-KILL", &host);
+    assert_eq!(crashed.0.wait().unwrap().code(), Some(137));
+    signal_demo_process("-KILL", &lead);
+    run(demo_owner(&board, &folder, &["board", "stop"]));
+    assert!(board_registry(&board).contains(name));
+
+    run(demo_fixture(&board, "claude", "success"));
+
+    assert_demo_removed(&board, name);
+}
+
+#[test]
+fn a_second_demo_does_not_reap_a_running_demo() {
+    let board = Fixture::new();
+    let (events, address) = demo_events(&board);
+    let mut first = RunningWorker(
+        demo_fixture(&board, "claude", "start-signal")
+            .env("MALAK_TEST_DEMO_EVENTS", address)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    assert_eq!(next_demo_event(&events), "lead");
+    let folder = demo_folder(&board);
+
+    run(demo_fixture(&board, "claude", "success"));
+
+    assert_eq!(demo_folders(&board), [folder]);
+    signal_demo_process("-INT", &first.0.id().to_string());
+    assert_eq!(first.0.wait().unwrap().code(), Some(130));
+}
+
+#[test]
+fn demo_never_reaps_an_unmarked_board_with_a_demo_name() {
+    let board = Fixture::new();
+    let other = board.sibling("demo-c0ffee123456", "e");
+    other.start();
+    run(other.owner(&["board", "stop"]));
+    let handover = other.state.join("lead.handover");
+    let before = fs::read(&handover).unwrap();
+    let registry = board_registry(&board);
+
+    run(demo_fixture(&board, "claude", "success"));
+
+    assert!(other.config.is_file());
+    assert_eq!(fs::read(handover).unwrap(), before);
+    assert_eq!(board_registry(&board), registry);
+}
+
+#[test]
+fn demo_timeout_stops_a_hung_worker_and_removes_the_board() {
+    let board = Fixture::new();
+    let (events, address) = demo_events(&board);
+    let clock_trigger = board.home.path().join("advance-demo-clock");
+    let demo = demo_fixture(&board, "claude", "signal")
+        .args(["--timeout", "120"])
+        .env("MALAK_TEST_DEMO_EVENTS", address)
+        .env("MALAK_TEST_DEMO_CLOCK_TRIGGER", &clock_trigger)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    assert_eq!(next_demo_event(&events), "lead");
+    let worker = next_demo_event(&events);
+    assert!(worker.starts_with("worker-"), "{worker}");
+    let pid = fs::read_to_string(demo_workspace(&board).join(format!("{worker}.running"))).unwrap();
+    fs::write(clock_trigger, "").unwrap();
+
+    let result = demo.wait_with_output().unwrap();
+
+    assert_eq!(result.status.code(), Some(3), "{result:?}");
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(stdout.contains("Demo timed out. Rerun with --timeout SECONDS"));
+    assert_demo_process_stopped(&pid);
+    assert_demo_removed(&board, &demo_name(&stdout));
 }
 
 #[test]
 fn demo_records_one_failed_revocation_and_continues_revoking_workers() {
     let board = Fixture::new();
     board.start();
-    let mut demo = demo_fixture(&board, "claude", "success");
+    let mut demo = kept_demo_fixture(&board, "claude", "success");
     demo.env("MALAK_TEST_DEMO_REFUSE_REVOKE", "1");
     run(demo);
 
     let outcome = demo_outcome(&board);
     assert!(outcome.contains("Revoked    4 of 5 workers"), "{outcome}");
-    let status = board.status();
+    let status = demo_status(&board);
     let workers = demo_workers(&status);
     let active: Vec<_> = workers
         .iter()
@@ -867,19 +1093,20 @@ fn demo_preserves_the_leads_failure_after_successful_worker_reports() {
 #[test]
 fn demo_runs_an_accepted_codex_launch_to_completion() {
     let board = Fixture::new();
-    board.start();
-    let result = output(demo_fixture(&board, "codex", "success"));
+    let result = output(kept_demo_fixture(&board, "codex", "success"));
     assert_eq!(result.status.code(), Some(0), "{result:?}");
     assert!(demo_outcome(&board).contains("5 of 5 workers reported"));
-    assert_eq!(messages(&board.lead(&["read", "lead", "--json"])).len(), 5);
+    assert_eq!(
+        messages(&demo_lead(&board, &["read", "lead", "--json"])).len(),
+        5
+    );
 }
 
 #[test]
-fn demo_returns_while_the_lead_can_still_finish() {
+fn demo_waits_for_the_lead_to_finish() {
     let board = Fixture::new();
-    board.start();
     let (events, address) = demo_events(&board);
-    let mut command = demo_fixture(&board, "claude", "background");
+    let mut command = kept_demo_fixture(&board, "claude", "background");
     command.env("MALAK_TEST_DEMO_EVENTS", address);
     let (finished, received) = std::sync::mpsc::channel();
     let demo = std::thread::spawn(move || {
@@ -889,15 +1116,16 @@ fn demo_returns_while_the_lead_can_still_finish() {
     let workspace = demo_workspace(&board);
     let outcome = workspace.join("outcome.txt");
 
-    let startup = received.recv_timeout(TEST_WATCHDOG);
-    let outcome_written_during_startup = outcome.exists();
+    wait_for_event("demo workers to report", || {
+        (messages(&demo_lead(&board, &["read", "lead", "--json"])).len() >= 5).then_some(())
+    });
+    assert!(received.try_recv().is_err());
+    assert!(!outcome.exists());
     fs::write(workspace.join("finish-demo"), "").unwrap();
+    let finished = received.recv_timeout(TEST_WATCHDOG).unwrap();
     demo.join().unwrap();
 
-    let startup = startup.expect("the demo kept its terminal open until the lead finished");
-    let stdout = String::from_utf8_lossy(&startup.stdout);
-    assert!(startup.status.success(), "{startup:?}");
-    assert!(!outcome_written_during_startup);
+    let stdout = stdout(finished);
     assert!(stdout.contains(outcome.to_str().unwrap()), "{stdout}");
     assert!(demo_outcome(&board).contains("5 of 5 workers reported"));
 }
@@ -906,7 +1134,7 @@ fn demo_returns_while_the_lead_can_still_finish() {
 fn demo_stops_the_codex_probe_even_when_it_ignores_termination() {
     let board = Fixture::new();
     board.start();
-    let mut demo = demo_fixture(&board, "codex", "success");
+    let mut demo = kept_demo_fixture(&board, "codex", "success");
     demo.env("MALAK_TEST_CODEX_PROBE_STALLS", "1");
 
     run(demo);
@@ -926,7 +1154,7 @@ fn demo_counts_an_accepted_report_after_its_launcher_is_stopped() {
     fs::write(&cat, include_str!("fixtures/demo_pause_report.py")).unwrap();
     fs::set_permissions(cat, fs::Permissions::from_mode(0o700)).unwrap();
 
-    let result = output(demo_fixture(&board, "claude", "pause-report"));
+    let result = output(kept_demo_fixture(&board, "claude", "pause-report"));
     let outcome = demo_outcome(&board);
 
     assert!(
@@ -934,11 +1162,13 @@ fn demo_counts_an_accepted_report_after_its_launcher_is_stopped() {
             .join("report-launcher-paused")
             .is_file()
     );
-    assert!(messages(&board.lead(&["read", "lead", "--json"])).is_empty());
+    assert!(messages(&demo_lead(&board, &["read", "lead", "--json"])).is_empty());
     for position in 1..=5 {
-        let retained: Value =
-            serde_json::from_str(&board.lead(&["get", "--json", "lead", &position.to_string()]))
-                .unwrap();
+        let retained: Value = serde_json::from_str(&demo_lead(
+            &board,
+            &["get", "--json", "lead", &position.to_string()],
+        ))
+        .unwrap();
         assert_eq!(retained["kind"], "report", "{retained}");
     }
     assert!(outcome.contains("5 of 5 delivered"), "{outcome}");
@@ -971,8 +1201,7 @@ fn demo_excludes_local_receipts_without_board_acceptance() {
         .env("MALAK_RECIPE_EXE", launcher)
         .env("MALAK_TEST_EXE", MALAK)
         .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("recipes/demo.py"))
-        .arg(&board.config)
-        .args(["claude", "Fixture goal"]);
+        .args(["claude", "Fixture goal", "--keep"]);
     let result = output(demo);
 
     assert_eq!(
@@ -987,7 +1216,7 @@ fn demo_excludes_local_receipts_without_board_acceptance() {
         5,
         "{result:?}"
     );
-    assert!(messages(&board.lead(&["read", "lead", "--json"])).is_empty());
+    assert!(messages(&demo_lead(&board, &["read", "lead", "--json"])).is_empty());
     let outcome = demo_outcome(&board);
     assert!(
         outcome.contains("Demo stopped because worker reports were missing."),
@@ -1001,14 +1230,16 @@ fn demo_excludes_local_receipts_without_board_acceptance() {
 #[test]
 fn demo_writes_its_outcome_when_a_worker_report_is_refused() {
     let board = Fixture::new();
-    board.start();
-    let result = output(demo_fixture(&board, "codex", "refused"));
-    assert!(result.status.success(), "{result:?}");
+    let result = output(kept_demo_fixture(&board, "codex", "refused"));
+    assert_eq!(result.status.code(), Some(3), "{result:?}");
     let recorded = demo_outcome(&board);
     assert!(recorded.contains("Demo exit  3"), "{recorded}");
     assert!(recorded.contains("4 of 5 workers reported"), "{recorded}");
     assert!(recorded.contains("4 of 5 delivered"), "{recorded}");
-    assert_eq!(messages(&board.lead(&["read", "lead", "--json"])).len(), 4);
+    assert_eq!(
+        messages(&demo_lead(&board, &["read", "lead", "--json"])).len(),
+        4
+    );
     assert_demo_workers_revoked(&board, 5);
 }
 
@@ -1016,7 +1247,7 @@ fn demo_writes_its_outcome_when_a_worker_report_is_refused() {
 fn demo_writes_its_outcome_when_a_worker_log_cannot_be_opened() {
     let board = Fixture::new();
     board.start();
-    let result = output(demo_fixture(&board, "claude", "unopened-log"));
+    let result = output(kept_demo_fixture(&board, "claude", "unopened-log"));
     assert_eq!(result.status.code(), Some(3), "{result:?}");
     let outcome = fs::read_to_string(demo_workspace(&board).join("outcome.txt"))
         .unwrap_or_else(|error| panic!("{error}: {result:?}"));
@@ -1029,7 +1260,7 @@ fn demo_stops_a_worker_waiting_for_an_answer_after_the_lead_exits() {
     let board = Fixture::new();
     board.start();
     let mut demo = RunningWorker(
-        demo_fixture(&board, "claude", "dead-lead")
+        kept_demo_fixture(&board, "claude", "dead-lead")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -1039,14 +1270,14 @@ fn demo_stops_a_worker_waiting_for_an_answer_after_the_lead_exits() {
         demo.0.try_wait().unwrap()
     });
     let workspace = demo_workspace(&board);
-    assert!(status.success(), "{status}");
+    assert_eq!(status.code(), Some(29), "{status}");
     let outcome = demo_outcome(&board);
     assert!(outcome.contains("Lead exit  29"), "{outcome}");
     assert!(outcome.contains("Demo exit  29"), "{outcome}");
     assert!(outcome.contains("4 of 5 workers reported"), "{outcome}");
     assert!(outcome.contains("4 of 5 delivered"), "{outcome}");
     assert_eq!(
-        messages(&board.lead(&["read", "questions", "--json"])).len(),
+        messages(&demo_lead(&board, &["read", "questions", "--json"])).len(),
         1
     );
     assert_demo_process_stopped(&fs::read_to_string(workspace.join("worker-1.running")).unwrap());
@@ -1058,7 +1289,7 @@ fn demo_fails_if_the_lead_exits_zero_before_launching_workers() {
     let board = Fixture::new();
     board.start();
     let mut demo = demo_with_claude(&board, "exit 0");
-    demo.arg("Fixture goal");
+    demo.args(["Fixture goal", "--keep"]);
 
     let result = output(demo);
 
@@ -1071,7 +1302,7 @@ fn demo_keeps_the_lead_status_if_outcome_publication_fails() {
     let board = Fixture::new();
     board.start();
     let mut demo = demo_with_claude(&board, "mkdir outcome.txt; exit 29");
-    demo.arg("Fixture goal");
+    demo.args(["Fixture goal", "--keep"]);
 
     let result = output(demo);
 
@@ -1090,9 +1321,8 @@ fn demo_keeps_the_lead_status_if_outcome_publication_fails() {
 }
 
 #[test]
-fn demo_sigint_during_startup_stops_the_lead_and_writes_an_outcome() {
+fn demo_sigint_during_startup_stops_the_lead_and_removes_the_board() {
     let board = Fixture::new();
-    board.start();
     let (events, address) = demo_events(&board);
     let mut demo = RunningWorker(
         demo_fixture(&board, "claude", "start-signal")
@@ -1103,22 +1333,23 @@ fn demo_sigint_during_startup_stops_the_lead_and_writes_an_outcome() {
             .unwrap(),
     );
     assert_eq!(next_demo_event(&events), "lead");
-    let workspace = demo_workspace(&board);
+    let name = demo_folder(&board).file_name().unwrap().to_owned();
+    let pid = fs::read_to_string(demo_workspace(&board).join("lead.running")).unwrap();
     signal_demo_process("-INT", &demo.0.id().to_string());
     let status = wait_for_event("demo to stop after Ctrl-C", || demo.0.try_wait().unwrap());
 
     assert_eq!(status.code(), Some(130), "{status}");
-    assert!(demo_outcome(&board).contains("Demo exit  130"));
-    assert_demo_process_stopped(&fs::read_to_string(workspace.join("lead.running")).unwrap());
+    assert_demo_removed(&board, name.to_str().unwrap());
+    assert_demo_process_stopped(&pid);
 }
 
 #[test]
-fn demo_sigterm_stops_the_background_lead_and_workers_and_writes_an_outcome() {
+fn demo_sigterm_stops_the_lead_and_workers_and_writes_an_outcome() {
     assert_interrupted_demo_stops_workers("-TERM", 143);
 }
 
 #[test]
-fn demo_revokes_workers_after_the_supervisor_receives_sigint() {
+fn demo_revokes_workers_after_receiving_sigint() {
     assert_interrupted_demo_stops_workers("-INT", 130);
 }
 
@@ -1126,7 +1357,7 @@ fn demo_revokes_workers_after_the_supervisor_receives_sigint() {
 fn demo_revokes_a_worker_enrolled_just_before_sigint() {
     let board = Fixture::new();
     board.start();
-    let mut demo = demo_fixture(&board, "claude", "success");
+    let mut demo = kept_demo_fixture(&board, "claude", "success");
     demo.env("MALAK_TEST_DEMO_INTERRUPT_ENROLMENT", "1");
 
     let result = output(demo);
@@ -1139,7 +1370,7 @@ fn assert_interrupted_demo_stops_workers(signal: &str, exit: i32) {
     board.start();
     let (events, address) = demo_events(&board);
     let mut demo = RunningWorker(
-        demo_fixture(&board, "claude", "signal")
+        kept_demo_fixture(&board, "claude", "signal")
             .env("MALAK_TEST_DEMO_EVENTS", address)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1159,10 +1390,11 @@ fn assert_interrupted_demo_stops_workers(signal: &str, exit: i32) {
         .chain((1..=5).map(|number| workspace.join(format!("worker-{number}.running"))))
         .map(|path| fs::read_to_string(path).unwrap())
         .collect();
-    let supervisor = fs::read_to_string(workspace.join("supervisor.running")).unwrap();
-    let status = wait_for_event("foreground demo to return", || demo.0.try_wait().unwrap());
-    assert!(status.success(), "{status}");
-    signal_demo_process(signal, &supervisor);
+    signal_demo_process(signal, &demo.0.id().to_string());
+    let status = wait_for_event("the interrupted demo to return", || {
+        demo.0.try_wait().unwrap()
+    });
+    assert_eq!(status.code(), Some(exit), "{status}");
     let outcome = demo_outcome(&board);
     assert!(outcome.contains(&format!("Demo exit  {exit}")), "{outcome}");
     assert!(outcome.contains("0 of 5 workers reported"), "{outcome}");
@@ -1211,8 +1443,45 @@ fn assert_demo_process_stopped(pid: &str) {
     });
 }
 
+fn demo_folders(board: &Fixture) -> Vec<PathBuf> {
+    fs::read_dir(board.home.path().join(".malak"))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.join("state/.malak-demo").is_file())
+        .collect()
+}
+
+fn demo_folder(board: &Fixture) -> PathBuf {
+    let folders = demo_folders(board);
+    assert_eq!(folders.len(), 1, "{folders:?}");
+    folders.into_iter().next().unwrap()
+}
+
+fn demo_owner(board: &Fixture, folder: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(MALAK);
+    command
+        .arg("--config")
+        .arg(folder.join("board.toml"))
+        .env("HOME", board.home.path())
+        .args(args);
+    command
+}
+
+fn demo_status(board: &Fixture) -> Value {
+    let command = demo_owner(board, &demo_folder(board), &["board", "status", "--json"]);
+    serde_json::from_str(&run(command)).unwrap()
+}
+
+fn demo_lead(board: &Fixture, args: &[&str]) -> String {
+    let handover = demo_folder(board).join("state/lead.handover");
+    run(participant_command(&handover, args))
+}
+
 fn find_demo_workspace(board: &Fixture) -> Option<PathBuf> {
-    fs::read_dir(&board.state)
+    let folder = demo_folders(board).into_iter().next()?;
+    fs::read_dir(folder.join("state"))
         .unwrap()
         .filter_map(Result::ok)
         .find_map(|entry| {
@@ -1262,20 +1531,18 @@ fn uninstall_removes_stock_recipe_state_and_keeps_unrelated_files() {
         "Review finished.\n",
     ]);
     run(queue);
-    run(demo_fixture(&board, "claude", "success"));
-    assert!(demo_outcome(&board).contains("5 of 5 workers reported"));
     assert!(board.state.join("launches").is_dir());
-    let demo = demo_workspace(&board);
-    assert!(demo.join("task-1.md").is_file());
-    // The fixture agent uses this process marker to coordinate other tests.
-    fs::remove_file(demo.join("lead.running")).unwrap();
+    // Exercise the workspace layout used before demos had their own boards.
+    let legacy_demo = board.state.join("demo.abcdefgh");
+    fs::create_dir(&legacy_demo).unwrap();
+    fs::write(legacy_demo.join("task-1.md"), "Legacy demo task").unwrap();
     assert_eq!(
         fs::read_dir(&board.state)
             .unwrap()
             .filter_map(Result::ok)
             .filter(|entry| entry.file_name().to_string_lossy().starts_with("worker."))
             .count(),
-        7
+        2
     );
 
     let foreign = board.state.join("my-notes.txt");
@@ -1296,14 +1563,26 @@ fn uninstall_removes_stock_recipe_state_and_keeps_unrelated_files() {
     assert!(output.contains("my-notes.txt (outside Malak's managed data)"));
 }
 
-fn demo_startup_outcome(startup: &Output) -> PathBuf {
-    let stdout = String::from_utf8_lossy(&startup.stdout);
-    let path = stdout
+fn demo_name(stdout: &str) -> String {
+    stdout
         .lines()
-        .find_map(|line| line.trim_start().strip_prefix("Outcome "))
-        .expect("demo did not name the outcome file")
-        .trim();
-    PathBuf::from(path)
+        .find_map(|line| line.strip_prefix("The demo runs on its own board, "))
+        .and_then(|line| line.strip_suffix('.'))
+        .unwrap_or_else(|| panic!("demo did not name its board: {stdout}"))
+        .to_owned()
+}
+
+fn board_registry(board: &Fixture) -> String {
+    fs::read_to_string(board.home.path().join(".malak/boards.jsonl")).unwrap()
+}
+
+fn assert_demo_removed(board: &Fixture, name: &str) {
+    let folder = board.home.path().join(".malak").join(name);
+    assert!(!folder.exists(), "left behind {}", folder.display());
+    assert!(
+        !board_registry(board).contains(name),
+        "{name} is still registered"
+    );
 }
 
 fn demo_workers(status: &Value) -> Vec<&Value> {
@@ -1317,7 +1596,7 @@ fn demo_workers(status: &Value) -> Vec<&Value> {
 
 fn assert_demo_workers_revoked(board: &Fixture, count: usize) {
     let outcome = demo_outcome(board);
-    let status = board.status();
+    let status = demo_status(board);
     let workers = demo_workers(&status);
     assert_eq!(workers.len(), count, "{workers:?}");
     assert!(
@@ -1330,15 +1609,19 @@ fn assert_demo_workers_revoked(board: &Fixture, count: usize) {
 }
 
 fn assert_demo_handovers_removed(board: &Fixture) {
-    assert!(fs::read_dir(&board.state).unwrap().all(|entry| {
-        let entry = entry.unwrap();
-        !entry.file_name().to_str().unwrap().starts_with("worker.")
-            || !entry.path().join("handover").exists()
-    }));
+    assert!(
+        fs::read_dir(demo_folder(board).join("state"))
+            .unwrap()
+            .all(|entry| {
+                let entry = entry.unwrap();
+                !entry.file_name().to_str().unwrap().starts_with("worker.")
+                    || !entry.path().join("handover").exists()
+            })
+    );
 }
 
 fn demo_fixture(board: &Fixture, tool: &str, mode: &str) -> Command {
-    let mut demo = demo_command(board, tool, false);
+    let mut demo = demo_command(board, tool);
     configure_demo_fixture(board, &mut demo, tool, mode);
     demo.arg("Fixture goal");
     if tool == "codex" {
@@ -1347,18 +1630,15 @@ fn demo_fixture(board: &Fixture, tool: &str, mode: &str) -> Command {
     demo
 }
 
+fn kept_demo_fixture(board: &Fixture, tool: &str, mode: &str) -> Command {
+    let mut demo = demo_fixture(board, tool, mode);
+    demo.arg("--keep");
+    demo
+}
+
 fn configure_demo_fixture(board: &Fixture, demo: &mut Command, tool: &str, mode: &str) {
     configure_demo_agent(board, demo, tool, include_str!("fixtures/demo_agent.py"));
     demo.env("MALAK_TEST_DEMO_MODE", mode);
-    if matches!(
-        mode,
-        "success" | "pause-report" | "dead-lead" | "worker-status" | "background" | "progress"
-    ) {
-        // The fixture can acknowledge its own deliveries without moving the
-        // lead's cursor, which the test inspects after the demo.
-        let observer = board.enrol("observer", &["lead:read,ack", "questions:read,ack"]);
-        demo.env("MALAK_TEST_DEMO_OBSERVER", observer);
-    }
 }
 
 fn assert_demo_worker_outcome(
@@ -1369,15 +1649,11 @@ fn assert_demo_worker_outcome(
 ) {
     let board = Fixture::new();
     board.start();
-    let mut demo = demo_fixture(&board, "claude", "worker-status");
+    let mut demo = kept_demo_fixture(&board, "claude", "worker-status");
     demo.env("MALAK_TEST_WORKER_STATUSES", worker_statuses)
         .env("MALAK_TEST_LEAD_EXIT", lead_exit.to_string());
 
     let result = output(demo);
-    assert_eq!(
-        demo_startup_outcome(&result),
-        demo_workspace(&board).join("outcome.txt")
-    );
     let recorded = demo_outcome(&board);
     assert!(
         recorded.contains(&format!("Lead exit  {lead_exit}")),
@@ -1387,7 +1663,7 @@ fn assert_demo_worker_outcome(
         recorded.contains(&format!("Demo exit  {expected_exit}")),
         "{recorded}"
     );
-    let reports = messages(&board.lead(&["read", "lead", "--json"]));
+    let reports = messages(&demo_lead(&board, &["read", "lead", "--json"]));
     assert_eq!(reports.len(), 5);
     for report in reports {
         let text = report["text"].as_str().unwrap();
@@ -1395,33 +1671,26 @@ fn assert_demo_worker_outcome(
         let code = stdout.trim().strip_prefix("Fixture worker exit ").unwrap();
         assert_eq!(status, format!("Worker exit status: {code}"));
     }
-    assert!(result.status.success(), "{result:?}");
+    assert_eq!(result.status.code(), Some(expected_exit), "{result:?}");
     let count = format!("{succeeded} of 5 workers reported");
     assert!(recorded.contains(&count), "{recorded}");
     assert_demo_workers_revoked(&board, 5);
 }
 
 fn demo_with_claude(board: &Fixture, script: &str) -> Command {
-    let mut demo = demo_command(board, "claude", false);
+    let mut demo = demo_command(board, "claude");
     let script = format!("#!/bin/sh\n{script}\n");
     configure_demo_agent(board, &mut demo, "claude", &script);
     demo
 }
 
-fn demo_command(board: &Fixture, tool: &str, explicit_config: bool) -> Command {
+fn demo_command(board: &Fixture, tool: &str) -> Command {
     let path = env::var_os("PATH").unwrap();
     let path = env::join_paths(
         std::iter::once(board.home.path().to_owned()).chain(env::split_paths(&path)),
     )
     .unwrap();
-    let mut command = if explicit_config {
-        let mut command = board.owner(&["recipe", "demo"]);
-        command.current_dir(board.home.path());
-        board.recipe_environment(&mut command);
-        command
-    } else {
-        board.recipe("demo")
-    };
+    let mut command = board.recipe("demo");
     command.arg(tool).env("PATH", path);
     command
 }
@@ -3660,3 +3929,57 @@ mod agents;
 
 #[path = "recipes/board_names.rs"]
 mod board_names;
+
+#[test]
+fn a_bound_worker_gets_one_claim_notice_and_one_combined_exit_report() {
+    let board = Fixture::new();
+    run(board.recipe("lead-up"));
+    let mut launcher = board.recipe("worker-start");
+    launcher.args([
+        "bound",
+        "--no-watcher",
+        "--",
+        "sh",
+        "-c",
+        "malak send lead 'from bound child' && malak send lead 'second command'",
+    ]);
+    let output = run(launcher);
+    assert!(output.contains("Report sent"), "{output}");
+    assert_eq!(
+        participant(&board.status(), "bound")["claim"]["state"],
+        "ended"
+    );
+
+    let output = board.lead(&["read", "--json", "lead"]);
+    let rows = output
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    let bodies = rows
+        .iter()
+        .filter_map(|row| row["text"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies
+            .iter()
+            .filter(|body| body.contains("bound is on the board"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        bodies
+            .iter()
+            .filter(|body| body.contains("bound's session ended"))
+            .count(),
+        1
+    );
+    let report = rows.iter().find(|row| row["kind"] == "report").unwrap();
+    assert!(
+        report["text"]
+            .as_str()
+            .unwrap()
+            .contains("bound's session ended")
+    );
+    assert!(bodies.contains(&"from bound child"));
+    assert!(bodies.contains(&"second command"));
+}

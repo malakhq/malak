@@ -62,20 +62,8 @@ and traces for active work. Keep one lead chat for each board.
 
 ### Try the demo
 
-Use a fresh default board for the demo.
-
-```console
-$ malak board start --detach
-Board ready.
-```
-
-Open the mailbox in a second terminal.
-
-```console
-$ malak mailbox
-```
-
-In the first terminal, run the demo and watch it in the mailbox.
+Run the demo from any project. It starts its own board and prints a mailbox
+command you can open in a second terminal.
 
 ```console
 $ malak recipe demo claude "Name five different fruits."
@@ -84,8 +72,8 @@ $ malak recipe demo claude "Name five different fruits."
 The demo asks the lead to divide the goal into five tasks. Use
 `malak recipe demo codex "GOAL"` to run with Codex and review the four
 hooks when prompted. The command shows startup progress and returns once
-the lead and workers have started. Read the printed outcome file when the
-demo finishes.
+the demo finishes. It prints the result and removes the demo board. Pass
+`--keep` to retain the board and logs for inspection.
 
 The mailbox shows a summary above Participants and the Activity, Questions,
 Orders, Waiting, and Trace tabs. Press Tab to switch panes, and press 1–5 or
@@ -123,7 +111,9 @@ Use `malak mailbox --waiting` to find unacknowledged lead messages in
 worker inboxes. Add `--for NAME` to review one worker or `--json` for
 scripts. The lead's `malak mailbox --plain --for lead` watcher follows `lead`,
 `questions`, and `orders`, and emits `stuck` blocks after 15 minutes and hourly
-thereafter. Agents use `--next` to exit after waiting mail or the next event.
+thereafter. Agents use `--next` to wait for the next event from another
+participant or a due reminder. It remembers shown messages across runs and
+repeats unacknowledged lead mail at most once an hour.
 Participant names `lead` and `stuck` are reserved.
 
 ## For agents

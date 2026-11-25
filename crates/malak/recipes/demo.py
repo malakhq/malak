@@ -1,28 +1,75 @@
 """Start the demo lead in a private workspace and give it one goal."""
 
-from contextlib import ExitStack
+import argparse
+from contextlib import ExitStack, contextmanager
 import json
 import os
 from pathlib import Path
 import re
 import secrets
+import select
 import shlex
+import shutil
 import signal
 import stat
 import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 
 from agent_launch import MALAK_EXE, codex_session_trust, hook_definitions
 import board_data
+import demo_board
 from recipe_board import handover_identity
 import recipe_output as out
 
 
 SHUTDOWN_GRACE = 1
 POLL_INTERVAL = 0.05
+BOARD_WAIT = 5
+BOARD_START_WAIT = 30
+DEMO_TIMEOUT = 300
+
+
+@contextmanager
+def running_board(board, marker, stopping, *, keep):
+    log = board.state / "board.log"
+    env = {**os.environ}
+    env.pop("MALAK_HANDOVER", None)
+    ready = False
+    with log.open("xb") as output:
+        process = subprocess.Popen(
+            [MALAK_EXE, "--config", board.config, "board", "start"],
+            env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=output,
+            start_new_session=True, pass_fds=(marker.fileno(),),
+        )
+        try:
+            deadline = time.monotonic() + BOARD_START_WAIT
+            while not stopping():
+                if time.monotonic() >= deadline:
+                    raise OSError("the demo board timed out during startup")
+                if select.select([process.stdout], [], [], POLL_INTERVAL)[0]:
+                    ready = process.stdout.readline() == b"ready\n"
+                    if not ready:
+                        raise OSError(log.read_text(errors="replace").strip()
+                                      or "the demo board exited before it was ready")
+                    break
+            yield ready
+        finally:
+            process.stdout.close()
+            if not keep or not ready:
+                try:
+                    if ready and process.poll() is None:
+                        subprocess.run(
+                            [MALAK_EXE, "--config", board.config, "board", "stop"],
+                            env=env, stdin=subprocess.DEVNULL, capture_output=True,
+                            timeout=BOARD_WAIT,
+                        )
+                        process.wait(timeout=SHUTDOWN_GRACE)
+                except subprocess.TimeoutExpired:
+                    pass
+                finally:
+                    stop_processes([process])
 
 
 def agent_command(tool, sockets, sandbox, *, lead=False, trust=()):
@@ -87,7 +134,7 @@ def progress(message):
         print(message, flush=True)
 
 
-def start(config, tool, goal, sandbox, yes):
+def start(tool, goal, sandbox, yes, timeout, keep):
     definitions = None
     if tool == "codex":
         definitions = hook_definitions(tool)
@@ -108,67 +155,58 @@ def start(config, tool, goal, sandbox, yes):
     if sandbox == "off":
         print("Warning: the demo lead and workers have full access as your user.", file=sys.stderr)
 
-    config = Path(config).absolute()
-    with config.open("rb") as source:
-        board = tomllib.load(source)["board"]
-    state = Path(board["state"])
-    mailbox = ["malak"]
-    if os.environ.get("MALAK_RECIPE_CONFIG"):
-        mailbox.extend(["--config", str(config)])
-    mailbox.append("mailbox")
-    print(f"Open {out.display(shlex.join(mailbox))} in another terminal to watch the demo.",
-          flush=True)
-    workspace = Path(tempfile.mkdtemp(prefix="demo.", dir=state))
     interrupted = 0
-    supervisor = 0
 
     def request_stop(signum, _frame):
         nonlocal interrupted
         interrupted = interrupted or signum
-        if supervisor:
-            try:
-                os.kill(supervisor, signum)
-            except ProcessLookupError:
-                pass
 
     signal.signal(signal.SIGTERM, request_stop)
     signal.signal(signal.SIGINT, request_stop)
-    ready, announce = os.pipe()
-    try:
-        supervisor = os.fork()
-    except OSError:
-        os.close(ready)
-        os.close(announce)
-        raise
-    if supervisor:
-        os.close(announce)
-        with os.fdopen(ready, "rb") as startup:
-            if interrupted:
-                request_stop(interrupted, None)
-            if startup.read(1) and not interrupted:
-                out.details(f"Demo lead and five workers started with {tool}.", (
-                    ("Lead log", workspace / "lead.log"),
-                    ("Outcome", workspace / "outcome.txt"),
+    root = demo_board.board_root()
+    demo_board.reap_stopped(root)
+    if interrupted:
+        return 128 + interrupted
+
+    board = demo_board.create(root)
+    with board.mark(keep) as marker:
+        print(f"The demo runs on its own board, {board.name}.", flush=True)
+        status = 3
+        try:
+            with running_board(board, marker, lambda: interrupted, keep=keep) as ready:
+                if ready:
+                    mailbox = shlex.join([
+                        "env", "-u", "MALAK_HANDOVER", "malak",
+                        "--config", str(board.config), "mailbox",
+                    ])
+                    print(f"Open {out.display(mailbox)} in another terminal to watch the demo.",
+                          flush=True)
+                    workspace = Path(tempfile.mkdtemp(prefix="demo.", dir=board.state))
+                    status = supervise(board, tool, goal, sandbox, definitions, workspace,
+                                       lambda: interrupted, timeout=timeout, keep=keep)
+        finally:
+            if keep:
+                out.details(f"Kept demo board {board.name}.", (
+                    ("Stop", shlex.join(["malak", "--config", str(board.config), "board", "stop"])),
+                    ("Remove", f"malak recipe demo --remove {board.name}"),
                 ))
-                return 0
-        return exit_status(os.waitstatus_to_exitcode(os.waitpid(supervisor, 0)[1]))
-
-    os.close(ready)
-    try:
-        os.setsid()
-        return supervise(config, tool, goal, sandbox, definitions, board, workspace,
-                         announce, lambda: interrupted)
-    finally:
-        os.close(announce)
+    if not keep:
+        print(f"Removed demo board {board.name}.", flush=True)
+    return 128 + interrupted if interrupted else status
 
 
-def supervise(config, tool, goal, sandbox, definitions, board, workspace, announce, interruption):
-    state = workspace.parent
+def supervise(board, tool, goal, sandbox, definitions, workspace, interruption, *, timeout, keep):
+    config, state, sockets = board.config, board.state, board.sockets
     prefix = f"demo-{secrets.token_hex(3)}"
     names = [f"{prefix}-{number}" for number in range(1, 6)]
-    env = {**os.environ, "MALAK_HANDOVER": str(state / "lead.handover")}
-    env.pop("MALAK_PARTICIPANT_ID", None)
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("MALAK_DEMO_", "MALAK_HOOK_", "MALAK_REPORT_", "MALAK_TASK_"))}
+    for key in ("MALAK_PARTICIPANT_ID", "MALAK_RECIPE_CONFIG", "MALAK_RECIPE_HOOK_STATE",
+                "MALAK_RECIPE_NATIVE_HOOK", "MALAK_RECIPE_NATIVE_ONLY", "MALAK_WORKER_HANDOVER"):
+        env.pop(key, None)
+    env["MALAK_HANDOVER"] = str(state / "lead.handover")
     lead = None
+    lead_log = None
     workers = []
     enrolled = {}
     first_lead_channel = None
@@ -176,25 +214,25 @@ def supervise(config, tool, goal, sandbox, definitions, board, workspace, announ
     early = False
     lead_stopped = False
     stop_reason = None
+    deadline = time.monotonic() + timeout
 
     def stopping():
-        return bool(interruption())
+        return interruption() or time.monotonic() >= deadline
 
     with ExitStack() as stack:
         try:
             env["TMPDIR"] = stack.enter_context(
                 tempfile.TemporaryDirectory(prefix="tmp.", dir=workspace))
             progress(f"Starting {tool} lead.")
-            trust = codex_session_trust(workspace, definitions) if definitions else []
+            trust = (codex_session_trust(workspace, definitions, env=env, stopping=stopping)
+                     if definitions else [])
             if not stopping():
-                sockets = Path(board["socket_folder"])
-                log = workspace / "lead.log"
-                with log.open("xb") as output:
-                    lead = subprocess.Popen(
-                        [*agent_command(tool, sockets, sandbox, lead=True), lead_prompt(goal, names)],
-                        cwd=workspace, env=env, stdin=subprocess.DEVNULL, stdout=output, stderr=output,
-                        start_new_session=True,
-                    )
+                lead_log = stack.enter_context((workspace / "lead.log").open("x+b"))
+                lead = subprocess.Popen(
+                    [*agent_command(tool, sockets, sandbox, lead=True), lead_prompt(goal, names)],
+                    cwd=workspace, env=env, stdin=subprocess.DEVNULL, stdout=lead_log,
+                    stderr=lead_log, start_new_session=True,
+                )
                 briefs = wait_for_briefs(lead, workspace, len(names), stopping)
                 early = not briefs and not stopping()
                 if briefs and not stopping() and lead.poll() is None:
@@ -208,7 +246,7 @@ def supervise(config, tool, goal, sandbox, definitions, board, workspace, announ
                     if len(workers) == len(names) and wait_for_worker_starts(
                         workers, lambda: stopping() or lead.poll() is not None,
                     ) and not stopping():
-                        detach_terminal(workspace, announce)
+                        print(f"Demo lead and five workers started with {tool}.", flush=True)
                     wait_for_processes([worker for worker, _ in workers], stopping, lead=lead)
                     if not stopping() and lead.poll() is None:
                         delivered = accepted_reports(config, env, first_lead_channel, workers)
@@ -221,6 +259,9 @@ def supervise(config, tool, goal, sandbox, definitions, board, workspace, announ
             out.error("run the demo", error, "Check the agent CLI and board state directory.")
             stop_reason = "Demo stopped after a launcher error."
         finally:
+            if time.monotonic() >= deadline:
+                stop_reason = ("Demo timed out. Rerun with --timeout SECONDS "
+                               "if the agent service needs more time.")
             children = [worker for worker, _ in workers]
             cancelled_workers = {worker for worker in children if worker.poll() is None}
             if lead is not None:
@@ -245,21 +286,11 @@ def supervise(config, tool, goal, sandbox, definitions, board, workspace, announ
             exit_status(lead.returncode)
             if lead is not None and lead.returncode is not None else None
         )
-    return write_outcome(workspace, lead_status, succeeded, len(delivered), len(names), cleanup,
-                         early=early, interrupted=interruption(), stop_reason=stop_reason,
-                         lead_stopped=lead_stopped)
-
-
-def detach_terminal(workspace, announce):
-    # The supervisor must close all of the caller's streams, including pipes,
-    # before it tells the foreground process that the demo can finish alone.
-    with (workspace / "launcher.log").open("xb") as log, open(os.devnull, "rb") as source:
-        sys.stdout.flush()
-        sys.stderr.flush()
-        os.dup2(log.fileno(), sys.stdout.fileno())
-        os.dup2(log.fileno(), sys.stderr.fileno())
-        os.dup2(source.fileno(), 0)
-    os.write(announce, b"1")
+        return write_outcome(
+            workspace, lead_log, lead_status, succeeded, len(delivered), len(names), cleanup,
+            early=early, interrupted=interruption(), stop_reason=stop_reason,
+            lead_stopped=lead_stopped, keep=keep,
+        )
 
 
 def read_brief(path):
@@ -336,14 +367,15 @@ def start_workers(config, workspace, private, names, briefs, command, env, worke
                     if stopping():
                         return
                     worker = subprocess.Popen(
-                        [MALAK_EXE, "--config", config, "recipe", "worker-start", name,
+                        [MALAK_EXE, "--config", config, "recipe", "worker-start", name, "--unbound",
                          "--no-watcher", "--brief", str(brief), "--", *command, WORKER_PROMPT],
                         cwd=workspace, env={**worker_env, "MALAK_DEMO_REPORT_RECORD": str(expected),
                                             "MALAK_DEMO_HANDOVER": str(handover)},
                         stdin=subprocess.DEVNULL, stdout=output, stderr=output, start_new_session=True,
                     )
                     workers.append((worker, expected))
-                except (board_data.RecipeError, OSError, ValueError, KeyError) as error:
+                except (board_data.RecipeError, OSError, ValueError, KeyError,
+                        subprocess.SubprocessError) as error:
                     out.details("Demo worker could not start.", (("Reason", error),), stream=output)
         except OSError as error:
             out.error(f"write the log for demo worker {number}", error, f"Check access to {log}.")
@@ -355,8 +387,9 @@ def enrol_demo_worker(config, state, name, enrolled):
     private = Path(tempfile.mkdtemp(prefix="worker.", dir=state))
     handover = private / "handover"
     try:
-        participant = board_data.enrol_lead_sender(config, name, handover)
-    except (board_data.RecipeError, OSError, ValueError, KeyError) as error:
+        participant = board_data.enrol_lead_sender(
+            config, name, handover, "--unbound", timeout=BOARD_WAIT)
+    except (board_data.RecipeError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         # The board can save the identity before a handover write or an
         # enrolment reply fails. Use evidence specific to this owner call.
         saved = re.search(r"^  Reason +participant ([a-z0-9]{8,32}) was enrolled but its handover failed:",
@@ -378,9 +411,9 @@ def retire_workers(config, enrolled):
     problems = []
     for participant, handover in enrolled.items():
         try:
-            board_data.malak("--config", config, "revoke", participant)
+            board_data.malak("--config", config, "revoke", participant, timeout=BOARD_WAIT)
             revoked += 1
-        except (board_data.RecipeError, OSError) as error:
+        except (board_data.RecipeError, OSError, subprocess.SubprocessError) as error:
             problems.append(("Cleanup", f"Could not revoke worker {participant}. {error}"))
         try:
             handover.unlink(missing_ok=True)
@@ -498,8 +531,8 @@ def exit_status(status):
     return status if status >= 0 else 128 - status
 
 
-def write_outcome(workspace, lead_status, succeeded, confirmed, total, cleanup, *,
-                  early, interrupted, stop_reason, lead_stopped):
+def write_outcome(workspace, lead_log, lead_status, succeeded, confirmed, total, cleanup, *,
+                  early, interrupted, stop_reason, lead_stopped, keep):
     status = lead_status or (3 if succeeded != total else 0)
     if interrupted:
         status = 128 + interrupted
@@ -520,43 +553,97 @@ def write_outcome(workspace, lead_status, succeeded, confirmed, total, cleanup, 
     fields = [("Workers", f"{succeeded} of {total} workers reported"),
               ("Reports", f"{confirmed} of {total} delivered"),
               *cleanup,
-              ("Lead exit", lead_status if lead_status is not None else "Unavailable"),
-              ("Lead log", log)]
-    if early or lead_status:
-        fields.append(("Next", "Check the agent sign-in and lead log before retrying."))
+              ("Lead exit", lead_status if lead_status is not None else "Unavailable")]
+    if keep:
+        fields.extend((("Lead log", log), ("Outcome", workspace / "outcome.txt")))
     elif status:
-        fields.append(("Next", "Check the worker logs beside the lead log."))
+        fields.append(("Next", "Use --keep to retain logs on the next run."))
+
     def show_outcome(stream):
         out.details(title, [*fields, ("Demo exit", status)], stream=stream)
 
     stream = sys.stderr if early else sys.stdout
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", prefix=".outcome.", dir=workspace,
-                                         delete=False) as output:
-            pending = Path(output.name)
-            try:
-                show_outcome(output)
-                output.close()
-                pending.replace(workspace / "outcome.txt")
-            finally:
-                pending.unlink(missing_ok=True)
-    except OSError as error:
-        status = status or 3
-        out.error("publish the demo outcome", error, f"Check {workspace / 'outcome.txt'}.")
-        stream = sys.stderr
+    if keep:
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", prefix=".outcome.", dir=workspace,
+                                             delete=False) as output:
+                pending = Path(output.name)
+                try:
+                    show_outcome(output)
+                    output.close()
+                    pending.replace(workspace / "outcome.txt")
+                finally:
+                    pending.unlink(missing_ok=True)
+        except OSError as error:
+            status = status or 3
+            out.error("publish the demo outcome", error, f"Check {workspace / 'outcome.txt'}.")
+            stream = sys.stderr
+    if lead_log is not None:
+        lead_log.seek(0)
+        for line in lead_log:
+            print(out.display(line.decode(errors="replace").rstrip("\n")), file=stream)
     show_outcome(stream)
     return status
 
 
+def remove(name):
+    if not re.fullmatch(r"demo-[0-9a-f]{12}", name):
+        print("Give the name of a demo board.", file=sys.stderr)
+        return 2
+    board = demo_board.DemoBoard(demo_board.board_root() / name)
+    try:
+        with board.claim(temporary_only=False) as marker:
+            if marker is None:
+                print(f"No marked demo board named {name}.", file=sys.stderr)
+                return 2
+            if board.remove_stopped(marker):
+                print(f"Removed demo board {name}.")
+                return 0
+    except BlockingIOError:
+        pass
+    stop = shlex.join(["malak", "--config", str(board.config), "board", "stop"])
+    print(f"Stop demo board {name} first with {out.display(stop)}.", file=sys.stderr)
+    return 2
+
+
+def positive_seconds(value):
+    try:
+        seconds = int(value)
+        if float(seconds) > 0:
+            return seconds
+    except (ValueError, OverflowError):
+        pass
+    raise argparse.ArgumentTypeError("expected a positive whole number of seconds")
+
+
+def main(args):
+    flags = args[:args.index("--")] if "--" in args else args
+    if any(arg.split("=", 1)[0] in {"--board", "--config"} for arg in flags):
+        print("The demo runs on its own board. Omit --board and --config.", file=sys.stderr)
+        return 2
+    parser = out.ArgumentParser(prog="malak recipe demo", allow_abbrev=False)
+    if args and args[0].split("=", 1)[0] == "--remove":
+        parser.add_argument("--remove", required=True, metavar="NAME")
+        return remove(parser.parse_args(args).remove)
+    parser.add_argument("tool", choices=("claude", "codex"))
+    parser.add_argument("goal")
+    parser.add_argument("--sandbox", choices=("on", "off"), default="on")
+    parser.add_argument("--yes", action="store_true")
+    parser.add_argument("--timeout", type=positive_seconds, default=DEMO_TIMEOUT, metavar="SECONDS")
+    parser.add_argument("--keep", action="store_true")
+    options = parser.parse_args(args)
+    if not options.goal:
+        parser.error("give a goal")
+    if shutil.which(options.tool) is None:
+        out.error(f"launch {options.tool}", "The agent CLI was not found on PATH.",
+                  "Install it and sign in before running the demo.")
+        return 2
+    return start(**vars(options))
+
+
 if __name__ == "__main__":
     try:
-        parser = out.ArgumentParser(prog="malak recipe demo")
-        parser.add_argument("tool", choices=("claude", "codex"))
-        parser.add_argument("goal")
-        parser.add_argument("--sandbox", choices=("on", "off"), default="on")
-        parser.add_argument("--yes", action="store_true")
-        options = parser.parse_args(sys.argv[2:])
-        sys.exit(start(sys.argv[1], **vars(options)))
+        sys.exit(main(sys.argv[1:]))
     except (OSError, ValueError, KeyError) as error:
-        out.error("start the demo lead", error, "Check the agent CLI and board state directory.")
+        out.error("run the demo", error, "Check the agent CLI and demo board directory.")
         sys.exit(3)

@@ -37,6 +37,7 @@ pub mod upgrade_notice;
 mod witness;
 mod workers;
 
+pub use authority::{Claim, ClaimEvent, ClaimState};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use board::{BoardStatus, ChannelStatus, ParticipantStatus};
 pub use board::{

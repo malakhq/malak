@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+"""Bring an already running agent session onto a local board."""
+
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import tempfile
+from typing import NamedTuple
+
+sys.dont_write_bytecode = True
+
+import board_data as board
+from recipe_board import board_config, board_name, board_selector, selected_config
+import recipe_output as out
+from worker_queue import LaunchRecord, QueueBoard, named, prepare_worker_access, select_enrolment
+
+
+class Session(NamedTuple):
+    pid: int
+    program: str
+    started: str
+
+
+def running_sessions():
+    # Ask for executable names, never arguments or environment variables.
+    processes = subprocess.run(
+        ["ps", "-ax", "-o", "uid=,pid=,stat=,lstart=,comm="],
+        env={**os.environ, "LC_ALL": "C"}, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, errors="replace", check=True,
+    )
+    uid = str(os.geteuid())
+    sessions = []
+    for line in processes.stdout.splitlines():
+        fields = line.split(maxsplit=8)
+        if len(fields) != 9 or fields[0] != uid or fields[2].startswith("Z"):
+            continue
+        program = Path(fields[8]).name
+        if program in {"claude", "codex"}:
+            sessions.append(Session(int(fields[1]), program, " ".join(fields[3:8])))
+    return sorted(sessions)
+
+
+def session_info(session):
+    result = board.malak("recipe", "__session-process", str(session.pid))
+    if result.stdout.strip():
+        process = json.loads(result.stdout)
+        if process["pid"] == session.pid and Path(process["program"]).name == session.program:
+            return process
+    return None
+
+
+def pick_session(sessions, folders):
+    if not sessions:
+        raise board.RecipeError("no running Claude Code or Codex sessions found")
+    print("Running agent sessions", file=sys.stderr)
+    print("   PID  Program  Started  Folder", file=sys.stderr)
+    for number, session in enumerate(sessions, 1):
+        folder = folders.get(session.pid) or "Unavailable"
+        print(f"{number}. {session.pid}  {session.program}  {session.started}  {out.display(folder)}",
+              file=sys.stderr)
+    while True:
+        print("Choose a session number: ", end="", file=sys.stderr, flush=True)
+        choice = sys.stdin.readline()
+        if not choice:
+            raise board.RecipeError("no session selected")
+        try:
+            number = int(choice)
+        except ValueError:
+            number = 0
+        if 1 <= number <= len(sessions):
+            return sessions[number - 1]
+        print("Enter one of the numbers in the list.", file=sys.stderr)
+
+
+def select_session():
+    sessions, info = [], {}
+    for session in running_sessions():
+        if process := session_info(session):
+            sessions.append(session)
+            info[session.pid] = process
+    selected = pick_session(sessions, {pid: process.get("cwd") for pid, process in info.items()})
+    current = session_info(selected)
+    if current is None or current["start_time"] != info[selected.pid]["start_time"]:
+        raise board.RecipeError(f"session with PID {selected.pid} ended before adoption")
+    return selected.pid
+
+
+def session_pid(value):
+    pid = int(value)
+    if not 0 < pid <= 2**31 - 1:
+        raise ValueError("expected a positive process ID")
+    return pid
+
+
+def arguments():
+    parser = out.ArgumentParser(
+        prog="malak recipe adopt", allow_abbrev=False,
+        usage="%(prog)s NAME [--session PID] [--grant PATTERN:ACTIONS] [--board NAME | --config PATH]",
+        description="Bring a running Claude Code or Codex session onto the board.",
+    )
+    parser.add_argument("name", metavar="NAME", help="Name for the adopted worker")
+    parser.add_argument("--session", type=session_pid, metavar="PID",
+                        help="Use this running process instead of the terminal picker")
+    parser.add_argument("--grant", action="append", default=[], metavar="PATTERN:ACTIONS",
+                        help="Add a rule to the worker grants (repeatable)")
+    selectors = parser.add_mutually_exclusive_group()
+    selectors.add_argument("--board", metavar="NAME", help="Select a named board")
+    selectors.add_argument("--config", type=Path, metavar="PATH", help="Select a board config")
+    args = parser.parse_args()
+    if args.name == "lead" or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
+        parser.error(f"invalid worker name {args.name!r}")
+    if args.session is None and not (sys.stdin.isatty() and sys.stderr.isatty()):
+        parser.error("use --session PID when running without a terminal")
+    return args
+
+
+def issue(config, name, pid, handover, grants):
+    options = [word for grant in grants for word in ("--grant", grant)]
+    result = board.malak("--config", config, "enrol", name, "--session", str(pid),
+                         "--out", handover, "--json", *options)
+    return json.loads(result.stdout)["id"]
+
+
+def adopt_worker(connection, name, pid, grants):
+    config, state = connection.config, connection.state
+    with select_enrolment(state, name):
+        current = named(connection.status(), name)
+        if current:
+            record = LaunchRecord(state, current)
+            evidence, live = record.observe()
+            if (live or not record.on_board(evidence, connection.identity)
+                    or evidence.get("phase") != "adopted"):
+                raise board.RecipeError(f"{name!r} already belongs to a participant enrolled another way")
+
+        private = Path(tempfile.mkdtemp(prefix="adopt.", dir=state))
+        handover = private / "handover"
+        participant = None
+        try:
+            participant = issue(config, name, pid, handover, ["lead:send", *grants])
+            if current is not None and participant != current:
+                raise board.RecipeError(f"re-issue returned a different participant ID for {name!r}")
+            if current is None or grants:
+                prepare_worker_access(config, name, participant, grants)
+            inbox = f"to/{participant}"
+            record = LaunchRecord(state, participant)
+            with record.claim():
+                record.save({
+                    "id": participant, "name": name, "directory": str(private),
+                    "board": connection.identity[2], "phase": "adopted", "ready": False,
+                    "dependency": None, "brief": None, "agent_pid": pid,
+                })
+        except (board.RecipeError, OSError, KeyError, ValueError):
+            # Only retire a newly enrolled participant when setup fails.
+            if participant is not None and participant != current:
+                board.malak("--config", config, "revoke", participant, check=False)
+            handover.unlink(missing_ok=True)
+            private.rmdir()
+            raise
+    return handover, inbox
+
+
+def bootstrap(selector, name, handover, inbox):
+    cli = f"malak {selector}"
+    restart = f"{cli} recipe adopt {shlex.quote(name)}"
+    return f"""Paste this block into the chosen agent chat.
+
+Use this handover path in each shell command for this session:
+export MALAK_HANDOVER={shlex.quote(str(handover))}
+
+Read and acknowledge your inbox:
+{cli} read --ack {shlex.quote(inbox)}
+
+Send your report to the lead on standard input:
+{cli} send lead -
+
+Wait for new mail:
+{cli} mailbox --for {shlex.quote(name)} --next
+
+After a restart, ask the owner to run `{restart}` again for the new session.
+With Malak message hooks configured for that session, the hooks can deliver
+inbox messages after re-issue.
+"""
+
+
+def main():
+    args = arguments()
+    config = (selected_config(args.board, args.config) or board_config()).absolute()
+    selector = board_selector(config, board_name(config))
+    with config.open("rb") as source:
+        connection = QueueBoard(config, board.board_state(source).absolute())
+    if handover := os.environ.get("MALAK_HANDOVER"):
+        board.check_board(config, handover)
+    pid = args.session if args.session is not None else select_session()
+    handover, inbox = adopt_worker(connection, args.name, pid, args.grant)
+    print(bootstrap(selector, args.name, handover, inbox), end="")
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    try:
+        main()
+    except KeyboardInterrupt:
+        sys.exit(130)
+    except (board.RecipeError, OSError, subprocess.SubprocessError, KeyError, ValueError) as error:
+        out.error("adopt the session", error, "Check the selected board and session before retrying.")
+        sys.exit(getattr(error, "code", 3))

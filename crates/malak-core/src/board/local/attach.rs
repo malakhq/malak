@@ -97,6 +97,8 @@ where
             self.wire.source(),
         )?;
 
+        let sender = self.wire.sender().clone();
+        let peer = self.wire.process_id().map(|_| sender.clone());
         let is_lead = self.entrance == Entrance::Lead;
         let highest_grade = if is_lead {
             Grade::Proven
@@ -159,6 +161,18 @@ where
                     if Instant::now() >= self.deadline {
                         return Err(closed());
                     }
+                    if let Err(error) = table.authority.check_session(&attempt.id, peer.as_deref())
+                    {
+                        #[cfg(any(target_os = "linux", target_os = "macos"))]
+                        if let Some(peer) = peer.as_deref()
+                            && table.authority.claim(&attempt.id).is_some()
+                        {
+                            self.refuse_claim(&mut table, &attempt.id, peer)?;
+                            drop(table);
+                            self.claim_refusal_event(&attempt.id, peer);
+                        }
+                        return Err(error);
+                    }
                     let identity = table.authority.finish_attachment(
                         attempt,
                         Proof {
@@ -179,12 +193,50 @@ where
                         return Err(Error::unavailable("no attached place"));
                     };
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
-                    let count = table.authority.count_connection(&identity.id);
+                    let count = {
+                        if peer.is_some()
+                            && table
+                                .authority
+                                .claim(&identity.id)
+                                .is_some_and(|claim| !claim.accepted)
+                        {
+                            self.claim_entrances().record_claim(
+                                &mut table,
+                                &identity.id,
+                                crate::authority::ClaimChange::Accepted,
+                            )?;
+                        }
+                        let count = table.authority.count_connection(&identity.id);
+                        match (
+                            peer.as_ref(),
+                            table.authority.claim(&identity.id),
+                            self.settings.process_identity,
+                        ) {
+                            (Some(_), Some(claim), Some(lookup)) => {
+                                let process = claim.session.process.identity;
+                                let id = identity.id.clone();
+                                let entrances = self.claim_entrances();
+                                count.check_on_last(move || {
+                                    if lookup(process.pid) != Some(process) {
+                                        let _ = entrances.end_session(&id, process);
+                                    }
+                                })
+                            }
+                            _ => count,
+                        }
+                    };
                     #[cfg(any(target_os = "linux", target_os = "macos"))]
                     self.live.identify(&identity.id);
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    let session_unavailable = peer.is_none()
+                        && sender.trace.transport.as_ref() == "unix"
+                        && table.authority.claim(&identity.id).is_some();
                     drop(table);
+                    #[cfg(any(target_os = "linux", target_os = "macos"))]
+                    if session_unavailable {
+                        self.claim_binding_unavailable(&identity.id, &sender);
+                    }
                     board.table.check().authority.validate_attached(&identity)?;
-                    self.wire.sender();
                     self.write_attachment(
                         ticket.rid(),
                         AttachResponse::Accepted(limits.silence.as_secs()),

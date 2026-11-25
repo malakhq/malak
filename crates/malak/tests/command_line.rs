@@ -30,8 +30,12 @@ mod output;
 mod owner_scope;
 #[path = "command_line/read_ack.rs"]
 mod read_ack;
+#[path = "command_line/session_binding.rs"]
+mod session_binding;
 #[path = "command_line/tail_shutdown.rs"]
 mod tail_shutdown;
+#[path = "fixtures/terminal.rs"]
+mod terminal;
 
 struct Fixture {
     board: Child,

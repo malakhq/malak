@@ -24,7 +24,13 @@ pub(crate) enum Change {
     },
     Grant(ParticipantId, u64, Grant, Option<u64>),
     Revoke(ParticipantId, Option<u64>),
-    Rekey(ParticipantId, u64, [u8; 32], Option<Vec<u8>>),
+    Rekey {
+        id: ParticipantId,
+        generation: u64,
+        key: [u8; 32],
+        record: Option<Vec<u8>>,
+        issue: Option<(malak_layers::ClaimedSession, u64)>,
+    },
     Create(ChannelName, CreationId, ParticipantId),
     Reserve(CreationId, ParticipantId, Position, u64, u64),
     Head(SavedHead),
@@ -37,6 +43,7 @@ pub(crate) enum Change {
     Damage(CreationId, Position),
     Ack(CreationId, ParticipantId, Position),
     SocketRecord(ParticipantId, u64, Vec<u8>),
+    Claim(ParticipantId, crate::authority::ClaimChange),
     WitnessHanded(Checkpoint),
     WitnessPublished(Checkpoint, Position),
 }
@@ -47,6 +54,7 @@ pub(crate) struct SavedSocket {
     pub(crate) place: Option<malak_layers::Source>,
     pub(crate) mechanism: String,
     pub(crate) record: Option<Vec<u8>>,
+    pub(crate) session: Option<malak_layers::ClaimedSession>,
 }
 
 pub(crate) struct SavedHead {
@@ -166,7 +174,7 @@ fn decode(bytes: &[u8]) -> Option<Change> {
             name(&mut input)?,
             position(&mut input)?,
         ),
-        (17, 11 | 12) => {
+        (17, 11..=13) => {
             let id = name(&mut input)?;
             let name = name(&mut input)?;
             let inbox = creation(&mut input)?;
@@ -187,13 +195,18 @@ fn decode(bytes: &[u8]) -> Option<Change> {
                 name,
                 creation: inbox,
                 grant,
-                enrolled_at_ms: read_added_time(&mut input, size == 12)?,
+                enrolled_at_ms: read_added_time(&mut input, size >= 12)?,
                 socket: Some(SavedSocket {
                     key,
                     uid,
                     place,
                     mechanism,
                     record,
+                    session: if size == 13 {
+                        Some(super::session::read(&mut input)?)
+                    } else {
+                        None
+                    },
                 }),
             }
         }
@@ -204,16 +217,22 @@ fn decode(bytes: &[u8]) -> Option<Change> {
             let record = input.bytes().ok()?.to_vec();
             Change::SocketRecord(id, generation, record)
         }
+        (30, 4) => Change::Claim(name(&mut input)?, super::session::read_change(&mut input)?),
         (19, 4) => Change::WitnessHanded(checkpoint(&mut input)?),
         (20, 5) => Change::WitnessPublished(checkpoint(&mut input)?, position(&mut input)?),
         (26, 3) => Change::Remove(creation(&mut input)?),
         (27, 3) => Change::RemoveDone(creation(&mut input)?),
-        (28, 6) => Change::Rekey(
-            name(&mut input)?,
-            input.u64().ok()?,
-            *fixed(&mut input)?,
-            optional(&mut input, |input| input.bytes().ok().map(<[u8]>::to_vec))?,
-        ),
+        (28, 6 | 8) => Change::Rekey {
+            id: name(&mut input)?,
+            generation: input.u64().ok()?,
+            key: *fixed(&mut input)?,
+            record: optional(&mut input, |input| input.bytes().ok().map(<[u8]>::to_vec))?,
+            issue: if size == 8 {
+                Some((super::session::read(&mut input)?, input.u64().ok()?))
+            } else {
+                None
+            },
+        },
         (ACCEPT..=WITHDRAW, _) => Change::Repair(RepairChange::decode(tag, size, &mut input)?),
         _ => return None,
     };

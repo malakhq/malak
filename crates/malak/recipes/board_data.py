@@ -62,11 +62,11 @@ def malak_command(*args):
     return [MALAK_EXE, *chosen, *args]
 
 
-def malak(*args, handover=None, check=True, body=None):
+def malak(*args, handover=None, check=True, body=None, timeout=None):
     env = None if handover is None else {**os.environ, "MALAK_HANDOVER": str(handover)}
     result = subprocess.run(
         malak_command(*args), env=env, stdin=subprocess.DEVNULL if body is None else None,
-        input=body, capture_output=True, text=not isinstance(body, bytes),
+        input=body, capture_output=True, text=not isinstance(body, bytes), timeout=timeout,
     )
     if isinstance(body, bytes):
         result.stdout = result.stdout.decode(errors="replace")
@@ -90,9 +90,9 @@ def board_status(config, *, check=True):
     return None if result.returncode else json.loads(result.stdout)
 
 
-def enrol_lead_sender(config, name, handover):
+def enrol_lead_sender(config, name, handover, *binding, timeout=None):
     result = malak("--config", config, "enrol", "--json", "--out", handover,
-                   "--grant", "lead:send", name)
+                   "--grant", "lead:send", *binding, name, timeout=timeout)
     return json.loads(result.stdout)["id"]
 
 
@@ -217,6 +217,25 @@ def replace_config(config, contents, metadata):
             path.unlink(missing_ok=True)
 
 
+def current_session():
+    process = malak("recipe", "__session-process").stdout
+    if not process:
+        raise RecipeError("Malak could not identify the invoking session")
+    return json.loads(process)
+
+
+def bind_lead(config, handover):
+    session = current_session()
+    lead = next(person for person in board_status(config)["participants"] if person["id"] == "lead")
+    claim = lead.get("claim", {})
+    if claim.get("state") == "bound" and all(
+        claim["session"].get(field) == session[field] for field in ("pid", "start_time")
+    ):
+        return
+    malak("--config", config, "rekey", "lead", "--session", str(session["pid"]),
+          "--fingerprint", lead["fingerprint"], "--out", handover)
+
+
 def prepare_board(config, parent):
     # Lock the directory so replacing the config keeps starts serialized.
     directory = os.open(config.parent, os.O_RDONLY | os.O_DIRECTORY)
@@ -237,6 +256,7 @@ def prepare_board(config, parent):
                 start_board(config)
             except (RecipeError, OSError, ValueError) as error:
                 raise RecipeError(f"board startup failed: {error}") from error
+            bind_lead(config, handover)
             check_board(config, handover)
             probe(config, handover)
             if updated is not None:

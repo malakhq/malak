@@ -3,12 +3,13 @@
 use super::{
     PreviewDoor, REFRESH, follow_tail, live_status,
     messages::{self, LivePreviews, RecordBody},
-    model::{Address, Event, Model, Participant, QuestionKind, Status, inbox_recipient},
-    now_ms, owner_commands, owner_for_board, plain, questions, render, status, stuck,
+    model::{Address, Channel, Event, Model, Participant, Status, inbox_recipient},
+    now_ms, owner_commands, owner_for_board, plain, render, status, stuck,
 };
 use crate::cli::{
+    client_transport::link_failed,
     config::{Config, io_error},
-    participant::{Session, check_preview_board},
+    participant::check_preview_board,
 };
 use malak::Error;
 use std::io::{self, Write};
@@ -17,6 +18,9 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
+
+mod state;
+use state::{Shown, Store};
 
 #[expect(
     clippy::large_enum_variant,
@@ -33,10 +37,19 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
     let started = now_ms();
     check_preview_board(config.clone())?;
     let settings = Arc::new(Config::read(config.clone())?.board);
-    let (mut watcher, _) = owner_for_board(&settings)?;
-    // Subscribe first so arrivals during the startup snapshot cannot fall between the two.
-    let tail = owner_commands::Tail::start(&mut watcher, None)?;
     let (mut reader, _) = owner_for_board(&settings)?;
+    let shown = Store::open(&settings.state)?;
+    shown.update(|shown, first| {
+        if first {
+            // Begin following questions and orders here on the first run.
+            // Lead mail has its own acknowledgement cursor.
+            shown.start(&status(&mut reader, false)?.channels);
+        }
+        Ok(())
+    })?;
+    let (mut watcher, _) = owner_for_board(&settings)?;
+    // Subscribe before catching up so messages during the snapshot also reach the tail.
+    let tail = owner_commands::Tail::start(&mut watcher, None)?;
     let initial = status(&mut reader, false)?;
     let mut reader = Some(reader);
     let mut _registration = plain::register_lead_watcher(&settings);
@@ -58,10 +71,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
         .map_err(io_error)?;
 
     let mut output = io::stdout().lock();
-    let Some(mut view) = View::load(&config, &initial, started, None, &mut output)? else {
+    let Some(mut view) = View::load(&config, &initial, started, &shown, &mut output)? else {
         return Ok(());
     };
-    let mut baseline = initial;
     let mut resuming = false;
     let mut next_refresh = Instant::now() + REFRESH;
     let mut next_due = None;
@@ -76,15 +88,20 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
                 if resuming {
                     _registration = plain::register_lead_watcher(&settings);
                     let Some(reconnected) =
-                        View::load(&config, &snapshot, started, Some(&baseline), &mut output)?
+                        View::load(&config, &snapshot, started, &shown, &mut output)?
                     else {
                         return Ok(());
                     };
                     view = reconnected;
-                    baseline = snapshot;
                     resuming = false;
                 } else if snapshot.run == view.model.run {
-                    view.model.update(snapshot);
+                    view.model.update(snapshot.clone());
+                    match view.print_waiting(&shown, &snapshot, &mut output) {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => {}
+                        Err(error) if link_failed(&error) => {}
+                        Err(error) => return Err(error),
+                    }
                 }
             }
             next_refresh = Instant::now() + REFRESH;
@@ -102,9 +119,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
                     {
                         view.model.update(snapshot);
                     }
-                    plain::ensure_preview(&mut view.model, &event, view.previews.as_mut());
-                    plain::write_plain(&mut output, &render::plain_event(&view.model, &event))?;
-                    return Ok(());
+                    if view.print_live(&shown, &event, &mut output)? {
+                        return Ok(());
+                    }
                 }
                 view.model.apply_cursors(&event);
                 view.stuck.event(&view.model, &event);
@@ -147,104 +164,189 @@ impl View {
         config: &Option<PathBuf>,
         snapshot: &Status,
         started: u64,
-        before: Option<&Status>,
+        shown: &Store,
         output: &mut impl Write,
     ) -> Result<Option<Self>, Error> {
         let mut model = Model::new(snapshot.clone(), Some("lead".into()));
         model.enable_lead_watch();
-        let mut stuck = stuck::Watch::starting_after(snapshot, Some(started));
+        let stuck = stuck::Watch::starting_after(snapshot, Some(started));
         let door = PreviewDoor::Single(config.clone());
-        let previews = if let Some((mut session, id)) = door.open() {
+        let preview = door.open();
+        if let Some((_, id)) = &preview {
             model.viewer = Some(id.to_string());
-            if let Some(viewer) = snapshot
-                .participants
-                .iter()
-                .find(|person| person.id == id.as_str())
-            {
-                if print_waiting(&mut model, snapshot, viewer, &mut session, before, output)? {
-                    return Ok(None);
-                }
-                seed_work(snapshot, viewer, &mut session, &mut stuck)?;
-            }
-            Some(LivePreviews::new(door, session, id))
-        } else {
-            None
-        };
-        Ok(Some(Self {
+        }
+        let mut view = Self {
             model,
             stuck,
-            previews,
-        }))
+            previews: preview.map(|(session, id)| LivePreviews::new(door, session, id)),
+        };
+        if view.print_waiting(shown, snapshot, output)? {
+            return Ok(None);
+        }
+        if let Some(previews) = &mut view.previews
+            && let Some(viewer) = snapshot
+                .participants
+                .iter()
+                .find(|person| person.id == previews.id.as_str())
+        {
+            seed_work(snapshot, viewer, previews, &mut view.stuck)?;
+        }
+        Ok(Some(view))
     }
 
     fn is_lead_event(&self, event: &Event) -> bool {
         event.event == "stored"
+            && event.id.as_deref() != Some("lead")
             && matches!(
                 event.channel.as_deref(),
                 Some("lead" | "questions" | "orders")
             )
             && self.model.visible(event)
     }
+
+    fn print_live(
+        &mut self,
+        store: &Store,
+        event: &Event,
+        output: &mut impl Write,
+    ) -> Result<bool, Error> {
+        let Some(address) = event.address() else {
+            return Ok(false);
+        };
+        store.update(|shown, _| {
+            if address.position <= shown.through(&address.channel, &address.creation) {
+                return Ok(false);
+            }
+            plain::ensure_preview(&mut self.model, event, self.previews.as_mut());
+            if plain::write_plain(output, &render::plain_event(&self.model, event))? {
+                if address.channel == "lead" {
+                    shown.mail_shown(&address, now_ms());
+                } else {
+                    shown.advance(&address);
+                }
+            }
+            Ok(true)
+        })
+    }
+
+    fn print_waiting(
+        &mut self,
+        store: &Store,
+        snapshot: &Status,
+        output: &mut impl Write,
+    ) -> Result<bool, Error> {
+        let Some(previews) = &mut self.previews else {
+            return Ok(false);
+        };
+        let Some(viewer) = snapshot
+            .participants
+            .iter()
+            .find(|person| person.id == previews.id.as_str())
+        else {
+            return Ok(false);
+        };
+        let mut history = History {
+            model: &mut self.model,
+            previews,
+            viewer,
+            output,
+        };
+        store.update(|shown, _| history.catch_up(shown, &snapshot.channels))
+    }
 }
 
-fn print_waiting(
-    model: &mut Model,
-    snapshot: &Status,
-    viewer: &Participant,
-    session: &mut Session,
-    before: Option<&Status>,
-    output: &mut impl Write,
-) -> Result<bool, Error> {
-    let mut waiting = false;
-    for channel in messages::readable_channels(snapshot.channels.iter(), viewer) {
-        let addresses: Vec<Address> = match channel.name.as_str() {
-            "lead" => channel
-                .due_positions("lead")
-                .map(|pos| channel.address(pos))
-                .collect(),
-            "questions" if before.is_none() => {
-                // Only a reply on questions can close an owner question.
-                questions::open(&[channel], session, RecordBody::Omit)?
-                    .into_iter()
-                    .filter(|question| question.kind == QuestionKind::Owner)
-                    .map(|question| channel.address(question.position))
-                    .collect()
+struct History<'a, W> {
+    model: &'a mut Model,
+    previews: &'a mut LivePreviews,
+    viewer: &'a Participant,
+    output: &'a mut W,
+}
+
+impl<W: Write> History<'_, W> {
+    fn catch_up(&mut self, shown: &mut Shown, channels: &[Channel]) -> Result<bool, Error> {
+        for name in ["lead", "questions", "orders"] {
+            let Some(channel) = channels
+                .iter()
+                .find(|channel| channel.name == name && self.viewer.can_get(name))
+            else {
+                continue;
+            };
+            let through = shown.through(name, &channel.creation);
+            if name == "lead" {
+                if self.print_mail(shown, channel, through)? {
+                    return Ok(true);
+                }
+                continue;
             }
-            "questions" | "orders" if before.is_some() => {
-                // The tail is live again. Pick up records stored before resubscription.
-                let head = before
-                    .and_then(|snapshot| {
-                        snapshot.channels.iter().find(|old| {
-                            old.name == channel.name && old.creation == channel.creation
-                        })
-                    })
-                    .map_or(channel.floor, |old| channel.floor.max(old.head));
-                (head..channel.head)
-                    .map(|pos| channel.address(pos))
-                    .collect()
-            }
-            _ => continue,
-        };
-        for address in addresses {
-            if let Some(preview) = messages::fetch(session, viewer, &address)? {
-                let event = Event::historical(&address, &preview);
-                model.fetch_result(address, Some(preview));
-                waiting = true;
-                if !plain::write_plain(output, &render::plain_event(model, &event))?
-                    || before.is_some()
-                {
+            for pos in channel.floor.max(through.saturating_add(1))..channel.head {
+                let address = channel.address(pos);
+                let printed = self.print(&address)?;
+                if printed != Some(false) {
+                    shown.advance(&address);
+                }
+                if printed.is_some() {
                     return Ok(true);
                 }
             }
         }
+        Ok(false)
     }
-    Ok(waiting)
+
+    fn print_mail(
+        &mut self,
+        shown: &mut Shown,
+        channel: &Channel,
+        through: u64,
+    ) -> Result<bool, Error> {
+        let due = channel.due_positions("lead");
+        if due.is_empty() {
+            return Ok(false);
+        }
+        let mut printed = false;
+        if let Some(repeat_through) = shown.reminder_due(now_ms()) {
+            let end = due.end.min(repeat_through.saturating_add(1));
+            for pos in due.start..end {
+                match self.print(&channel.address(pos))? {
+                    Some(false) => return Ok(true),
+                    Some(true) => printed = true,
+                    None => {}
+                }
+            }
+            // Admit later mail to the following reminder only after it has had
+            // a full hour. The two cursors bound storage independently of inbox size.
+            shown.reminded(now_ms());
+        }
+        for pos in due.start.max(through.saturating_add(1))..due.end {
+            let address = channel.address(pos);
+            match self.print(&address)? {
+                Some(false) => return Ok(true),
+                Some(true) => {
+                    shown.mail_shown(&address, now_ms());
+                    printed = true;
+                }
+                None => shown.advance(&address),
+            }
+        }
+        Ok(printed)
+    }
+
+    fn print(&mut self, address: &Address) -> Result<Option<bool>, Error> {
+        let Some(preview) = self.previews.fetch(self.viewer, address)? else {
+            return Ok(None);
+        };
+        if preview.sender == "lead" {
+            return Ok(None);
+        }
+        let event = Event::historical(address, &preview);
+        self.model.fetch_result(address.clone(), Some(preview));
+        plain::write_plain(self.output, &render::plain_event(self.model, &event)).map(Some)
+    }
 }
 
 fn seed_work(
     snapshot: &Status,
     viewer: &Participant,
-    session: &mut Session,
+    previews: &mut LivePreviews,
     watch: &mut stuck::Watch,
 ) -> Result<(), Error> {
     for channel in messages::readable_channels(snapshot.channels.iter(), viewer) {
@@ -253,8 +355,7 @@ fn seed_work(
         {
             for pos in channel.due_positions(&worker.id) {
                 let address = channel.address(pos);
-                if let Some(preview) = messages::read_message(session, &address, RecordBody::Omit)?
-                {
+                if let Some(preview) = previews.read_with_body(&address, RecordBody::Omit)? {
                     watch.stored(address, &preview.sender, &preview.kind, preview.at_ms());
                 }
             }

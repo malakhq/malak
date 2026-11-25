@@ -170,6 +170,17 @@ malak rekey "$id" --out alice-new.key
 MALAK_HANDOVER="$PWD/alice-new.key" malak send lead "New key works."
 ```
 
+## `malak release`
+
+The current lead session can release a worker's claim through the owner door.
+
+```sh
+# Release a worker claim from the current lead session.
+eval "$(malak recipe lead-up)"
+malak enrol alice --session "$$" --out alice.handover
+malak release alice
+```
+
 ## `malak revoke`
 
 ```sh
@@ -236,10 +247,13 @@ malak recover
 
 ## `malak hook`
 
+On the scratch board, acknowledge the lead's claim notice before posting the
+note the hook will deliver.
+
 ```sh
 # Deliver a waiting note as JSON context to a generic agent session.
 setup=$(malak recipe lead-up) && eval "$setup"
-malak send lead "Check the build."
+malak read --ack --wait 60 lead && malak send lead "Check the build."
 printf '%s\n' '{"event":"session_start","session":"example"}' | MALAK_HOOK_INBOX=lead MALAK_HOOK_STATE="$PWD/hook-state" malak hook --tool generic
 ```
 
@@ -321,6 +335,13 @@ malak mailbox --trace 0123456789abcdef0123456789abcdef --plain
 malak recipe
 ```
 
+## `malak recipe adopt`
+
+```sh
+# Use the PID of a running Claude Code or Codex session.
+malak recipe adopt researcher --session "$agent_pid"
+```
+
 ## `malak recipe agents`
 
 ```sh
@@ -366,18 +387,14 @@ malak recipe await builder --timeout 30s
 
 ## `malak recipe demo`
 
-With the board running, open `malak mailbox` in a second terminal.
-
 ```sh
-# Run the demo in the first terminal and watch it in the mailbox.
+# Start a disposable board and run five workers.
 malak recipe demo claude "Name five different fruits."
 ```
 
-The command shows startup progress in the terminal. It prints the lead log
-and outcome file paths and returns once the lead and workers have started.
-Read the printed `outcome.txt` when the demo finishes. It shows how many
-demo workers were revoked. Their reports remain readable on the board, and
-the demo removes their private handover files.
+Run the printed mailbox command in a second terminal to watch the demo.
+The demo prints the result and removes its board before returning. Pass
+`--keep` to retain the board, logs and outcome file.
 
 ## `malak recipe forward`
 

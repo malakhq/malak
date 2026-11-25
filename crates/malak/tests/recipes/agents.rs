@@ -42,7 +42,13 @@ fn installs_skills_and_hooks_for_existing_clients() {
         assert!(skill.starts_with("---\nname: malak\n"));
         assert!(skill.contains("malak recipe --help"));
         let hooks = settings(&board, settings_path);
-        for event in ["UserPromptSubmit", "SubagentStart", "PreToolUse", "Stop"] {
+        for event in [
+            "UserPromptSubmit",
+            "SubagentStart",
+            "PreToolUse",
+            "Stop",
+            "SessionEnd",
+        ] {
             let command = hooks["hooks"][event][0]["hooks"][0]["command"]
                 .as_str()
                 .unwrap();
@@ -303,6 +309,25 @@ fn prompt() -> Value {
     json!({"session_id":"lead-reminder", "hook_event_name":"UserPromptSubmit"})
 }
 
+#[test]
+fn session_end_removes_installed_reminder_markers() {
+    let board = fixture();
+    assert!(!reminder(&board, prompt()).is_empty());
+    let subagent = json!({"session_id":"lead-reminder", "hook_event_name":"SubagentStart", "agent_id":"worker"});
+    assert!(!reminder(&board, subagent).is_empty());
+
+    let end = json!({"session_id":"lead-reminder", "hook_event_name":"SessionEnd"});
+    assert!(reminder(&board, end).is_empty());
+
+    assert!(!board.home.path().read_dir().unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("malak-observe-")
+    }));
+}
+
 fn tool_use() -> Value {
     json!({"session_id":"lead-reminder", "hook_event_name":"PreToolUse", "tool_name":"Read"})
 }
@@ -428,12 +453,38 @@ fn two_lead_processes_each_see_only_their_own_board() {
 }
 
 fn lead_up_with_agent_id(board: &Fixture, id: &str) {
+    let prior = board
+        .owner(&["board", "status", "--json"])
+        .output()
+        .unwrap();
+    let already_bound = prior.status.success()
+        && participant(&serde_json::from_slice(&prior.stdout).unwrap(), "lead")["claim"]["state"]
+            == "bound";
     let mut command = board.recipe("lead-up");
     command
         .arg("--config")
         .arg(&board.config)
         .env("CODEX_SESSION_ID", id);
     run(command);
+    if !already_bound {
+        let read = board.lead(&["read", "--json", "--wait", "5", "lead"]);
+        let messages = messages(&read);
+        let notice = messages
+            .iter()
+            .find(|message| {
+                message["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("claim-lead-") && id.ends_with("-accepted"))
+            })
+            .expect("lead claim notice");
+        board.lead(&[
+            "ack",
+            "--creation",
+            notice["creation"].as_str().unwrap(),
+            "lead",
+            &notice["position"].as_u64().unwrap().to_string(),
+        ]);
+    }
 }
 
 #[test]
@@ -810,6 +861,8 @@ fn turn_end_board() -> Fixture {
     board
 }
 
+const RESTART_WATCHER: &str = "Your watcher for board malak is not running. Restart it: malak --board malak mailbox --plain --for lead --next";
+
 fn worker_says(board: &Fixture, channel: &str, text: &str) -> PathBuf {
     let worker = board.enrol("turn-worker", &["lead:send", "questions:send"]);
     run(participant_command(&worker, &["send", channel, text]));
@@ -823,6 +876,7 @@ fn reply(output: &str) -> Value {
 #[test]
 fn turn_end_hands_a_lead_its_pending_mail_once_with_the_bodies() {
     let board = turn_end_board();
+    let _watcher = lead_watcher(&board);
     worker_says(&board, "lead", "Report: the parser is done");
 
     let answer = reply(&reminder(&board, stop("lead-reminder", false)));
@@ -837,6 +891,7 @@ fn turn_end_hands_a_lead_its_pending_mail_once_with_the_bodies() {
 #[test]
 fn a_second_turn_end_with_the_same_pending_set_ends_with_a_reminder() {
     let board = turn_end_board();
+    let _watcher = lead_watcher(&board);
     worker_says(&board, "lead", "Still pending");
     let _ = reminder(&board, stop("lead-reminder", false));
 
@@ -881,6 +936,7 @@ fn turn_end_hands_over_an_unanswered_agent_question() {
 #[test]
 fn open_owner_questions_alone_do_not_continue_the_turn() {
     let board = turn_end_board();
+    let _watcher = lead_watcher(&board);
     board.lead(&["send", "questions", "Should we ship?"]);
 
     assert_eq!(reminder(&board, stop("lead-reminder", false)), "");
@@ -906,7 +962,7 @@ fn turn_end_gives_a_worker_nothing() {
     let board = turn_end_board();
     let worker = worker_says(&board, "lead", "Pending for the lead");
 
-    let output = reminder_with_handover(&board, stop("worker-chat", false), Some(&worker));
+    let output = reminder_with_handover(&board, stop("lead-reminder", false), Some(&worker));
 
     assert_eq!(output, "");
 }
@@ -920,29 +976,112 @@ fn turn_end_gives_a_chat_that_does_not_lead_the_board_nothing() {
 }
 
 #[test]
-fn turn_end_with_nothing_pending_says_nothing() {
+fn turn_end_with_a_running_watcher_and_no_pending_mail_says_nothing() {
     let board = turn_end_board();
+    let _watcher = lead_watcher(&board);
 
     assert_eq!(reminder(&board, stop("lead-reminder", false)), "");
 }
 
 #[test]
-fn the_generic_format_gets_a_continue_reply() {
+fn turn_end_between_recent_watcher_ticks_says_nothing() {
     let board = turn_end_board();
-    worker_says(&board, "lead", "Generic pending");
+    finish_lead_tick(&board);
 
-    let answer = reply(&reminder(
-        &board,
-        json!({"event": "turn_end", "session": "lead-reminder"}),
-    ));
+    assert_eq!(reminder(&board, stop("lead-reminder", false)), "");
+}
 
-    assert_eq!(answer["decision"], "continue");
-    assert!(
-        answer["context"]
-            .as_str()
-            .unwrap()
-            .contains("Generic pending")
+#[test]
+fn turn_end_continues_once_to_restart_a_missing_watcher() {
+    let board = turn_end_board();
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", false)));
+
+    assert_eq!(
+        answer,
+        json!({"decision": "block", "reason": RESTART_WATCHER})
     );
+}
+
+#[test]
+fn turn_end_with_an_active_stop_hook_only_reminds_about_the_watcher() {
+    let board = turn_end_board();
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", true)));
+
+    assert_eq!(answer, json!({"systemMessage": RESTART_WATCHER}));
+}
+
+#[test]
+fn turn_end_hands_over_pending_mail_before_the_watcher_restart_line() {
+    let board = turn_end_board();
+    worker_says(&board, "lead", "Pending mail comes first");
+
+    let answer = reply(&reminder(&board, stop("lead-reminder", false)));
+
+    assert_eq!(answer["decision"], "block");
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(reason.ends_with(RESTART_WATCHER), "{reason}");
+    assert!(
+        reason
+            .strip_suffix(RESTART_WATCHER)
+            .unwrap()
+            .contains("Pending mail comes first")
+    );
+}
+
+#[test]
+fn turn_end_can_continue_for_a_new_watcher_outage_after_recovery() {
+    let board = turn_end_board();
+    let stop = stop("lead-reminder", false);
+    assert_eq!(reply(&reminder(&board, stop.clone()))["decision"], "block");
+    let watcher = lead_watcher(&board);
+    assert!(reminder(&board, stop.clone()).is_empty());
+    drop(watcher);
+
+    let answer = reply(&reminder(&board, stop));
+
+    assert_eq!(answer["decision"], "block");
+}
+
+fn generic_turn_end() -> Value {
+    json!({"event": "turn_end", "session": "lead-reminder"})
+}
+
+#[test]
+fn the_generic_format_gets_a_continue_reply_for_a_missing_watcher() {
+    let board = turn_end_board();
+
+    let answer = reply(&reminder(&board, generic_turn_end()));
+
+    assert_eq!(
+        answer,
+        json!({"decision": "continue", "context": RESTART_WATCHER})
+    );
+}
+
+#[test]
+fn a_second_generic_turn_end_with_the_same_watcher_outage_only_reminds() {
+    let board = turn_end_board();
+    let _ = reminder(&board, generic_turn_end());
+
+    let answer = reply(&reminder(&board, generic_turn_end()));
+
+    assert_eq!(answer, json!({"systemMessage": RESTART_WATCHER}));
+}
+
+#[test]
+fn changing_pending_mail_does_not_rearm_the_watcher_restart() {
+    let board = turn_end_board();
+    let _ = reminder(&board, generic_turn_end());
+    worker_says(&board, "lead", "New mail during the outage");
+    let with_mail = reply(&reminder(&board, generic_turn_end()));
+    assert_eq!(with_mail["decision"], "continue");
+    board.lead(&["read", "--ack", "lead"]);
+
+    let answer = reply(&reminder(&board, generic_turn_end()));
+
+    assert_eq!(answer, json!({"systemMessage": RESTART_WATCHER}));
 }
 
 #[test]
@@ -962,6 +1101,7 @@ fn a_long_pending_message_is_shortened_within_the_32_kib_limit() {
     let reason = answer["reason"].as_str().unwrap();
     assert!(reason.len() <= 32 * 1024, "{}", reason.len());
     assert!(reason.contains("[shortened: "), "{reason}");
+    assert!(reason.ends_with(RESTART_WATCHER));
 }
 
 const WITHOUT_STOP: &str = r#"

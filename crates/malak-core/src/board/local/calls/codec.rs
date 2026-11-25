@@ -139,6 +139,23 @@ fn headers<'a>(mut input: Decoder<'a>) -> Result<Vec<(&'a str, HeaderValue<'a>)>
 }
 
 pub(super) fn message(rid: u64, message: &Message, lost_before: u64) -> Result<Bytes, Error> {
+    message_frame(rid, message, lost_before, None)
+}
+
+pub(in crate::board::local) fn exit_record(
+    rid: u64,
+    message: &Message,
+    duplicate: bool,
+) -> Result<Bytes, Error> {
+    message_frame(rid, message, 0, Some(duplicate))
+}
+
+fn message_frame(
+    rid: u64,
+    message: &Message,
+    lost_before: u64,
+    duplicate: Option<bool>,
+) -> Result<Bytes, Error> {
     let receipt = &message.receipt;
     let time = message
         .sent_at
@@ -146,9 +163,14 @@ pub(super) fn message(rid: u64, message: &Message, lost_before: u64) -> Result<B
         .unwrap_or_default();
     build(
         rid,
-        "MSG",
-        11 + usize::from(lost_before != 0) + usize::from(message.sender_trace.is_some()),
+        if duplicate.is_some() { "OK" } else { "MSG" },
+        11 + usize::from(lost_before != 0)
+            + usize::from(message.sender_trace.is_some())
+            + usize::from(duplicate.is_some()),
         |out| {
+            if let Some(duplicate) = duplicate {
+                boolean(out, "duplicate", duplicate);
+            }
             text(out, "channel", message.channel.as_str());
             text(out, "id", message.id.as_str());
             text(out, "kind", message.kind.as_str());

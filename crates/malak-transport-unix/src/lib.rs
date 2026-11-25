@@ -11,6 +11,21 @@ pub fn local_session_process() -> Option<malak_layers::SessionProcess> {
     sender::local_session_process()
 }
 
+/// Read a running process's identity without walking its ancestry.
+pub fn process_identity(pid: u32) -> Option<malak_layers::ProcessIdentity> {
+    sender::process_identity(pid)
+}
+
+/// Resolve a running process to the session that would own its child commands.
+pub fn session_at(pid: u32) -> Option<malak_layers::ClaimedSession> {
+    sender::session_at(pid, false)
+}
+
+/// Identify a live process before it replaces itself with a worker command.
+pub fn starting_session_at(pid: u32) -> Option<malak_layers::ClaimedSession> {
+    sender::session_at(pid, true)
+}
+
 use malak_layers::{Error, Link, Received, SenderOrigin, Source, Transport, TransportInfo};
 use nix::sys::socket::sockopt;
 use std::os::unix::net::{UnixListener, UnixStream};

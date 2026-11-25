@@ -101,7 +101,7 @@ pub(super) fn screen(frame: &mut Frame<'_>, model: &Model, scroll: usize) {
     );
     let header = Row::new(HEADINGS).style(Style::default().add_modifier(Modifier::BOLD));
     let people = model.people();
-    if frame.area().width < 85 {
+    if frame.area().width < 85 || people.iter().any(|person| person.claim.is_some()) {
         let rows = people
             .iter()
             .skip(scroll)
@@ -115,6 +115,7 @@ pub(super) fn screen(frame: &mut Frame<'_>, model: &Model, scroll: usize) {
                         .zip(fields.into_iter().skip(1))
                         .map(|(label, value)| format!("  {label}  {value}")),
                 );
+                lines.extend(claim_lines(person, now));
                 lines.push(String::new());
                 lines
             })
@@ -147,8 +148,58 @@ pub(super) fn print(model: &Model) -> Result<(), Error> {
     } else {
         text.push('\n');
         text.push_str(&format.table(&HEADINGS, &rows));
+        for person in model.people() {
+            let lines = claim_lines(person, now);
+            if !lines.is_empty() {
+                text.push('\n');
+                text.push_str(&lines.join("\n"));
+                text.push('\n');
+            }
+        }
     }
     output::write(&text)
+}
+
+fn claim_lines(person: &Participant, now: u64) -> Vec<String> {
+    let Some(claim) = &person.claim else {
+        return Vec::new();
+    };
+    let mut lines = vec![format!(
+        "{}: {} · {} · issuer {}",
+        display(&person.name),
+        display(&claim.state),
+        claim_process(&claim.session),
+        display(&claim.issuer),
+    )];
+    if claim.refused > 0 {
+        lines.push(format!(
+            "  Refused {} · last {}",
+            claim.refused,
+            output::timestamp(claim.last_refused_at_ms, now),
+        ));
+    }
+    lines.extend(claim.history.iter().map(|event| {
+        let details = event
+            .session
+            .as_ref()
+            .map_or_else(String::new, claim_process);
+        format!(
+            "  {} {} {}",
+            output::timestamp(Some(event.at_ms), now),
+            display(&event.event),
+            details,
+        )
+    }));
+    lines
+}
+
+fn claim_process(process: &super::model::ClaimProcess) -> String {
+    let pid = process
+        .pid
+        .map_or_else(|| "?".into(), |pid| pid.to_string());
+    let program = display(process.program.as_deref().unwrap_or("?"));
+    let folder = display(process.folder.as_deref().unwrap_or("folder unavailable"));
+    format!("PID {pid} {program} ({folder})")
 }
 
 fn cells(model: &Model, person: &Participant, now: u64, compact: bool) -> [String; 6] {

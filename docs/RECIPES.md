@@ -15,7 +15,7 @@ See the [command examples](EXAMPLES.md) for a runnable snippet for each recipe.
 - `answer` replies to a question and can assign follow-up work.
 - `ask` posts a question that needs a person, with options and a recommendation.
 - `await` waits for a worker's verified final report.
-- `demo` starts a lead and five workers to carry out a goal.
+- `demo` starts a lead and five workers on a disposable board.
 - `forward` passes an existing message through the lead, preserving its source and trace.
 - `guest` enrols a cross-board guest with a reply inbox or upgrades an existing guest.
 - `handoff` passes a task or part of it to another agent on the same trace.
@@ -23,42 +23,45 @@ See the [command examples](EXAMPLES.md) for a runnable snippet for each recipe.
 - `observe` shows the Malak visibility nudge in an agent session.
 - `order` records what the lead can decide while the owner is away.
 - `queue` briefs a worker and starts it after its predecessor's verified final report.
+- `adopt` enrols a running Claude Code or Codex session as a worker.
 - `worker-start` enrols and launches a worker with its inbox and native hooks.
-- `workers` shows running and exited stock workers by name.
+- `workers` shows launched and adopted workers by name.
 - `wrapper` runs a worker with no board tools and posts its final result.
 
 ## Run the five-worker demo
 
-With the default board running, open `malak mailbox` in a second terminal.
-Run `malak recipe demo claude "GOAL"` or `malak recipe demo codex "GOAL"` in
-the first terminal. The lead divides the goal into five short tasks, launches
+Run `malak recipe demo claude "GOAL"` or `malak recipe demo codex "GOAL"`.
+Each run starts a fresh board and prints a mailbox command for a second
+terminal. The lead divides the goal into five short tasks, launches
 separate workers with their own inboxes, answers their questions and collects
-their reports. The command shows startup progress in the terminal. Once the
-lead and all five workers have started, it prints the lead log and outcome
-file paths and returns to the shell. The demo continues in the background.
-A worker counts when its command succeeds and its report is sent. The outcome
-file records the success count, how many reports were delivered, and both the
-lead's and the demo's exit status. Before sending, the launcher records
+their reports. The command shows startup progress, then prints the lead's
+summary, the success and delivery counts, and the lead's and demo's exit
+statuses. A worker counts as successful when its command succeeds and its
+report is delivered. Before sending, the launcher records
 the sender ID, message ID and exit status in a host-private directory.
 The host verifies each delivery against retained reports on the board,
 including reports the lead has already acknowledged. If a report is
 missing after the worker launchers finish, the host stops a lead that is
 still waiting.
-After checking the reports, the host revokes the workers it enrolled and
-removes their private handover files. The lead can still read their reports
-on the board. The outcome file records the revocation count and any cleanup
-errors, including when a failure or interruption ends the demo early.
 When the lead exits before the workers finish, the host gives launchers a
 brief chance to finish reporting, then stops the remaining workers and
-counts them as failed. The outcome retains the lead's exit status.
-During startup, Ctrl-C or SIGTERM stops the lead and workers, records the
-outcome, and returns 130 or 143 respectively. Startup returns the lead's
-nonzero status if it fails before the handoff, or status 3 if a worker never
-starts. After startup, the outcome file holds the final status. If publishing
-it fails, check `launcher.log` beside the named outcome path. To close the
-mailbox, press `q` in the terminal view or Ctrl-C in a redirected feed.
+counts them as failed. The command returns a nonzero lead exit status, or
+status 3 for a timed-out run or unsuccessful workers. Press Ctrl-C any time
+to stop the run and exit 130. SIGTERM exits 143.
 
-The demo recipe accepts `--sandbox on|off` and `--yes` after the goal.
+The lead and workers share a five-minute deadline. Pass `--timeout SECONDS`
+after the goal to allow more time. The demo stops and removes its board,
+state and handovers when it finishes, fails, is interrupted or times out.
+The next run removes stopped boards left behind by a crash if they carry
+the demo marker. Board selectors `--board` and `--config` are refused.
+
+Pass `--keep` to leave the board running and retain its logs and
+`outcome.txt`. The demo prints their paths, the board stop command, and
+`malak recipe demo --remove NAME` to remove the board after stopping it.
+Kept boards are excluded from automatic crash cleanup. Press `q` to close a
+terminal mailbox or Ctrl-C to stop a redirected feed.
+
+The recipe also accepts `--sandbox on|off` and `--yes` after the goal.
 `--sandbox on` is the default and keeps each CLIâ€™s own protections.
 `--sandbox off` prints a warning and gives the lead and workers full
 access as your user. Codex prints the four Malak hook commands and asks
@@ -188,11 +191,13 @@ An agent with a shell can wait in its own inbox with
 use the hooks below.
 
 As the lead, run `malak --board NAME mailbox --plain --for lead --next` in
-the background. It shows waiting lead messages and open owner questions at
-startup or waits for the next event on `lead`, `questions`, and `orders`,
-or the next stuck-work notice. Handle what it prints, acknowledge lead messages,
-and run it again. Read orders in force with `malak --board NAME mailbox --orders`
-before acting. Add `--timeout SECONDS` to end a quiet wait with `No events.`
+the background. It exits after showing new waiting lead mail, a new message
+from another participant on `lead`, `questions`, or `orders`, or a due reminder.
+It remembers shown messages across runs and repeats unacknowledged lead mail
+at most once an hour. Handle what it prints, acknowledge lead messages, and run
+it again. Review open owner questions with `malak --board NAME mailbox --questions`
+and read orders in force with `malak --board NAME mailbox --orders`.
+Add `--timeout SECONDS` to end a quiet wait with `No events.`
 The watcher flags unacknowledged lead messages in worker inboxes after
 15 minutes and every hour thereafter until the worker acknowledges them or
 is revoked. The first word after the timestamp is `stuck`.
@@ -341,6 +346,34 @@ The roster labels each participant's inbox by name. Use
 `malak board status --json` for exact channel addresses and
 `malak board status CHANNEL` for the details of one channel.
 
+## Adopt a running agent
+
+```sh
+malak --board team recipe adopt researcher
+malak --board team recipe adopt researcher --session "$agent_pid"
+```
+
+From the board owner's account, choose a running Claude Code or Codex session
+by its PID, program, working folder and start time. Use `--session PID` if
+you already have the PID or are running without a terminal. Each adopted
+worker gets its own inbox and the usual worker grants. Repeat `--grant
+PATTERN:ACTIONS` to add rules to those grants.
+
+Paste the printed instructions into the chosen agent chat. They give the
+handover path and commands to read and acknowledge the inbox, report to `lead`
+and wait for new mail. `malak mailbox --for researcher --next` shows one
+message in the adopted worker's own inbox. Acknowledge it after handling it.
+The lead can send the first task once the board reports that the agent
+attached. [Malak message hooks](#agent-tool-hooks) can deliver
+inbox messages after restart when configured for the new session and its
+re-issued handover.
+
+After a restart, run `malak --board team recipe adopt researcher` again and
+choose the new session once the previous claim is ended or released. Paste
+the new instructions. The worker keeps its inbox and its grants unless you
+provide new `--grant` rules. `malak recipe workers researcher` and the
+mailbox label the worker `adopted (no launcher)` and show its claim history.
+
 ## Enrol and launch a worker
 
 `worker-start` and `queue` refuse when no lead watcher is running on that board. Scripts and tests can pass `--no-watcher`.
@@ -421,7 +454,7 @@ recorded launcher PID. It reposts the retained brief to the new inbox.
 Use `--brief FILE` to replace the brief or provide it if the old inbox was
 trimmed. The name needs a prior enrolment.
 
-With `--resume`, keep the launcher running. After the
+Pass `--unbound` with `--resume` so later processes can use the same handover. Keep the launcher running. After the
 command exits and reports, the recipe waits for a pending task from the
 proven lead, then runs the supplied shell command with the same handover.
 Each task position can trigger one resume during that invocation. The
@@ -439,6 +472,13 @@ printed stop and revoke commands. A revoked worker loses permission to post
 its report.
 
 ### Check worker status
+
+For a session-bound handover, `malak recipe workers NAME` shows the current
+session, its state and the 64 newest claim events. A refusal records the time
+and the process that presented the handover. A worker can receive commands
+through its handover after the launcher binds its session. After the session
+ends, `worker-start NAME --again` launches a fresh enrolment.
+
 
 ```sh
 malak recipe workers researcher --board team
@@ -790,6 +830,13 @@ them before it stops. Claude Code and Codex get `{"decision":"block","reason":â€
 never a reason to continue. The same pending set is handed over once. If it is
 still pending at the next `turn_end`, the turn ends with a one-line reminder.
 Workers and chats that do not lead the board get no output.
+
+The same hook checks whether the lead's watcher is running. A live watcher
+or a `--next` tick within the last 10 minutes counts as watching. When the
+watcher is missing, the hook continues the lead's turn once with the restart
+command, after any pending mail in the same reply. If the watcher is still
+missing at the next `turn_end`, the lead gets a one-line reminder. Seeing a running
+watcher clears the restart limit for a later outage.
 
 The hook can acknowledge a delivery before you finish handling it. If a
 later `read` omits the message, use `malak get --agent CHANNEL POSITION`

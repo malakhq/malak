@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 mod attach;
 mod calls;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod claims;
 mod owner;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod provision;
@@ -46,7 +48,13 @@ pub struct LocalEntrances {
     settings: Arc<Settings>,
 }
 
+type SessionLookup = fn(u32) -> Option<malak_layers::ClaimedSession>;
+
 struct Settings {
+    session_lookup: Option<SessionLookup>,
+    starting_session_lookup: Option<SessionLookup>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    process_identity: Option<fn(u32) -> Option<malak_layers::ProcessIdentity>>,
     board_key: KeyPair,
     board_user: u32,
     owner_key: [u8; 32],
@@ -173,6 +181,10 @@ impl Owner {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let _ = self.board.local_mechanism.set(general.clone());
         let settings = Arc::new(Settings {
+            session_lookup: None,
+            starting_session_lookup: None,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            process_identity: None,
             board_key: config.board_key,
             board_user: config.board_user,
             owner_key: config.owner_key,
@@ -195,6 +207,71 @@ impl Owner {
 }
 
 impl LocalEntrances {
+    /// Install the board host's process lookup before sharing the entrances.
+    pub fn set_session_lookup(
+        &mut self,
+        lookup: SessionLookup,
+        starting: SessionLookup,
+    ) -> Result<(), Error> {
+        let settings = Arc::get_mut(&mut self.settings)
+            .ok_or_else(|| Error::refused("entrances already in use"))?;
+        settings.session_lookup = Some(lookup);
+        settings.starting_session_lookup = Some(starting);
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn lookup_session(
+        &self,
+        pid: u32,
+        launch: Option<&str>,
+    ) -> Result<malak_layers::ClaimedSession, Error> {
+        let lookup = if launch.is_some() {
+            self.settings.starting_session_lookup
+        } else {
+            self.settings.session_lookup
+        }
+        .ok_or_else(|| Error::not_supported("local session binding is unavailable"))?;
+        let mut session = lookup(pid)
+            .ok_or_else(|| Error::refused(format!("session process {pid} is not running")))?;
+        if let Some(program) = launch {
+            if program.is_empty() || program.len() > 255 {
+                return Err(Error::refused("invalid worker program"));
+            }
+            session.process.program = program.into();
+        }
+        Ok(session)
+    }
+
+    /// Install the board host's PID and start-time lookup before opening listeners.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn set_process_identity(
+        &mut self,
+        lookup: fn(u32) -> Option<malak_layers::ProcessIdentity>,
+    ) -> Result<(), Error> {
+        Arc::get_mut(&mut self.settings)
+            .ok_or_else(|| Error::refused("entrances already in use"))?
+            .process_identity = Some(lookup);
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn check_session_running(
+        &self,
+        session: Option<&malak_layers::ClaimedSession>,
+    ) -> Result<(), Error> {
+        if let (Some(session), Some(lookup)) = (session, self.settings.process_identity) {
+            let process = session.process.identity;
+            if lookup(process.pid) != Some(process) {
+                return Err(Error::refused(format!(
+                    "session process {} is not running",
+                    process.pid
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// Whether an owner stop completed and released the board's state.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub fn stopped(&self) -> bool {

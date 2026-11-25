@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 
-from board_data import RecipeError, channel_status, first_due, get_message, malak
+from board_data import channel_status, first_due, get_message, malak
 from lead_status import can_get_lead
 
 
@@ -64,14 +64,14 @@ def body_text(message):
     return text
 
 
-def handover_text(name, lead, agents, owner_open):
+def handover_text(name, lead, agents, owner_open, reserved):
     header = f"Malak board {json.dumps(name)}: {CONTINUE}"
     footer = ""
     if owner_open:
         noun = "question is" if owner_open == 1 else "questions are"
         footer = f"\n{owner_open} owner {noun} waiting on the owner; do not wait for it."
     entries = [("lead", m) for m in lead] + [("questions", m) for m in agents]
-    room = BUDGET - len(header.encode()) - len(footer.encode())
+    room = BUDGET - reserved - len(header.encode()) - len(footer.encode())
     parts = []
     for index, (channel, message) in enumerate(entries):
         title = label(message, channel)
@@ -90,7 +90,7 @@ def handover_text(name, lead, agents, owner_open):
     return header + "".join(parts) + footer
 
 
-def turn_end(name, config, handover, status, last, active):
+def turn_end(name, config, handover, status, last, active, reserved):
     """Return (reply, signature to remember) for one lead board."""
     lead = pending_lead(config, handover, status)
     agents, owner_open = open_questions(config, handover, status)
@@ -105,4 +105,4 @@ def turn_end(name, config, handover, status, last, active):
         if agents:
             parts.append(f"{len(agents)} agent question{'s' * (len(agents) != 1)} unanswered")
         return {"systemMessage": REMINDER.format(summary=", ".join(parts))}, current
-    return {"decision": "block", "reason": handover_text(name, lead, agents, owner_open)}, current
+    return {"decision": "block", "reason": handover_text(name, lead, agents, owner_open, reserved)}, current

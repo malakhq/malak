@@ -59,26 +59,22 @@ def notify_test(event):
 
 
 def report_outcome(mode):
-    observer = {**os.environ, "MALAK_HANDOVER": os.environ["MALAK_TEST_DEMO_OBSERVER"]}
     channels = ["lead", "questions"] if mode == "dead-lead" else ["lead"]
-    reports = 0
-    asked = False
     deadline = time.monotonic() + WATCHDOG
     while time.monotonic() < deadline:
-        shown = subprocess.check_output(
-            ["malak", "read", "--ack", "--json", "--wait", "30", *channels],
-            text=True, env=observer,
-        )
+        shown = malak("read", "--json", *channels)
         bodies = [row["text"] for line in shown.splitlines()
                   if "text" in (row := json.loads(line))]
-        reports += sum("Fixture worker" in body for body in bodies)
-        asked = asked or any("Waiting worker clarification?" in body for body in bodies)
+        reports = sum("Fixture worker" in body for body in bodies)
+        asked = any("Waiting worker clarification?" in body for body in bodies)
         if mode == "dead-lead" and reports == 4 and asked:
             return 29
         if reports == 5:
             if mode == "pause-report":
                 malak("read", "--ack", "lead")
+            print("Fixture demo summary")
             return int(os.environ["MALAK_TEST_LEAD_EXIT"]) if mode == "worker-status" else 0
+        time.sleep(0.05)
     return 92
 
 
@@ -149,11 +145,11 @@ def main():
         Path("worker-1.log").mkdir()
     Path("lead.running").write_text(str(os.getpid()))
     if mode == "start-signal":
+        Path("host.running").write_text(str(os.getppid()))
         notify_test("lead")
         wait_to_be_stopped()
     Path("launch").write_text("start")
     if mode == "signal":
-        Path("supervisor.running").write_text(str(os.getppid()))
         notify_test("lead")
     if mode == "background":
         notify_test("lead")

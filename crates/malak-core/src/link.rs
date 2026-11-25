@@ -26,6 +26,10 @@ impl<T: Transport> Wire<T> {
         self.link.sender.observe()
     }
 
+    pub(crate) fn process_id(&self) -> Option<u32> {
+        self.link.process_id
+    }
+
     pub(crate) fn source(&self) -> Option<&Source> {
         self.link.source.as_ref()
     }

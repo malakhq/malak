@@ -93,15 +93,17 @@ where
             if let Some(handover) = initial.take().or_else(|| load().ok()) {
                 let mechanism = select(&handover)?;
                 let left = deadline.saturating_duration_since(Instant::now());
-                if !left.is_zero()
-                    && let Ok(client) = Self::participant_with_wait(
+                if !left.is_zero() {
+                    match Self::participant_with_wait(
                         transport.clone(),
                         handover,
                         mechanism,
                         left.min(attach_time),
-                    )
-                {
-                    return Ok(client);
+                    ) {
+                        Ok(client) => return Ok(client),
+                        Err(error) if error == attachment_closed() => return Err(error),
+                        Err(_) => {}
+                    }
                 }
             }
             std::thread::sleep(delay.min(deadline.saturating_duration_since(Instant::now())));
@@ -160,11 +162,67 @@ where
         account: Option<u32>,
         only_user: Option<u32>,
     ) -> Result<(ParticipantId, String), Error> {
+        self.enrol_with_session(name, grant, path, account, only_user, None)
+    }
+
+    /// Enrol with an optional PID resolved to a session on the board host.
+    pub fn enrol_with_session(
+        &mut self,
+        name: &str,
+        grant: &Grant,
+        path: &str,
+        account: Option<u32>,
+        only_user: Option<u32>,
+        session: Option<u32>,
+    ) -> Result<(ParticipantId, String), Error> {
+        self.enrol_with_binding(
+            name,
+            grant,
+            path,
+            account,
+            only_user,
+            session.map(|pid| (pid, None)),
+        )
+    }
+
+    /// Issue a worker handover while its process waits to start the command.
+    pub fn enrol_starting_session(
+        &mut self,
+        name: &str,
+        grant: &Grant,
+        path: &str,
+        account: Option<u32>,
+        only_user: Option<u32>,
+        launch: (u32, &str),
+    ) -> Result<(ParticipantId, String), Error> {
+        self.enrol_with_binding(
+            name,
+            grant,
+            path,
+            account,
+            only_user,
+            Some((launch.0, Some(launch.1))),
+        )
+    }
+
+    fn enrol_with_binding(
+        &mut self,
+        name: &str,
+        grant: &Grant,
+        path: &str,
+        account: Option<u32>,
+        only_user: Option<u32>,
+        session: Option<(u32, Option<&str>)>,
+    ) -> Result<(ParticipantId, String), Error> {
+        let launch = session.and_then(|(_, launch)| launch);
         let rid = 1;
         let request = encode_frame(
             rid,
             "ENROL",
-            3 + usize::from(only_user.is_some()) + usize::from(account.is_some()),
+            3 + usize::from(only_user.is_some())
+                + usize::from(account.is_some())
+                + usize::from(session.is_some())
+                + usize::from(launch.is_some()),
             |output| {
                 output.str("name").unwrap().str(name).unwrap();
                 output.str("path").unwrap().str(path).unwrap();
@@ -175,6 +233,12 @@ where
                 }
                 if let Some(uid) = only_user {
                     output.str("only_user").unwrap().u32(uid).unwrap();
+                }
+                if let Some((pid, _)) = session {
+                    output.str("session").unwrap().u32(pid).unwrap();
+                }
+                if let Some(program) = launch {
+                    output.str("launch_program").unwrap().str(program).unwrap();
                 }
             },
             &[],
@@ -215,15 +279,29 @@ where
         fingerprint: &str,
         path: &str,
     ) -> Result<String, Error> {
+        self.rekey_session(id, fingerprint, path, None)
+    }
+
+    /// Replace a key and optionally bind the replacement to a local session.
+    pub fn rekey_session(
+        &mut self,
+        id: &ParticipantId,
+        fingerprint: &str,
+        path: &str,
+        session: Option<u32>,
+    ) -> Result<String, Error> {
         let rid = 1;
         let frame = encode_frame(
             rid,
             "REKEY",
-            3,
+            3 + usize::from(session.is_some()),
             |output| {
                 output.str("id").unwrap().str(id.as_str()).unwrap();
                 output.str("fingerprint").unwrap().str(fingerprint).unwrap();
                 output.str("path").unwrap().str(path).unwrap();
+                if let Some(pid) = session {
+                    output.str("session").unwrap().u32(pid).unwrap();
+                }
             },
             &[],
         )
@@ -387,7 +465,15 @@ impl State {
             }
             .map_err(|_| Error::refused("invalid proof request"))?;
             self.send(wire, &request)?;
-            let reply = self.read(wire)?;
+            let reply = self.read(wire).map_err(|error| {
+                if handover.address().starts_with("unix:")
+                    && error == Error::unavailable("link closed while reading a segment")
+                {
+                    attachment_closed()
+                } else {
+                    error
+                }
+            })?;
             if reply.rid() != rid {
                 return Err(handshake_error());
             }
@@ -439,6 +525,12 @@ fn answer(
         Step::Proven { .. } => Ok(Vec::new()),
         Step::Denied => Err(handshake_error()),
     }
+}
+
+fn attachment_closed() -> Error {
+    Error::refused(
+        "the board closed the attachment. If this handover is in use by another session, re-issue it with malak enrol NAME --session PID, malak recipe worker-start NAME --again, or malak recipe lead-up",
+    )
 }
 
 fn handshake_error() -> Error {

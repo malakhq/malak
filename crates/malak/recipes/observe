@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Show Malak's session nudge from a Claude Code or Codex command hook."""
 
+from contextlib import suppress
 import fcntl
 from functools import cache
 import hashlib
@@ -251,8 +252,13 @@ def should_show(path, marker, *, once=False, cooldown=COOLDOWN_SECONDS):
         os.close(directory)
 
 
-def turn_end_key(board):
-    return f"turn-end-{digest(str(board))}"
+def clear_marker(path, marker):
+    with suppress(FileNotFoundError):
+        directory = open_session(path)
+        try:
+            os.unlink(marker, dir_fd=directory)
+        finally:
+            os.close(directory)
 
 
 def recall_hand_over(path, key):
@@ -282,30 +288,50 @@ def remember_hand_over(path, key, value):
 
 
 def turn_end_reply(payload, path, config, session_id):
-    """Answer a lead's Stop: hand over pending mail once per set, otherwise remind."""
+    """Hand over pending mail and flag a missing lead watcher."""
+    from lead_status import watcher_running
     from lead_turn_end import turn_end
 
+    inherited = os.environ.get("MALAK_HANDOVER")
+    if inherited is not None and board_identity(inherited)[1] != "lead":
+        return None
     active = payload.get("stop_hook_active") is True
-    blocks, reminders = [], []
+    block = False
+    mail, watchers = [], []
     for name, board, status in matching_leads(config, session_id):
         if (handover := lead_handover_for(board)) is None:
             continue
-        key = turn_end_key(board)
+        board_key = digest(str(board))
+        mail_key = f"turn-end-{board_key}"
+        watcher_key = f"turn-end-watcher-{board_key}"
         try:
-            reply, current = turn_end(name, board, handover, status, recall_hand_over(path, key), active)
+            running = watcher_running(board)
+            line = None
+            if running is False:
+                command = lead_watcher_command(board, name)
+                line = f"Your watcher for board {name} is not running. Restart it: {command}"
+            elif running is True:
+                clear_marker(path, watcher_key)
+            reserved = len(line.encode()) + 2 if line else 0
+            reply, current = turn_end(
+                name, board, handover, status, recall_hand_over(path, mail_key), active, reserved,
+            )
         except (RecipeError, OSError, ValueError, KeyError, TypeError):
             continue
-        if reply is None:
-            continue
-        if "decision" in reply:
-            remember_hand_over(path, key, current)
-            blocks.append(reply["reason"])
-        else:
-            reminders.append(reply["systemMessage"])
-    if blocks:
-        return {"decision": "block", "reason": "\n\n".join(blocks)}
-    if reminders:
-        return {"systemMessage": " ".join(reminders)}
+        if reply and "decision" in reply:
+            remember_hand_over(path, mail_key, current)
+            mail.append(reply["reason"])
+            block = True
+        elif reply:
+            mail.append(reply["systemMessage"])
+        if line:
+            first = should_show(path, watcher_key, once=True)
+            block = block or (first and not active)
+            watchers.append(line)
+    if block:
+        return {"decision": "block", "reason": "\n\n".join(mail + watchers)}
+    if mail or watchers:
+        return {"systemMessage": " ".join(mail + watchers)}
     return None
 
 
@@ -313,7 +339,9 @@ def end_session(path):
     directory = open_session(path)
     try:
         for marker in os.listdir(directory):
-            if marker in {"startup", "activity", "lead-status"} or re.fullmatch(r"(agent|turn-end)-[a-f0-9]{64}", marker):
+            if marker in {"startup", "activity", "lead-status", "reminder"} or re.fullmatch(
+                r"(agent|reminder-agent|turn-end|turn-end-watcher)-[a-f0-9]{64}", marker,
+            ):
                 os.unlink(marker, dir_fd=directory)
         path.rmdir()
     finally:
