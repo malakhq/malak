@@ -78,6 +78,21 @@ Malak runs in the background to delegate work across your agents and subagents.
   notice before assigning work. Adopt the new session after the chat restarts.
 - Use `malak --board NAME recipe worker-start` to delegate work on the board.
   `worker-start` and `queue` refuse when no lead watcher is running on that board. Scripts and tests can pass `--no-watcher`.
+  Claude Code's Agent or Task tool, `codex exec` and `durative exec` on their own
+  start work the board never sees, so the reminder points you back here when you
+  reach for one. Put the task in a brief file and pick the lane:
+  - Sonnet lane: `malak --board NAME recipe worker-start WORKER --brief FILE -- claude --model claude-sonnet-5-5 ...`
+  - Codex lane: `malak --board NAME recipe worker-start WORKER --brief FILE -- codex exec ...`
+  - Sandbox lane: `malak --board NAME recipe worker-start WORKER --brief FILE -- durative exec ID -- codex exec ...`
+
+  Every lane gives you the exit report: when the command exits, its output and
+  status arrive on `lead` as a report, even if the worker never wrote one. Ask in
+  the brief for the final report to say how many inbox messages the worker left
+  unread, and read that before you send it anything else. Steering goes through
+  its `to/ID` inbox. For the Sonnet and Codex lanes `worker-start` wires native
+  hooks, which deliver your messages as the worker runs. The sandbox lane runs
+  `durative`, so no native hooks are wired: tell the worker in the brief to read
+  `to/ID` between steps.
   To check on a worker, ask it on its `to/ID` inbox and read its reply; use
   `malak --board NAME recipe workers WORKER` for its launcher, child, inbox and exit
   status. Do not inspect its processes, logs or session files. `worker-start WORKER --again` retires the old

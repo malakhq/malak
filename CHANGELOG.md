@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Register one fixed set of hook entries for Claude Code and Codex, with no
+  matchers, and decide every behaviour from the payload inside
+  `malak recipe observe --reminder`. The command answers events it does not use
+  before any recipe starts, and a failure never blocks a tool call. After
+  `malak upgrade` changes the set, open Codex threads are asked to reread their
+  config; Claude Code chats need one restart. Approval stays with the owner.
+- Remind the lead of the `worker-start` form before it starts work through
+  Claude Code's `Agent` or `Task` tool, `codex exec` or `durative exec`. The
+  skill shows lanes for Sonnet, Codex and a `durative` sandbox.
+- Say why an `ack` after `mailbox --next` is refused, and name the `read` that
+  gives the message to the reader.
+
 ## 0.1.2 (2026-11-25)
 
 - Add `malak recipe adopt` to bring a running Claude Code or Codex session

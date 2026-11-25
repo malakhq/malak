@@ -316,3 +316,33 @@ fn next_returns_a_reason_after_the_board_stays_down() {
         "{diagnostics}"
     );
 }
+
+#[test]
+fn ack_after_next_names_the_read_that_gives_the_message() {
+    let board = Board::start();
+    let worker = reporter(&board);
+    let sent = send_report(&board, &worker, "Shown by the watcher");
+    assert!(board.run(NEXT).contains("Shown by the watcher"));
+
+    let ack = ["ack", "lead", sent.position.as_str(), "--creation"];
+    let refused = command(
+        board.root.path(),
+        &[&ack[..], &[sent.creation.as_str()]].concat(),
+    )
+    .output()
+    .unwrap();
+
+    assert_eq!(refused.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let config = board.root.path().join("board.toml");
+    assert!(
+        stderr.contains(&format!("malak --config {} read lead", config.display())),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("show a message without giving it"),
+        "{stderr}"
+    );
+    board.run(&["read", "lead"]);
+    board.run(&[&ack[..], &[sent.creation.as_str()]].concat());
+}

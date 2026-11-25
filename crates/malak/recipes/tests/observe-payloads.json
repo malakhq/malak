@@ -88,5 +88,56 @@
     "cwd": "/workspace",
     "hook_event_name": "SessionEnd",
     "reason": "other"
+  },
+  "claude_question": {
+    "session_id": "claude-session",
+    "cwd": "/workspace",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "AskUserQuestion",
+    "tool_input": {"questions": [{"question": "Which database?", "header": "Database", "options": [{"label": "Postgres", "description": "Hosted"}, {"label": "SQLite", "description": "Local"}], "multiSelect": false}]},
+    "tool_response": {"answers": {"Which database?": "SQLite"}},
+    "tool_use_id": "toolu_01ABC127"
+  },
+  "codex_subagent_stop": {
+    "session_id": "codex-session",
+    "transcript_path": null,
+    "cwd": "/workspace",
+    "model": "gpt-5.4",
+    "permission_mode": "default",
+    "turn_id": "turn-1",
+    "hook_event_name": "SubagentStop",
+    "stop_hook_active": false,
+    "agent_id": "agent-9",
+    "agent_type": "default",
+    "last_assistant_message": "Done."
+  },
+  "codex_permission_request": {
+    "session_id": "codex-session",
+    "transcript_path": null,
+    "cwd": "/workspace",
+    "model": "gpt-5.4",
+    "permission_mode": "default",
+    "turn_id": "turn-1",
+    "hook_event_name": "PermissionRequest",
+    "tool_name": "Bash",
+    "tool_input": {"command": "rm -r build"}
+  },
+  "codex_question": {
+    "session_id": "codex-session",
+    "transcript_path": null,
+    "cwd": "/workspace",
+    "model": "gpt-5.4",
+    "permission_mode": "plan",
+    "turn_id": "turn-1",
+    "hook_event_name": "PostToolUse",
+    "tool_name": "request_user_input",
+    "tool_input": {"questions": [{"id": "db", "question": "Which database?", "header": "Database", "options": [{"label": "SQLite", "description": "Local"}]}]},
+    "tool_response": "{\"answers\":{\"db\":{\"answers\":[\"SQLite\"]}}}",
+    "tool_use_id": "call_3"
+  },
+  "generic_question_start": {
+    "event": "question_start",
+    "session": "generic-session",
+    "questions": [{"question": "Which database?", "options": []}]
   }
 }

@@ -853,6 +853,19 @@ command, after any pending mail in the same reply. If the watcher is still
 missing at the next `turn_end`, the lead gets a one-line reminder. Seeing a running
 watcher clears the restart limit for a later outage.
 
+The installed command takes every `PreToolUse` and `PostToolUse` call, so it
+answers in a few milliseconds when it has nothing to say: an event Malak does
+not use, or a tool it does not watch, is answered by the `malak` binary before
+any recipe starts. A failure of the board or the recipe never blocks a tool
+call: both agent tools read exit code 2 as "block", so the command always
+exits 0. Each tool's registered command names it with `--tool claude` or
+`--tool codex`, which picks the reply format for the event.
+
+Before a tool call that starts work outside the board, the lead's reminder adds
+one line with the `worker-start` form: Claude Code's `Agent` or `Task` tool, or
+a Bash command that runs `codex exec` or `durative exec`. Workers, subagents and
+chats that do not lead the board see nothing.
+
 The lead's reminder also handles question-tool calls. On Claude Code it uses
 `AskUserQuestion`. On Codex 0.169 with native function hooks, it uses
 Plan-mode `request_user_input` and `request_user_input_async` where available.

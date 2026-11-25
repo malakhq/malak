@@ -72,6 +72,10 @@ Link the decision in your pull request.
 4. CI runs `scripts/check` on Linux. `main` only accepts pull requests with a green check. Nobody pushes to it directly.
 5. Merging closes the issue. Releases are tagged from `main`, and their notes list the merged pull requests by label.
 
+Maintainers with the private checkout can file public issues with
+`internal/file-issue` and correct their bodies with `internal/edit-issue`.
+See the private maintainer README for the arguments and examples.
+
 ## Sync fixes and cut releases
 
 Maintainers open one public pull request per lane after merging it into private
