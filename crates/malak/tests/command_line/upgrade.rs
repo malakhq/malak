@@ -726,6 +726,7 @@ fn an_installed_release_finishes_a_pending_managed_skill_refresh() {
     assert!(!fixture.called.exists());
     assert!(output.contains("Refreshed skill"), "{output}");
     assert!(!output.contains(HOOK_REVIEW), "{output}");
+    assert!(!output.contains("reload their hooks"), "{output}");
     assert_eq!(fs::read(skill).unwrap(), expected);
 }
 
@@ -783,6 +784,41 @@ fn upgrade_refreshes_tracked_skills_and_hooks_and_preserves_notification_history
     ));
     let remaining: Value = serde_json::from_slice(&fs::read(hooks).unwrap()).unwrap();
     assert_eq!(remaining, serde_json::json!({"user_setting": true}));
+}
+
+#[test]
+fn upgrade_asks_open_codex_threads_to_reload_changed_hooks() {
+    let fixture = upgrade_fixture();
+    change_build(&fixture);
+    cargo(&fixture, INSTALL);
+    let source = checkout(&fixture.home, VERSION);
+    let root = fixture.home.path();
+    let previous = fixture.tools.join("malak-before-upgrade");
+    fs::copy(&fixture.exe, &previous).unwrap();
+    fs::create_dir(root.join(".codex")).unwrap();
+    run(&mut installed_command(
+        &fixture,
+        &previous,
+        &["recipe", "agents", "--yes"],
+    ));
+    codex_notice::install(root, &fixture.tools);
+    let mut upgrade = command(&fixture, &["upgrade", "--yes", "--path"]);
+    upgrade.arg(source);
+
+    let output = run(codex_notice::wait_for_proxy(&mut upgrade, root));
+
+    assert!(
+        output.contains("Asked open Codex threads to reload their hooks."),
+        "{output}"
+    );
+    assert_eq!(output.matches(HOOK_REVIEW).count(), 1, "{output}");
+    let log = fs::read_to_string(root.join("reloaded.jsonl")).unwrap();
+    assert_eq!(
+        log.lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>(),
+        [serde_json::json!({"edits": [], "reloadUserConfig": true})]
+    );
 }
 
 #[test]

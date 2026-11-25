@@ -15,10 +15,12 @@ import stat
 import sys
 import time
 
+import hook_format
 import recipe_output as out
 from board_data import (
     RecipeError, ack_command, board_status, channel_status, first_due, guest_command, guest_grant, malak,
 )
+from delegation import PREFIX as DELEGATION_PREFIX, reminder as delegation_reminder, starts_worker
 from question_hooks import async_replies, is_question, note_async_replies, record, translate
 from recipe_board import (
     board_entries, board_identity, board_name, board_selector, board_settings, config_for_socket,
@@ -127,7 +129,7 @@ def matching_leads(config, session_id):
 
 
 def hook_context(config, handover, intro, session_id, *, installed=False, review=False,
-                 question=None, replied=()):
+                 question=None, replied=(), delegating=None):
     inherited_board = None
     if handover is not None:
         board, participant = board_identity(handover)
@@ -184,6 +186,11 @@ def hook_context(config, handover, intro, session_id, *, installed=False, review
                         lines.extend(reminder_lines(name, path, lead_handover, status, session_id))
         elif intro:
             lines.extend(lead_context(name, path) for name, path, _ in leads)
+        if delegating and len(leads) == 1:
+            name, path, _ = leads[0]
+            lines.insert(0, delegation_reminder(delegating, f"malak {board_selector(path, name)}"))
+        elif delegating:
+            lines.insert(0, delegation_reminder(delegating, "malak --board BOARD"))
     except HookDeadline:
         # Keep completed reviews if a later board runs out of time.
         pass
@@ -192,7 +199,10 @@ def hook_context(config, handover, intro, session_id, *, installed=False, review
 
 def bounded_context(lines):
     kept = []
-    remaining = REMINDER_BYTES
+    # The delegation line has its own room, so it never crowds out the mail lines.
+    remaining = REMINDER_BYTES + sum(
+        len(line.encode()) + 1 for line in lines if line.startswith(DELEGATION_PREFIX)
+    )
     for line in lines:
         size = len(line.encode())
         if size <= remaining:
@@ -407,20 +417,27 @@ def reminder_marker(payload):
     if payload.get("hook_event_name") == "UserPromptSubmit":
         return "reminder"
     marker = marker_for(payload, True)
-    if marker == "activity":
+    if marker in {"activity", "startup"}:
+        # The first touch of a chat, whichever event comes first, shows the intro once.
         return "reminder"
     if marker and marker.startswith("agent-"):
         return f"reminder-{marker}"
     return None
 
 
-def main(installed, config):
+def emit(tool, event, value):
+    if (reply := hook_format.reply(tool, event, value)) is not None:
+        print(json.dumps(reply))
+
+
+def main(installed, config, named_tool=None):
     if not installed and os.environ.get("MALAK_OBSERVE") != "1":
         return
     try:
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return
+        tool = hook_format.tool_for(payload, named_tool)
         generic_stop = payload.get("event") == "turn_end"
         if generic_stop:
             # The generic hook format: {"event": "turn_end", "session": ID}.
@@ -439,9 +456,7 @@ def main(installed, config):
             return
         if event == "Stop":
             if installed and (reply := turn_end_reply(payload, path, config, session_id)):
-                if generic_stop and "reason" in reply:
-                    reply = {"decision": "continue", "context": reply["reason"]}
-                print(json.dumps(reply))
+                emit(tool, event, reply)
             return
         handover = os.environ.get("MALAK_HANDOVER")
         marker = (reminder_marker(payload) if installed
@@ -453,13 +468,14 @@ def main(installed, config):
             )
             question = payload if session_id and is_question(payload) else None
             replied = async_replies(payload.get("prompt")) if session_id and event == "UserPromptSubmit" else []
-            if not intro and not review and not question and not replied:
+            delegating = starts_worker(payload)
+            if not intro and not review and not question and not replied and not delegating:
                 return
             if intro and not should_show(path, intro, once=True):
                 intro = None
             lines = hook_context(
                 config, handover, intro, session_id, installed=True, review=review,
-                question=question, replied=replied,
+                question=question, replied=replied, delegating=delegating,
             )
             context = bounded_context(lines)
             signal.setitimer(signal.ITIMER_REAL, 0)
@@ -470,15 +486,10 @@ def main(installed, config):
             if not should_show(path, marker):
                 return
         if context:
-            if payload.get("event") in {"question_start", "question_end"}:
-                print(json.dumps({"context": context}))
-            else:
-                print(json.dumps({
-                    "hookSpecificOutput": {"hookEventName": event, "additionalContext": context}
-                }))
-    except (HookDeadline, KeyError, OSError, TypeError, ValueError):
-        # A missing or malformed input is never a reason to block agent work
-        # or to look for a replacement handover.
+            emit(tool, event, context)
+    except Exception:
+        # A missing or malformed input, an unreachable board or a bug here is
+        # never a reason to block agent work or to look for another handover.
         return
 
 
@@ -487,12 +498,18 @@ def timed_out(_signal, _frame):
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] == ["--reminder"]:
+    if sys.argv[1:2] == ["--reminder"]:
+        # The installed hook command: `--reminder [--tool claude|codex]`. It never
+        # reports a usage error, because a failing hook can block the agent's call.
+        named = sys.argv[3] if sys.argv[2:3] == ["--tool"] and sys.argv[3:4] else None
         # Leave time for the hook runner to collect the response after the
         # last CLI call. A timeout follows the same silent path as other errors.
         signal.signal(signal.SIGALRM, timed_out)
         signal.setitimer(signal.ITIMER_REAL, 4)
-        main(True, selected_config())
+        try:
+            main(True, selected_config(), named)
+        except Exception:
+            pass
     else:
         parser = out.ArgumentParser(
             prog="malak recipe observe",

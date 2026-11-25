@@ -147,6 +147,44 @@ def no_app_server(error):
     return 0
 
 
+def reload_hooks():
+    """Ask the Codex app-server to reread config for every loaded thread.
+
+    Codex rebuilds a thread's hooks from the user config on this request, so changed
+    Malak entries apply without a restart. An empty batch writes nothing. Hook trust
+    stays with the owner: a reloaded entry still waits for approval in /hooks.
+    """
+    try:
+        process = subprocess.Popen(
+            ["codex", "app-server", "proxy"], stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+    except OSError as error:
+        return no_app_server(error)
+    with process:
+        try:
+            try:
+                app = AppServer(process)
+                app.call("initialize", {
+                    "clientInfo": {"name": "malak", "version": "0.1.2"},
+                    "capabilities": {"experimentalApi": True},
+                })
+                app.send({"method": "initialized"})
+                app.call("config/batchWrite", {"edits": [], "reloadUserConfig": True})
+            except (OSError, ValueError, KeyError) as error:
+                print(f"Could not ask open Codex threads to reload their hooks ({error}).")
+                return False
+        finally:
+            if process.poll() is None:
+                process.kill()
+            try:
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+    print("Asked open Codex threads to reload their hooks.")
+    return True
+
+
 def notify_open(delivered, save, notice=NOTICE):
     try:
         process = subprocess.Popen(

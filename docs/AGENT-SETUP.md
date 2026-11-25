@@ -62,10 +62,15 @@ Run `malak recipe agents` from a terminal and confirm the prompt. When the
 owner has approved installation and you are running without a terminal,
 use `malak recipe agents --yes`. Use `--dry-run` to preview the changes.
 The recipe installs the Malak skill and prompt reminders for the user in
-existing Claude Code and Codex configuration directories. It also registers
-`Stop`, so a lead about to end its turn with unacknowledged lead messages or
-unanswered agent questions is handed them once and asked to handle and
-acknowledge them first.
+existing Claude Code and Codex configuration directories. Each tool gets one
+fixed set of hook entries with no matcher: `SessionStart`, `UserPromptSubmit`,
+`SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolUse`, `Stop` and
+`SessionEnd`. Every entry runs `malak recipe observe --reminder`, which decides
+from the payload and says nothing unless it has something to say. A new
+behaviour is a new branch there, shipped by `malak upgrade`, and never a new
+entry. That is how a lead about to end its turn with unacknowledged lead
+messages or unanswered agent questions is handed them once and asked to handle
+and acknowledge them first.
 On prompts and tool use, the reminder checks at most every three minutes and
 shows commands for waiting work. It also records questions from Claude Code's
 `AskUserQuestion`, Codex's Plan-mode `request_user_input`, and Codex's
@@ -74,10 +79,14 @@ owner's answer when the tool returns it. For the async tool, record the
 reply with `recipe answer` when the owner answers. The reminder gives the
 command when Codex supplies a reply linked to that question.
 
-In Codex CLI, open `/hooks` and press Enter on `UserPromptSubmit`,
-`SubagentStart`, `PreToolUse`, `PostToolUse`, `Stop` or `SessionEnd`. Select the Malak command from
+In Codex CLI, open `/hooks` and press Enter on `SessionStart`, `UserPromptSubmit`,
+`SubagentStart`, `SubagentStop`, `PreToolUse`, `PostToolUse`, `Stop` or `SessionEnd`. Select the Malak command from
 `hooks.json`, review it and press `t` to trust it. Press Esc and repeat
-for the other events. In Codex desktop use **Settings > Hooks**.
+for the other events. In Codex desktop use **Settings > Hooks**. After
+`malak upgrade` changes the set, open Codex threads are asked to reread their
+config through the app-server and need no restart, but approval stays with
+the owner; an agent never approves hooks for itself. Claude Code chats need
+one restart for the new set.
 If the owner also wants a one-time notice in already open local Codex
 app-server chats, add `--notify-open`.
 

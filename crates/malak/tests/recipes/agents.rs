@@ -4,12 +4,26 @@ use std::time::SystemTime;
 
 #[path = "../fixtures/codex_notice.rs"]
 mod codex_notice;
+#[path = "agents/hook_ports.rs"]
+mod hook_ports;
 
 const USER_HOOK: &str = r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"keep-me"}]}]},"key":true}"#;
 const SKILL_PATH: &str = ".claude/skills/malak/SKILL.md";
 const CLAUDE_SETTINGS: &str = ".claude/settings.json";
 const CODEX_HOOKS: &str = ".codex/hooks.json";
 const MANIFEST: &str = ".malak/agents.json";
+
+/// The same hook events are registered for each agent tool.
+const FIXED_EVENTS: [&str; 8] = [
+    "SessionStart",
+    "UserPromptSubmit",
+    "SubagentStart",
+    "SubagentStop",
+    "PreToolUse",
+    "PostToolUse",
+    "Stop",
+    "SessionEnd",
+];
 
 fn fixture() -> Fixture {
     let board = Fixture::new();
@@ -34,32 +48,28 @@ fn installs_skills_and_hooks_for_existing_clients() {
     let board = fixture();
     let output = run(agents(&board, &["--yes"]));
     let root = board.home.path();
-    for (skill, settings_path) in [
-        (SKILL_PATH, CLAUDE_SETTINGS),
-        (".codex/skills/malak/SKILL.md", CODEX_HOOKS),
+    for (skill, settings_path, tool) in [
+        (SKILL_PATH, CLAUDE_SETTINGS, "claude"),
+        (".codex/skills/malak/SKILL.md", CODEX_HOOKS, "codex"),
     ] {
         let skill = fs::read_to_string(root.join(skill)).unwrap();
         assert!(skill.starts_with("---\nname: malak\n"));
         assert!(skill.contains("malak recipe --help"));
         let hooks = settings(&board, settings_path);
-        for event in [
-            "UserPromptSubmit",
-            "SubagentStart",
-            "PreToolUse",
-            "PostToolUse",
-            "Stop",
-            "SessionEnd",
-        ] {
-            let command = hooks["hooks"][event][0]["hooks"][0]["command"]
-                .as_str()
-                .unwrap();
-            assert!(command.ends_with(" recipe observe --reminder"));
-        }
-        assert!(hooks["hooks"]["PreToolUse"][0].get("matcher").is_none());
         assert_eq!(
-            hooks["hooks"]["PostToolUse"][0]["matcher"],
-            "^(AskUserQuestion|request_user_input)$"
+            hooks["hooks"].as_object().unwrap().len(),
+            FIXED_EVENTS.len()
         );
+        for event in FIXED_EVENTS {
+            let group = &hooks["hooks"][event][0];
+            let command = group["hooks"][0]["command"].as_str().unwrap();
+            assert!(
+                command.ends_with(&format!(" recipe observe --reminder --tool {tool}")),
+                "{event}: {command}"
+            );
+            // An entry with no matcher fires on every occurrence of its event.
+            assert!(group.get("matcher").is_none(), "{event}");
+        }
     }
     assert!(output.contains("/hooks"));
     assert_eq!(
@@ -192,7 +202,9 @@ fn removal_restores_settings_bytes_and_removes_created_files() {
     fs::write(root.join(CLAUDE_SETTINGS), USER_HOOK).unwrap();
     run(agents(&board, &["--yes"]));
     let output = run(agents(&board, &["--remove", "--yes"]));
-    assert!(output.contains("Removed UserPromptSubmit"));
+    assert!(
+        output.contains("Removed SessionStart, UserPromptSubmit, SubagentStart, SubagentStop,")
+    );
     assert_eq!(
         fs::read(root.join(CLAUDE_SETTINGS)).unwrap(),
         USER_HOOK.as_bytes()
@@ -1490,6 +1502,9 @@ fn refresh_adds_hook(event: &str) {
             .as_str()
             .unwrap()
             .to_owned();
-        assert!(command.ends_with(" recipe observe --reminder"), "{command}");
+        assert!(
+            command.contains(" recipe observe --reminder --tool "),
+            "{command}"
+        );
     }
 }

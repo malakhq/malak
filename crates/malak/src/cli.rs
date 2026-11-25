@@ -352,17 +352,31 @@ pub(super) fn run() -> ExitCode {
         &args.command,
         Command::Participant(participant::Command::Read { .. }) | Command::Mailbox { .. }
     );
+    let read_to_ack = args.read_before_ack();
     match args.execute() {
         Ok(exit) => exit,
         Err(error) => {
-            let next = if error == Error::refused(participant::EMPTY_BODY) {
+            let mut next: &str = if error == Error::refused(participant::EMPTY_BODY) {
                 "Give the message text as an argument or pass - to read it from standard input."
             } else if watches_link && client_transport::link_failed(&error) {
                 client_transport::LINK_HINT
             } else {
                 next
             };
-            output::operation_error(&operation, &error.to_string(), next, legacy);
+            let mut reason = error.to_string();
+            let read_next;
+            if error == Error::refused(participant::NOT_GIVEN)
+                && let Some(read) = read_to_ack
+            {
+                reason.push_str(
+                    ". An ack covers only positions a read has given this reader. The mailbox \
+                     watcher, --next and get show a message without giving it, and a board \
+                     restart forgets what was given",
+                );
+                read_next = format!("Run `{read}`, then acknowledge the message again.");
+                next = &read_next;
+            }
+            output::operation_error(&operation, &reason, next, legacy);
             ExitCode::from(match error.outcome() {
                 Outcome::Done => 0,
                 Outcome::Refused => 2,
@@ -763,6 +777,27 @@ fn add_rule(mut grant: Grant, rule: &str) -> Result<Grant, Error> {
 }
 
 impl Args {
+    /// The read that gives the reader the position an `ack` named.
+    fn read_before_ack(&self) -> Option<String> {
+        let Command::Participant(participant::Command::Ack { channel, .. }) = &self.command else {
+            return None;
+        };
+        let quoted = |text: &str| {
+            let plain = |c: char| c.is_ascii_alphanumeric() || "-_./:@".contains(c);
+            if !text.is_empty() && text.chars().all(plain) {
+                text.to_owned()
+            } else {
+                format!("'{}'", text.replace('\'', "'\\''"))
+            }
+        };
+        let board = match (&self.board, &self.config) {
+            (Some(name), _) => format!("--board {} ", quoted(name)),
+            (None, Some(path)) => format!("--config {} ", quoted(&path.display().to_string())),
+            (None, None) => String::new(),
+        };
+        Some(format!("malak {board}read {channel}"))
+    }
+
     fn diagnostic_context(&self) -> (String, &'static str) {
         let board = self
             .config

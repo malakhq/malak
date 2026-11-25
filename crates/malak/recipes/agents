@@ -13,7 +13,7 @@ from agent_settings import (
     decode, directory_exists, encode, plan_settings, plan_settings_removal,
     read_file, replace_file, settings_additions,
 )
-from codex_notice import notify_open
+from codex_notice import notify_open, reload_hooks
 import recipe_output as out
 
 
@@ -21,9 +21,16 @@ SKILL = Path(__file__).with_name("malak-skill.md")
 # Private recipe result consumed by the upgrade continuation.
 REFRESHED_HOOKS = 10
 REFRESH_PENDING = 11
+# Every event Malak listens to, for Claude Code and Codex alike. Both tools fire an
+# entry with no matcher on every occurrence, so the dispatcher in `observe` decides
+# from the payload and a new behaviour never needs a new entry.
+EVENTS = (
+    "SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop",
+    "PreToolUse", "PostToolUse", "Stop", "SessionEnd",
+)
 TRUST_STEPS = (
-    "In Codex CLI, open /hooks and press Enter on UserPromptSubmit, SubagentStart, "
-    "PreToolUse, PostToolUse, Stop or SessionEnd. Select the Malak command from hooks.json, review it, then press t "
+    "In Codex CLI, open /hooks and press Enter on each of "
+    f"{', '.join(EVENTS)}. Select the Malak command from hooks.json, review it, then press t "
     "to trust it. Press Esc and repeat for the other events. "
     "In Codex desktop, open Settings > Hooks to review and trust the Malak commands."
 )
@@ -36,23 +43,21 @@ def user_config(home, variable, name):
 
 def registrations(command):
     handler = {"type": "command", "command": command, "timeout": 5}
-    return {
-        "UserPromptSubmit": {"hooks": [handler]},
-        "SubagentStart": {"hooks": [handler]},
-        "PreToolUse": {"hooks": [handler]},
-        "PostToolUse": {"matcher": "^(AskUserQuestion|request_user_input)$", "hooks": [handler]},
-        "Stop": {"hooks": [handler]},
-        "SessionEnd": {"hooks": [handler]},
-    }
+    return {event: {"hooks": [handler]} for event in EVENTS}
 
 
-def installed_registrations():
-    command = shlex.join([os.environ["MALAK_RECIPE_EXE"], "recipe", "observe", "--reminder"])
+def tool_of(settings):
+    return "codex" if Path(settings).name == "hooks.json" else "claude"
+
+
+def installed_registrations(tool):
+    command = shlex.join([
+        os.environ["MALAK_RECIPE_EXE"], "recipe", "observe", "--reminder", "--tool", tool,
+    ])
     return registrations(command)
 
 
 def plan_install(home):
-    hooks = installed_registrations()
     plan = {"settings": [], "skills": [], "notified": [], "complete": False}
     configs = [
         (user_config(home, "CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
@@ -72,7 +77,7 @@ def plan_install(home):
                 "create_parent": not parent_exists,
                 "data": encode(SKILL.read_bytes()),
             })
-        change = plan_settings(root / settings, hooks)
+        change = plan_settings(root / settings, installed_registrations(tool_of(settings)))
         if change is not None:
             plan["settings"].append(change)
     return plan
@@ -214,8 +219,8 @@ def refresh(plan, save, dry_run):
         save()
         print(f"Refreshed skill {out.display(path)}.")
         changed = True
-    hooks = installed_registrations()
     for change in plan["settings"][:]:
+        hooks = installed_registrations(tool_of(change["path"]))
         update = refresh_settings(change, hooks, say)
         if update is None:
             continue
@@ -249,6 +254,14 @@ def notify_upgrade(plan, home, notice):
         notify_open([], lambda: None, notice)
 
 
+def reload_upgrade(plan, home):
+    if plan is None or not plan["complete"]:
+        return
+    codex = user_config(home, "CODEX_HOME", ".codex")
+    if directory_exists(codex) and codex / "hooks.json" in [Path(item["path"]) for item in plan["settings"]]:
+        reload_hooks()
+
+
 def run(args, home):
     manifest = home / ".malak" / "agents.json"
     if directory_exists(manifest.parent):
@@ -267,6 +280,10 @@ def run(args, home):
 
     if args.upgrade_refresh:
         return refresh(plan, save, args.dry_run) if plan is not None else 0
+    if args.upgrade_reload:
+        if not args.dry_run:
+            reload_upgrade(plan, home)
+        return
     if args.upgrade_notice is not None:
         if not args.dry_run:
             notify_upgrade(plan, home, args.upgrade_notice)
@@ -316,6 +333,7 @@ def main():
     mode.add_argument("--remove", action="store_true", help="remove Malak's installed files and hook entries")
     mode.add_argument("--notify-open", action="store_true", help="also notify open local Codex app-server threads")
     mode.add_argument("--upgrade-refresh", action="store_true", help=out.argparse.SUPPRESS)
+    mode.add_argument("--upgrade-reload", action="store_true", help=out.argparse.SUPPRESS)
     parser.add_argument("--upgrade-notice", help=out.argparse.SUPPRESS)
     args = parser.parse_args()
     if args.upgrade_notice is not None and not args.notify_open:

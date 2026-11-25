@@ -18,7 +18,7 @@ use workers::Worker;
 pub(super) const FINISH: &str = "__upgrade-finish";
 const HANDOFF: &str = "malak upgrade continuation 1";
 const NOTICE_HANDOFF: &str = "malak upgrade continuation 2";
-const HOOK_REVIEW: &str = "For chats opened before this upgrade, restart Claude Code or review and approve the Malak hooks in Codex /hooks or Settings > Hooks to receive reminders, record owner questions and answers (PreToolUse and PostToolUse), and hand over pending work at turn end (Stop hook).";
+const HOOK_REVIEW: &str = "For chats opened before this upgrade, restart Claude Code once to load the new hook set. Open Codex threads reload without a restart where the app-server answers; either way, review and approve the Malak hooks in Codex /hooks or Settings > Hooks to receive reminders, record owner questions and answers, see delegation reminders and hand over pending work at turn end. Malak never approves its own hooks.";
 
 #[derive(Args)]
 pub(super) struct Options {
@@ -445,6 +445,16 @@ fn complete(
                 )?;
             }
         }
+    }
+    if hooks_changed
+        && let Err(error) =
+            board_list::directory().and_then(|root| recipe::reload_codex_hooks(&root))
+    {
+        failed = true;
+        output::details(
+            "Could not ask open Codex threads to reload their hooks.",
+            &[("Reason", &error.to_string())],
+        )?;
     }
     let mut restarted = Vec::new();
     for plan in boards {

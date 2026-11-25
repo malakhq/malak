@@ -451,6 +451,8 @@ mod tests {
         )
         .unwrap();
         original.enrol("new-worker", Grant::default()).unwrap();
+        // The startup channel checks can still hold the state lock after drop.
+        original.stop(original.status(None, None).run).unwrap();
         drop(original);
         let latest = StateFolder::acquire(&state).unwrap().inspect().unwrap();
         let published = latest.loaded().head;

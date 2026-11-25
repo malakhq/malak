@@ -31,6 +31,8 @@ pub(super) use reply::{json_message, message_block};
 const CALL_WAIT: Duration = Duration::from_secs(60);
 pub(super) const REPORT_CONNECTION_EXIT: u8 = 75;
 pub(super) const EMPTY_BODY: &str = "message body is empty";
+/// The board's refusal of an `ack` for a position no `read` has given the reader.
+pub(super) const NOT_GIVEN: &str = "position was not given to this reader";
 
 pub(super) fn report_connection_failed(error: &Error) -> bool {
     link_failed(error)

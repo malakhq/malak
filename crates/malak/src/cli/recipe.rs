@@ -27,6 +27,8 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
+mod quiet;
+
 const CHECK_BOARD: &str = "__check-board";
 const BOARD_CONFIG: &str = "__board-config";
 const BOARD_NAME: &str = "__board-name";
@@ -189,8 +191,10 @@ const SUPPORT: &[Script] = &[
     script!("board.sh"),
     script!("board_data.py"),
     script!("codex_notice.py"),
+    script!("delegation.py"),
     script!("demo.py"),
     script!("demo_board.py"),
+    script!("hook_format.py"),
     script!("lead_status.py"),
     script!("lead_turn_end.py"),
     script!("malak-skill.md"),
@@ -363,7 +367,43 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
                 names.join(", ")
             ))
         })?;
-    launch(name, description, script, arguments, config.as_deref()).map_err(io_error)
+    if *name == "observe" && arguments.first().is_some_and(|first| first == "--reminder") {
+        return Ok(observe_reminder(
+            name,
+            description,
+            script,
+            arguments,
+            config.as_deref(),
+        ));
+    }
+    launch(
+        name,
+        description,
+        script,
+        arguments,
+        config.as_deref(),
+        None,
+    )
+    .map_err(io_error)
+}
+
+/// The command Malak installs for every Claude Code and Codex hook event.
+///
+/// Both tools read exit code 2 as "block this call", so nothing here may fail
+/// loudly: an event with nothing to say answers before the recipe is unpacked,
+/// and any failure of the recipe or the board ends quietly with success.
+fn observe_reminder(
+    name: &str,
+    description: &str,
+    script: &Script,
+    arguments: &[OsString],
+    config: Option<&Path>,
+) -> ExitCode {
+    let mut input = Vec::new();
+    if io::stdin().lock().read_to_end(&mut input).is_ok() && !quiet::nothing_to_say(&input) {
+        let _ = launch(name, description, script, arguments, config, Some(&input));
+    }
+    ExitCode::SUCCESS
 }
 
 fn create_named_board(name: &str) -> Result<PathBuf, Error> {
@@ -404,7 +444,7 @@ fn refresh_agent_integration(root: &Path, dry_run: bool) -> Result<bool, Error> 
     } else {
         REFRESHED_HOOKS
     };
-    match launch(name, description, script, &args, None).map_err(io_error)? {
+    match launch(name, description, script, &args, None, None).map_err(io_error)? {
         status if status == ExitCode::SUCCESS => Ok(false),
         status if status == ExitCode::from(expected) => Ok(true),
         _ => Err(Error::unavailable("the Malak agents recipe failed")),
@@ -421,7 +461,22 @@ pub(super) fn notify_upgrade(root: &Path, notice: &str) -> Result<(), Error> {
         "--notify-open".into(),
         format!("--upgrade-notice={notice}").into(),
     ];
-    if launch(name, description, script, &args, None).map_err(io_error)? != ExitCode::SUCCESS {
+    if launch(name, description, script, &args, None, None).map_err(io_error)? != ExitCode::SUCCESS
+    {
+        return Err(Error::unavailable("the Malak agents recipe failed"));
+    }
+    Ok(())
+}
+
+/// Ask open Codex threads to reread their hooks after an upgrade changed them.
+pub(super) fn reload_codex_hooks(root: &Path) -> Result<(), Error> {
+    if !agents_installed(root)? {
+        return Ok(());
+    }
+    let (name, description, script) = &AGENTS;
+    let args = ["--yes".into(), "--upgrade-reload".into()];
+    if launch(name, description, script, &args, None, None).map_err(io_error)? != ExitCode::SUCCESS
+    {
         return Err(Error::unavailable("the Malak agents recipe failed"));
     }
     Ok(())
@@ -436,7 +491,7 @@ pub(super) fn remove_agents(home: &Path, dry_run: bool) -> Result<(), Error> {
     if dry_run {
         args.push("--dry-run".into());
     }
-    let status = launch(name, description, script, &args, None).map_err(io_error)?;
+    let status = launch(name, description, script, &args, None, None).map_err(io_error)?;
     if status != ExitCode::SUCCESS {
         return Err(Error::unavailable(
             "could not remove the Malak agent integration",
@@ -486,6 +541,9 @@ fn launch(
     script: &Script,
     arguments: &[OsString],
     config: Option<&Path>,
+    // A hook payload already read from standard input. The recipe gets it as its input
+    // and its error output is dropped.
+    hook_input: Option<&[u8]>,
 ) -> io::Result<ExitCode> {
     let signals = RecipeSignals::register()?;
     let mut bundle = TemporaryDirectory::new(BUNDLE_TEMP_PREFIX)?;
@@ -559,7 +617,22 @@ fn launch(
             None => return Ok(ExitCode::SUCCESS),
         }
     } else {
-        signals.wait(&mut command.spawn()?, false)?
+        if hook_input.is_some() {
+            command.stdin(Stdio::piped()).stderr(Stdio::null());
+        }
+        let mut child = command.spawn()?;
+        let feeder = hook_input
+            .zip(child.stdin.take())
+            .map(|(input, mut stdin)| {
+                let input = input.to_vec();
+                // A recipe that exits early leaves a broken pipe, which is not an error here.
+                thread::spawn(move || stdin.write_all(&input))
+            });
+        let status = signals.wait(&mut child, false)?;
+        if let Some(feeder) = feeder {
+            let _ = feeder.join();
+        }
+        status
     };
     let code = status
         .code()

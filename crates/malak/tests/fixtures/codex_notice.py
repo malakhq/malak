@@ -38,6 +38,10 @@ while (head := source.read(2)):
             continue
         case "thread/loaded/list":
             result = loaded_threads
+        case "config/batchWrite":
+            with (Path.home() / "reloaded.jsonl").open("a") as log:
+                log.write(json.dumps(msg["params"]) + "\n")
+            result = {}
         case "thread/inject_items":
             with (Path.home() / "injected.jsonl").open("a") as log:
                 log.write(json.dumps(msg["params"]) + "\n")
