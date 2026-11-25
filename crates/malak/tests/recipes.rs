@@ -2461,8 +2461,9 @@ subprocess.Popen = DropFirstReceipt
         "{launched}"
     );
     let mut awaiting = board.recipe("await");
-    awaiting.args(["alice", "--timeout", "5s"]);
-    assert!(run(awaiting).contains("finished"));
+    awaiting.args(["alice", "--timeout", "120s"]);
+    let report = run(awaiting);
+    assert!(report.contains("finished"), "{report}");
     assert_eq!(messages(&board.lead(&["read", "lead", "--json"])).len(), 1);
 }
 

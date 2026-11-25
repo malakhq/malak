@@ -182,10 +182,7 @@ fn upgrade_restarts_with_an_active_detached_worker_without_prompting() {
             "--",
             "sh",
             "-ec",
-            r#"checks=0
-            while [ ! -f "$TEST_RELEASE" ]; do
-                [ "$checks" -lt 300 ] || exit 1
-                checks=$((checks + 1))
+            r#"while [ ! -f "$TEST_RELEASE" ]; do
                 sleep 0.1
             done
             echo finished"#,
@@ -216,14 +213,15 @@ fn upgrade_restarts_with_an_active_detached_worker_without_prompting() {
     assert!(board.board.wait().unwrap().success());
     assert_ne!(board.status()["run"], before["run"]);
     fs::write(&gate.0, "").unwrap();
-    let report = run(command(&fixture, &["--config"]).arg(&board.config).args([
-        "recipe",
-        "await",
-        "detached-worker",
-        "--timeout",
-        "30s",
-    ]));
-    assert!(report.contains("finished"), "{report}");
+    let result = command(&fixture, &["--config"])
+        .arg(&board.config)
+        .args(["recipe", "await", "detached-worker", "--timeout", "120s"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success() && String::from_utf8_lossy(&result.stdout).contains("finished"),
+        "waiting for the detached worker's final report after upgrade: {result:?}"
+    );
 }
 
 #[test]

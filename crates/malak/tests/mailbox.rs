@@ -267,6 +267,69 @@ fn launch_terminal(mut command: Command, rows: u16, columns: u16) -> (Running, T
     (mailbox, TerminalOutput::new(master))
 }
 
+// Ratatui's PTY output is a cell diff. Interpret the cursor positioning and
+// clears so successive assertions see the screen instead of past frames.
+fn render_screen(bytes: &[u8], columns: u16, rows: u16) -> String {
+    let (width, height) = (usize::from(columns), usize::from(rows));
+    let mut cells = vec![vec![' '; width]; height];
+    let text = String::from_utf8_lossy(bytes);
+    let mut chars = text.chars().peekable();
+    let (mut row, mut col) = (0, 0);
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\x1b' if chars.next_if_eq(&'[').is_some() => {
+                let mut params = String::new();
+                for code in chars.by_ref() {
+                    if !('@'..='~').contains(&code) {
+                        params.push(code);
+                        continue;
+                    }
+                    let mut params = params.split(';');
+                    let first = params
+                        .next()
+                        .and_then(|n| n.parse::<usize>().ok())
+                        .unwrap_or(1);
+                    let second = params
+                        .next()
+                        .and_then(|n| n.parse::<usize>().ok())
+                        .unwrap_or(1);
+                    match code {
+                        'H' | 'f' => {
+                            row = first.saturating_sub(1);
+                            col = second.saturating_sub(1);
+                        }
+                        'J' if first == 2 => cells.iter_mut().for_each(|row| row.fill(' ')),
+                        'K' if row < height && col < width => cells[row][col..].fill(' '),
+                        _ => {}
+                    }
+                    break;
+                }
+            }
+            '\x1b' if chars.next_if_eq(&']').is_some() => {
+                for ch in chars.by_ref() {
+                    if ch == '\x07' {
+                        break;
+                    }
+                }
+            }
+            '\r' => col = 0,
+            '\n' => row += 1,
+            ch if !ch.is_control() => {
+                if row < height && col < width {
+                    cells[row][col] = ch;
+                }
+                col += 1;
+            }
+            _ => {}
+        }
+    }
+    cells
+        .into_iter()
+        .map(|line| line.into_iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn launch_board(root: &Path) -> Running {
     let mut board = Running(
         command(root, &["board", "start"])
@@ -2403,29 +2466,41 @@ fn trace_conversation(board: &Board) -> Receipt {
 
 #[test]
 fn trace_in_a_terminal_shows_retained_messages_then_follows_the_conversation() {
+    const COLUMNS: u16 = 120;
+    const ROWS: u16 = 40;
     let board = Board::start();
     let parent = trace_conversation(&board);
     board.enrol("outside-trace");
-    let (mut mailbox, mut terminal) = board.terminal_with(40, 120, &["--trace", TRACE]);
+    let (mut mailbox, mut terminal) = board.terminal_with(ROWS, COLUMNS, &["--trace", TRACE]);
 
     terminal.wait_for("[Trace]");
     terminal.wait_for("Board-generated, inherited by replies, or sender-supplied.");
-    terminal.wait_for("trace task");
-    let retained = terminal_text(&terminal.bytes);
+    terminal.wait_for_output("the retained trace rows", |bytes| {
+        render_screen(bytes, COLUMNS, ROWS).contains("trace task")
+    });
+    let retained: String = render_screen(&terminal.bytes, COLUMNS, ROWS)
+        .split_whitespace()
+        .collect();
     terminal.press(b"\r");
     terminal.wait_for("lines 1–");
     terminal.bytes.clear();
-    terminal.resize(&mailbox, 41, 120);
+    terminal.resize(&mailbox, ROWS + 1, COLUMNS);
     terminal.wait_for(&format!("Reply to #{}", parent.position));
 
     terminal.press(b"g");
+    let trace_screen = |bytes: &[u8]| render_screen(bytes, COLUMNS, ROWS + 1);
+    terminal.wait_for_output("the trace list to reopen in live mode", |bytes| {
+        trace_screen(bytes).contains("trace task")
+    });
     board.run(&["send", "lead", "--trace", "b0", "unrelated live body"]);
     board.run(&["send", "lead", "--trace", TRACE, "TRACE LIVE REPORT"]);
-    terminal.wait_for("TRACE LIVE REPORT");
+    terminal.wait_for_output("the live report to appear in the trace", |bytes| {
+        trace_screen(bytes).contains("TRACE LIVE REPORT")
+    });
+    let screen = trace_screen(&terminal.bytes);
     terminal.press(b"q");
     assert!(mailbox.0.wait().unwrap().success());
 
-    let screen = terminal_text(&terminal.bytes);
     assert_in_order(
         &retained,
         &[
@@ -2435,14 +2510,9 @@ fn trace_in_a_terminal_shows_retained_messages_then_follows_the_conversation() {
             "tracetask",
         ],
     );
-    assert!(
-        screen.contains(&format!("Replyto#{}", parent.position)),
-        "{screen}"
-    );
     assert!(retained.contains("@reporter→@lead·report#1"), "{retained}");
     assert!(!screen.contains("unrelated"), "{screen}");
     assert!(!retained.contains("@outside-trace"), "{retained}");
-    assert!(screen.contains("TRACELIVEREPORT"), "{screen}");
 }
 
 #[test]
