@@ -4,14 +4,14 @@ use std::time::Instant;
 
 struct CopiedBoard {
     config: PathBuf,
-    socket: SocketDir,
+    socket: BoardHome,
 }
 
 impl CopiedBoard {
     fn from(source: &mut Fixture) -> Self {
         stop(source);
 
-        let socket = SocketDir::new().unwrap();
+        let socket = BoardHome::new();
         let config = write_config(socket.path(), "markdown");
         copy_state(&source.socket.path().join("st"), &socket.path().join("st"));
 

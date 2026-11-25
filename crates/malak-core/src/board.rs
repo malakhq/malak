@@ -91,6 +91,8 @@ struct Board {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     local_mechanism: std::sync::OnceLock<Arc<dyn Mechanism>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    upgrade_changelog: std::sync::OnceLock<&'static str>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     stopped: std::sync::atomic::AtomicBool,
     retention_thread: Mutex<Option<std::thread::Thread>>,
 }
@@ -228,6 +230,8 @@ impl Owner {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             local_mechanism: std::sync::OnceLock::new(),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
+            upgrade_changelog: std::sync::OnceLock::new(),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             stopped: std::sync::atomic::AtomicBool::new(false),
             retention_thread: Mutex::new(None),
         });
@@ -238,6 +242,17 @@ impl Owner {
             lead: ParticipantId::lead(),
             board,
         })
+    }
+
+    /// Set the changelog the board quotes in the upgrade notice it posts to the lead.
+    ///
+    /// The program that starts the board supplies the text, so the board names
+    /// no program's commands itself. The first call wins; without one, the
+    /// notice lists no changes.
+    #[doc(hidden)]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub fn set_upgrade_changelog(&self, changelog: &'static str) {
+        let _ = self.board.upgrade_changelog.set(changelog);
     }
 
     /// Issue a participant handle for the lead.
@@ -467,7 +482,8 @@ impl Board {
                 "upgrade notice requires different build IDs",
             ));
         }
-        let body = upgrade_notice::message(previous, installed, upgrade_notice::CHANGELOG, entry);
+        let changelog = self.upgrade_changelog.get().copied().unwrap_or_default();
+        let body = upgrade_notice::message(previous, installed, changelog, entry);
         let id = run.to_string();
         let sender = RecordSender {
             // Enrolments only draw 32-character IDs.

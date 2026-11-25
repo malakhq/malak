@@ -19,11 +19,16 @@ usage() {
             'Pass --board NAME on every board command, including the lead watcher.' \
             'Stay awake in your host loop: once per tick, run' \
             'malak --board NAME mailbox --plain --for lead --next --timeout 60,' \
-            'handle what it prints, acknowledge lead messages, and go idle.' \
-            'In Claude Code use /loop (dynamic) with a tick of 2 to 5 minutes.' \
-            'In the Codex App use an automation that runs the same command.' \
+            'handle what it prints, acknowledge lead messages, and go idle.'
+        # The host-loop lines come from the agent tools' adapters, one argument each.
+        while IFS= read -r line; do
+            set -- "$@" "$line"
+        done <<EOF_LOOP
+$(python3 "$recipes/adapters.py" lead-loop)
+EOF_LOOP
+        set -- "$@" \
             'Without a host loop, run malak --board NAME mailbox --plain --for lead --next' \
-            'in background Bash (Claude Code) or a background command (Codex), and run it again after each output.' \
+            "$(python3 "$recipes/adapters.py" lead-background)" \
             'A person can keep malak --board NAME mailbox --plain --for lead running in a terminal.' \
             'Poll with malak --board NAME read --wait 60 lead questions if needed.' \
             'Read orders in force with malak --board NAME mailbox --orders before acting.' \

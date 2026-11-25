@@ -228,3 +228,10 @@ def notify_open(delivered, save, notice=NOTICE):
     if sent:
         print(f"Notified {sent} open Codex thread(s).")
     return sent
+
+
+# What `recipe agents` says about notifying open sessions.
+HELP = "also notify open local Codex app-server threads"
+QUESTION = " and notify open local Codex threads"
+WOULD_NOTIFY = "Would notify open local Codex threads once."
+NONE_NOTIFIED = "No new Codex threads were notified."

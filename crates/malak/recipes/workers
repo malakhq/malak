@@ -38,6 +38,7 @@ def workers(connection, name):
             state = "adopted"
         else:
             state = "running" if live else "exited"
+        unread = connection.unread(person["id"]) if state == "exited" else None
         yield {
             "name": person["name"],
             "state": state,
@@ -47,8 +48,17 @@ def workers(connection, name):
             "exit_code": None if live else exit_code,
             "inbox": record.id if record.id == "lead" else f"to/{record.id}",
             "enrolment": "revoked" if person["revoked"] else "active",
+            **({"unread": unread} if unread is not None else {}),
+            **({"reissue": reissue(person["name"], state)} if claim and claim["state"] == "ended" else {}),
             **({"claim": claim} if claim is not None else {}),
         }
+
+
+def reissue(name, state):
+    # The board's claim notice names no command; this is where it is named.
+    if state == "adopted":
+        return f"malak recipe adopt {name}"
+    return f"malak recipe worker-start {name} --again"
 
 
 def stamp(ms):
@@ -117,6 +127,10 @@ def main():
                           ("Started", time), ("Inbox", row["inbox"]), ("Enrolment", row["enrolment"])]
             if row["state"] == "exited":
                 fields.append(("Exit code", row["exit_code"]))
+                if "unread" in row:
+                    fields.append(("Unread", row["unread"]))
+            if "reissue" in row:
+                fields.append(("Re-issue", row["reissue"]))
             if claim := row.get("claim"):
                 fields.extend(claim_fields(claim))
             out.details(f"{row['name']} {label}",

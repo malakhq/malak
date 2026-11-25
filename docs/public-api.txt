@@ -1,0 +1,757 @@
+impl AsRef<str> for malak::ChannelName
+impl AsRef<str> for malak::ChannelPattern
+impl AsRef<str> for malak::MessageId
+impl AsRef<str> for malak::ParticipantId
+impl AsRef<str> for malak::ParticipantName
+impl Borrow<str> for malak::ChannelName
+impl Borrow<str> for malak::ChannelPattern
+impl Borrow<str> for malak::MessageId
+impl Borrow<str> for malak::ParticipantId
+impl Borrow<str> for malak::ParticipantName
+impl Clone for malak::Action
+impl Clone for malak::ChannelName
+impl Clone for malak::ChannelPattern
+impl Clone for malak::Claim
+impl Clone for malak::ClaimEvent
+impl Clone for malak::ClaimState
+impl Clone for malak::CreationId
+impl Clone for malak::Durability
+impl Clone for malak::Error
+impl Clone for malak::Grade
+impl Clone for malak::Grant
+impl Clone for malak::GrantRule
+impl Clone for malak::Handle
+impl Clone for malak::Header
+impl Clone for malak::Kind
+impl Clone for malak::LeadSession
+impl Clone for malak::Limits
+impl Clone for malak::Message
+impl Clone for malak::MessageId
+impl Clone for malak::Outcome
+impl Clone for malak::ParticipantId
+impl Clone for malak::ParticipantName
+impl Clone for malak::Position
+impl Clone for malak::ProcessIdentity
+impl Clone for malak::Receipt
+impl Clone for malak::RetentionRule
+impl Clone for malak::SenderShareRule
+impl Clone for malak::SenderTrace
+impl Clone for malak::SessionProcess
+impl Clone for malak::TraceId
+impl Clone for malak::layers::Candidate
+impl Clone for malak::layers::Claimed
+impl Clone for malak::layers::ClaimedSession
+impl Clone for malak::layers::Event
+impl Clone for malak::layers::EventKind
+impl Clone for malak::layers::Interest
+impl Clone for malak::layers::KeptRecord
+impl Clone for malak::layers::Ownership
+impl Clone for malak::layers::Proves
+impl Clone for malak::layers::ReadLimit
+impl Clone for malak::layers::ReadResult
+impl Clone for malak::layers::Received
+impl Clone for malak::layers::Record
+impl Clone for malak::layers::Side
+impl Clone for malak::layers::Source
+impl Clone for malak::layers::StoreInfo
+impl Clone for malak::layers::StoreLocation
+impl Clone for malak::layers::StorePlace
+impl Clone for malak::layers::TransportInfo
+impl Clone for malak::layers::Trimmed
+impl Clone for malak::mechanism::Key
+impl Clone for malak::server::Entrance
+impl Clone for malak::server::StopHandle
+impl Copy for malak::Action
+impl Copy for malak::ClaimState
+impl Copy for malak::CreationId
+impl Copy for malak::Durability
+impl Copy for malak::Grade
+impl Copy for malak::Kind
+impl Copy for malak::Outcome
+impl Copy for malak::Position
+impl Copy for malak::ProcessIdentity
+impl Copy for malak::Receipt
+impl Copy for malak::TraceId
+impl Copy for malak::layers::EventKind
+impl Copy for malak::layers::KeptRecord
+impl Copy for malak::layers::Proves
+impl Copy for malak::layers::ReadLimit
+impl Copy for malak::layers::Received
+impl Copy for malak::layers::Side
+impl Copy for malak::layers::StoreInfo
+impl Copy for malak::layers::TransportInfo
+impl Copy for malak::layers::Trimmed
+impl Copy for malak::mechanism::Key
+impl Copy for malak::server::Entrance
+impl Debug for malak::Action
+impl Debug for malak::BoardStatus
+impl Debug for malak::ChannelName
+impl Debug for malak::ChannelPattern
+impl Debug for malak::ChannelStatus
+impl Debug for malak::Claim
+impl Debug for malak::ClaimEvent
+impl Debug for malak::ClaimState
+impl Debug for malak::CreationId
+impl Debug for malak::Durability
+impl Debug for malak::Error
+impl Debug for malak::GetReply
+impl Debug for malak::Grade
+impl Debug for malak::Grant
+impl Debug for malak::GrantRule
+impl Debug for malak::Header
+impl Debug for malak::Kind
+impl Debug for malak::LeadSession
+impl Debug for malak::Limits
+impl Debug for malak::Message
+impl Debug for malak::MessageId
+impl Debug for malak::Outcome
+impl Debug for malak::ParticipantId
+impl Debug for malak::ParticipantName
+impl Debug for malak::ParticipantStatus
+impl Debug for malak::Position
+impl Debug for malak::ProcessIdentity
+impl Debug for malak::ReadChannel
+impl Debug for malak::ReadReply
+impl Debug for malak::Receipt
+impl Debug for malak::RetentionRule
+impl Debug for malak::SenderShareRule
+impl Debug for malak::SenderTrace
+impl Debug for malak::SessionProcess
+impl Debug for malak::TraceId
+impl Debug for malak::layers::Candidate
+impl Debug for malak::layers::Claimed
+impl Debug for malak::layers::ClaimedSession
+impl Debug for malak::layers::Event
+impl Debug for malak::layers::EventKind
+impl Debug for malak::layers::Interest
+impl Debug for malak::layers::KeptRecord
+impl Debug for malak::layers::Ownership
+impl Debug for malak::layers::Proves
+impl Debug for malak::layers::ReadLimit
+impl Debug for malak::layers::ReadResult
+impl Debug for malak::layers::Received
+impl Debug for malak::layers::Record
+impl Debug for malak::layers::Side
+impl Debug for malak::layers::Source
+impl Debug for malak::layers::StoreInfo
+impl Debug for malak::layers::StoreLocation
+impl Debug for malak::layers::StorePlace
+impl Debug for malak::layers::TransportInfo
+impl Debug for malak::layers::Trimmed
+impl Debug for malak::mechanism::Key
+impl Debug for malak::server::Entrance
+impl Default for malak::Durability
+impl Default for malak::Grant
+impl Default for malak::Kind
+impl Default for malak::Limits
+impl Default for malak::layers::Interest
+impl Default for malak::mechanism::Key
+impl Default for malak::stores::MemoryStore
+impl Default for malak::transport::UnixTransport
+impl Display for malak::ChannelName
+impl Display for malak::ChannelPattern
+impl Display for malak::CreationId
+impl Display for malak::Error
+impl Display for malak::MessageId
+impl Display for malak::ParticipantId
+impl Display for malak::ParticipantName
+impl Display for malak::Position
+impl Drop for malak::layers::Handover
+impl Eq for malak::Action
+impl Eq for malak::ChannelName
+impl Eq for malak::ChannelPattern
+impl Eq for malak::ClaimState
+impl Eq for malak::CreationId
+impl Eq for malak::Durability
+impl Eq for malak::Error
+impl Eq for malak::GetReply
+impl Eq for malak::Grade
+impl Eq for malak::Grant
+impl Eq for malak::GrantRule
+impl Eq for malak::Header
+impl Eq for malak::Kind
+impl Eq for malak::LeadSession
+impl Eq for malak::Message
+impl Eq for malak::MessageId
+impl Eq for malak::Outcome
+impl Eq for malak::ParticipantId
+impl Eq for malak::ParticipantName
+impl Eq for malak::Position
+impl Eq for malak::ProcessIdentity
+impl Eq for malak::Receipt
+impl Eq for malak::RetentionRule
+impl Eq for malak::SenderTrace
+impl Eq for malak::SessionProcess
+impl Eq for malak::TraceId
+impl Eq for malak::layers::ClaimedSession
+impl Eq for malak::layers::EventKind
+impl Eq for malak::layers::Received
+impl Eq for malak::layers::Record
+impl Eq for malak::layers::Side
+impl Eq for malak::layers::Source
+impl Eq for malak::layers::StoreLocation
+impl Eq for malak::layers::StorePlace
+impl Eq for malak::layers::Trimmed
+impl Eq for malak::server::Entrance
+impl Error for malak::Error
+impl FromStr for malak::ChannelName
+impl FromStr for malak::ChannelPattern
+impl FromStr for malak::CreationId
+impl FromStr for malak::Kind
+impl FromStr for malak::MessageId
+impl FromStr for malak::ParticipantId
+impl FromStr for malak::ParticipantName
+impl Hash for malak::ChannelName
+impl Hash for malak::ChannelPattern
+impl Hash for malak::CreationId
+impl Hash for malak::MessageId
+impl Hash for malak::ParticipantId
+impl Hash for malak::ParticipantName
+impl Hash for malak::Position
+impl Hash for malak::layers::Source
+impl Mechanism for malak::mechanism::Key
+impl Ord for malak::ChannelName
+impl Ord for malak::ChannelPattern
+impl Ord for malak::CreationId
+impl Ord for malak::Durability
+impl Ord for malak::Grade
+impl Ord for malak::MessageId
+impl Ord for malak::ParticipantId
+impl Ord for malak::ParticipantName
+impl Ord for malak::Position
+impl PartialEq for malak::Action
+impl PartialEq for malak::ChannelName
+impl PartialEq for malak::ChannelPattern
+impl PartialEq for malak::ClaimState
+impl PartialEq for malak::CreationId
+impl PartialEq for malak::Durability
+impl PartialEq for malak::Error
+impl PartialEq for malak::GetReply
+impl PartialEq for malak::Grade
+impl PartialEq for malak::Grant
+impl PartialEq for malak::GrantRule
+impl PartialEq for malak::Header
+impl PartialEq for malak::Kind
+impl PartialEq for malak::LeadSession
+impl PartialEq for malak::Message
+impl PartialEq for malak::MessageId
+impl PartialEq for malak::Outcome
+impl PartialEq for malak::ParticipantId
+impl PartialEq for malak::ParticipantName
+impl PartialEq for malak::Position
+impl PartialEq for malak::ProcessIdentity
+impl PartialEq for malak::Receipt
+impl PartialEq for malak::RetentionRule
+impl PartialEq for malak::SenderTrace
+impl PartialEq for malak::SessionProcess
+impl PartialEq for malak::TraceId
+impl PartialEq for malak::layers::ClaimedSession
+impl PartialEq for malak::layers::EventKind
+impl PartialEq for malak::layers::Received
+impl PartialEq for malak::layers::Record
+impl PartialEq for malak::layers::Side
+impl PartialEq for malak::layers::Source
+impl PartialEq for malak::layers::StoreLocation
+impl PartialEq for malak::layers::StorePlace
+impl PartialEq for malak::layers::Trimmed
+impl PartialEq for malak::server::Entrance
+impl PartialOrd for malak::ChannelName
+impl PartialOrd for malak::ChannelPattern
+impl PartialOrd for malak::CreationId
+impl PartialOrd for malak::Durability
+impl PartialOrd for malak::Grade
+impl PartialOrd for malak::MessageId
+impl PartialOrd for malak::ParticipantId
+impl PartialOrd for malak::ParticipantName
+impl PartialOrd for malak::Position
+impl Store for malak::stores::MarkdownStore
+impl Store for malak::stores::MemoryStore
+impl Store for malak::stores::SqliteStore
+impl StructuralPartialEq for malak::Action
+impl StructuralPartialEq for malak::ChannelName
+impl StructuralPartialEq for malak::ChannelPattern
+impl StructuralPartialEq for malak::ClaimState
+impl StructuralPartialEq for malak::CreationId
+impl StructuralPartialEq for malak::Durability
+impl StructuralPartialEq for malak::Error
+impl StructuralPartialEq for malak::GetReply
+impl StructuralPartialEq for malak::Grade
+impl StructuralPartialEq for malak::Grant
+impl StructuralPartialEq for malak::GrantRule
+impl StructuralPartialEq for malak::Header
+impl StructuralPartialEq for malak::Kind
+impl StructuralPartialEq for malak::LeadSession
+impl StructuralPartialEq for malak::Message
+impl StructuralPartialEq for malak::MessageId
+impl StructuralPartialEq for malak::Outcome
+impl StructuralPartialEq for malak::ParticipantId
+impl StructuralPartialEq for malak::ParticipantName
+impl StructuralPartialEq for malak::Position
+impl StructuralPartialEq for malak::ProcessIdentity
+impl StructuralPartialEq for malak::Receipt
+impl StructuralPartialEq for malak::RetentionRule
+impl StructuralPartialEq for malak::SenderTrace
+impl StructuralPartialEq for malak::SessionProcess
+impl StructuralPartialEq for malak::TraceId
+impl StructuralPartialEq for malak::layers::ClaimedSession
+impl StructuralPartialEq for malak::layers::EventKind
+impl StructuralPartialEq for malak::layers::Received
+impl StructuralPartialEq for malak::layers::Record
+impl StructuralPartialEq for malak::layers::Side
+impl StructuralPartialEq for malak::layers::Source
+impl StructuralPartialEq for malak::layers::StoreLocation
+impl StructuralPartialEq for malak::layers::StorePlace
+impl StructuralPartialEq for malak::layers::Trimmed
+impl StructuralPartialEq for malak::server::Entrance
+impl Transport for malak::transport::UnixTransport
+impl TryFrom<u64> for malak::Position
+impl<'a> Clone for malak::HeaderValue
+impl<'a> Clone for malak::SendRequest
+impl<'a> Clone for malak::layers::Claim
+impl<'a> Clone for malak::layers::Enrolment
+impl<'a> Clone for malak::layers::Identity
+impl<'a> Clone for malak::layers::Trim
+impl<'a> Copy for malak::HeaderValue
+impl<'a> Copy for malak::SendRequest
+impl<'a> Copy for malak::layers::Claim
+impl<'a> Debug for malak::HeaderValue
+impl<'a> Debug for malak::SendRequest
+impl<'a> Debug for malak::layers::Claim
+impl<'a> Debug for malak::layers::Enrolment
+impl<'a> Debug for malak::layers::Identity
+impl<'a> Debug for malak::layers::Trim
+pub const fn malak::ClaimEvent::at_ms(&self) -> u64
+pub const fn malak::ClaimState::as_str(self) -> &'static str
+pub const fn malak::CreationId::as_bytes(&self) -> &[u8; 16]
+pub const fn malak::CreationId::from_bytes(bytes: [u8; 16]) -> Self
+pub const fn malak::Error::is_limit(&self) -> bool
+pub const fn malak::Error::outcome(&self) -> Outcome
+pub const fn malak::Kind::as_str(self) -> &'static str
+pub const fn malak::Position::get(self) -> u64
+pub const malak::Position::FIRST: Self
+pub const malak::Position::MAX: u64
+pub enum malak::Action
+pub enum malak::ClaimEvent
+pub enum malak::ClaimState
+pub enum malak::Durability
+pub enum malak::GetReply
+pub enum malak::Grade
+pub enum malak::Header
+pub enum malak::HeaderValue<'a>
+pub enum malak::Kind
+pub enum malak::Outcome
+pub enum malak::layers::Claim<'a>
+pub enum malak::layers::Claimed
+pub enum malak::layers::EventKind
+pub enum malak::layers::ReadResult
+pub enum malak::layers::Received
+pub enum malak::layers::Side
+pub enum malak::layers::Source
+pub enum malak::layers::Step
+pub enum malak::layers::StorePlace
+pub enum malak::layers::Trim<'a>
+pub enum malak::layers::Trimmed
+pub enum malak::server::Entrance
+pub field malak::BoardStatus.channels: Vec<ChannelStatus>
+pub field malak::BoardStatus.lead_session: Option<std::sync::Arc<crate::LeadSession>>
+pub field malak::BoardStatus.participants: Vec<ParticipantStatus>
+pub field malak::BoardStatus.pending_repair: Option<String>
+pub field malak::BoardStatus.run: crate::CreationId
+pub field malak::BoardStatus.started_at_ms: u64
+pub field malak::BoardStatus.store: malak_layers::StoreInfo
+pub field malak::ChannelStatus.creation: crate::CreationId
+pub field malak::ChannelStatus.floor: u64
+pub field malak::ChannelStatus.head: u64
+pub field malak::ChannelStatus.name: crate::ChannelName
+pub field malak::ChannelStatus.readers: std::sync::Arc<std::collections::BTreeMap<crate::ParticipantId, u64>>
+pub field malak::ChannelStatus.stopped: bool
+pub field malak::Claim.history: std::collections::VecDeque<ClaimEvent>
+pub field malak::Claim.issuer: malak_layers::ParticipantId
+pub field malak::Claim.last_refused_at_ms: Option<u64>
+pub field malak::Claim.refused: u64
+pub field malak::Claim.session: malak_layers::ClaimedSession
+pub field malak::Claim.state: ClaimState
+pub field malak::LeadSession.agent_session_id: Option<Box<str>>
+pub field malak::LeadSession.process: malak_layers::SessionProcess
+pub field malak::Limits.board_channels: usize
+pub field malak::Limits.board_storage_bytes: u64
+pub field malak::Limits.body_bytes: usize
+pub field malak::Limits.calls_per_minute: usize
+pub field malak::Limits.channel_readers: usize
+pub field malak::Limits.closing_reply_places: usize
+pub field malak::Limits.daily_storage_bytes: u64
+pub field malak::Limits.header_bytes: usize
+pub field malak::Limits.header_entries: usize
+pub field malak::Limits.lead_calls_per_minute: usize
+pub field malak::Limits.lead_storage_percent: u8
+pub field malak::Limits.minimum_free_disk_bytes: u64
+pub field malak::Limits.open_data_requests: usize
+pub field malak::Limits.outgoing_message_bytes: usize
+pub field malak::Limits.participant_channels: usize
+pub field malak::Limits.read_channels: usize
+pub field malak::Limits.read_messages: usize
+pub field malak::Limits.read_reply_bytes: usize
+pub field malak::Limits.read_wait: std::time::Duration
+pub field malak::Limits.reserved_channels: usize
+pub field malak::Limits.retention: Vec<crate::RetentionRule>
+pub field malak::Limits.sender_shares: Vec<crate::SenderShareRule>
+pub field malak::Message.body: bytes::Bytes
+pub field malak::Message.channel: malak_layers::ChannelName
+pub field malak::Message.earlier_session: Option<crate::SessionProcess>
+pub field malak::Message.grade: malak_layers::Grade
+pub field malak::Message.headers: Vec<Header>
+pub field malak::Message.id: malak_layers::MessageId
+pub field malak::Message.kind: Kind
+pub field malak::Message.receipt: Receipt
+pub field malak::Message.sender: malak_layers::ParticipantId
+pub field malak::Message.sender_name: malak_layers::ParticipantName
+pub field malak::Message.sender_trace: Option<crate::SenderTrace>
+pub field malak::Message.sent_at: std::time::SystemTime
+pub field malak::ParticipantStatus.claim: Option<std::sync::Arc<crate::Claim>>
+pub field malak::ParticipantStatus.connections: usize
+pub field malak::ParticipantStatus.enrolled_at_ms: Option<u64>
+pub field malak::ParticipantStatus.fingerprint: Option<String>
+pub field malak::ParticipantStatus.grant: crate::Grant
+pub field malak::ParticipantStatus.grant_changed_at_ms: Option<u64>
+pub field malak::ParticipantStatus.id: crate::ParticipantId
+pub field malak::ParticipantStatus.name: crate::ParticipantName
+pub field malak::ParticipantStatus.revoked: bool
+pub field malak::ParticipantStatus.revoked_at_ms: Option<u64>
+pub field malak::ProcessIdentity.pid: u32
+pub field malak::ProcessIdentity.start_time: u64
+pub field malak::ReadChannel.channel: crate::ChannelName
+pub field malak::ReadChannel.creation: Option<crate::CreationId>
+pub field malak::ReadChannel.trimmed_before: Option<u64>
+pub field malak::ReadChannel.voids: u64
+pub field malak::ReadReply.channels: Vec<ReadChannel>
+pub field malak::ReadReply.held_back: bool
+pub field malak::ReadReply.messages: Vec<crate::Message>
+pub field malak::Receipt.creation: malak_layers::CreationId
+pub field malak::Receipt.duplicate: bool
+pub field malak::Receipt.durability: malak_layers::Durability
+pub field malak::Receipt.position: malak_layers::Position
+pub field malak::Receipt.trace: Option<TraceId>
+pub field malak::RetentionRule.age: std::time::Duration
+pub field malak::RetentionRule.messages: usize
+pub field malak::RetentionRule.pattern: crate::ChannelPattern
+pub field malak::SendRequest.body: &'a [u8]
+pub field malak::SendRequest.channel: &'a str
+pub field malak::SendRequest.headers: &'a [(&'a str, HeaderValue<'a>)]
+pub field malak::SendRequest.id: &'a str
+pub field malak::SendRequest.kind: Kind
+pub field malak::SendRequest.minimum_durability: Option<malak_layers::Durability>
+pub field malak::SenderShareRule.channel_messages: usize
+pub field malak::SenderShareRule.pattern: crate::ChannelPattern
+pub field malak::SenderShareRule.reader: Option<crate::ParticipantId>
+pub field malak::SenderShareRule.sender_bytes: u64
+pub field malak::SenderShareRule.sender_messages: usize
+pub field malak::SenderTrace.cwd: Option<Box<str>>
+pub field malak::SenderTrace.pid: Option<u32>
+pub field malak::SenderTrace.program: Option<Box<str>>
+pub field malak::SenderTrace.session: Option<SessionProcess>
+pub field malak::SenderTrace.transport: Box<str>
+pub field malak::SessionProcess.identity: ProcessIdentity
+pub field malak::SessionProcess.program: Box<str>
+pub field malak::layers::Candidate.encoded: bytes::Bytes
+pub field malak::layers::Candidate.record: Record
+pub field malak::layers::ClaimedSession.folder: Option<Box<str>>
+pub field malak::layers::ClaimedSession.process: SessionProcess
+pub field malak::layers::Enrolment.account: Option<u32>
+pub field malak::layers::Enrolment.allowed_place: Option<&'a crate::Source>
+pub field malak::layers::Event.at: std::time::SystemTime
+pub field malak::layers::Event.body: Option<bytes::Bytes>
+pub field malak::layers::Event.channel: Option<crate::ChannelName>
+pub field malak::layers::Event.count: u64
+pub field malak::layers::Event.earlier_session: Option<crate::SessionProcess>
+pub field malak::layers::Event.kind: EventKind
+pub field malak::layers::Event.message_kind: Option<&'static str>
+pub field malak::layers::Event.operation: Option<&'static str>
+pub field malak::layers::Event.outcome: Option<crate::Outcome>
+pub field malak::layers::Event.owner_target: Option<String>
+pub field malak::layers::Event.participant: Option<crate::ParticipantId>
+pub field malak::layers::Event.reason: Option<String>
+pub field malak::layers::Event.record: Option<(crate::CreationId, crate::Position)>
+pub field malak::layers::Event.sender_trace: Option<crate::SenderTrace>
+pub field malak::layers::Handover.contents: Vec<u8>
+pub field malak::layers::Handover.private_key: Option<[u8; 32]>
+pub field malak::layers::Handover.public_key: Option<[u8; 32]>
+pub field malak::layers::Handover.record: Option<Vec<u8>>
+pub field malak::layers::Identity.ends: Option<std::time::SystemTime>
+pub field malak::layers::Identity.grade: crate::Grade
+pub field malak::layers::Identity.participant: &'a crate::ParticipantId
+pub field malak::layers::Interest.channel: Option<crate::ChannelPattern>
+pub field malak::layers::Interest.events: Vec<EventKind>
+pub field malak::layers::Interest.include_bodies: bool
+pub field malak::layers::KeptRecord.digest: [u8; 32]
+pub field malak::layers::KeptRecord.position: crate::Position
+pub field malak::layers::Link.io: T
+pub field malak::layers::Link.process_id: Option<u32>
+pub field malak::layers::Link.sender: crate::SenderOrigin
+pub field malak::layers::Link.source: Option<Source>
+pub field malak::layers::Ownership.generation: u64
+pub field malak::layers::Ownership.has_records: bool
+pub field malak::layers::Ownership.location: Option<StoreLocation>
+pub field malak::layers::Ownership.store_id: [u8; 16]
+pub field malak::layers::Proves.has_veto: bool
+pub field malak::layers::Proves.highest_grade: crate::Grade
+pub field malak::layers::Proves.key_at_enrolment: bool
+pub field malak::layers::ReadLimit.before: Option<crate::Position>
+pub field malak::layers::ReadLimit.records: usize
+pub field malak::layers::Record.data: bytes::Bytes
+pub field malak::layers::Record.position: crate::Position
+pub field malak::layers::SenderPeer.ancestry: Vec<ProcessIdentity>
+pub field malak::layers::SenderPeer.trace: SenderTrace
+pub field malak::layers::Session.binding: &'a [u8; 32]
+pub field malak::layers::Session.claimed: &'a crate::ParticipantId
+pub field malak::layers::Session.handover: Option<&'a [u8]>
+pub field malak::layers::Session.public_key: &'a [u8; 32]
+pub field malak::layers::Session.record: Option<&'a [u8]>
+pub field malak::layers::Session.side: Side
+pub field malak::layers::Session.source: Option<&'a crate::Source>
+pub field malak::layers::StoreInfo.durability: crate::Durability
+pub field malak::layers::StoreInfo.max_record_bytes: usize
+pub field malak::layers::StoreInfo.slow_writes: bool
+pub field malak::layers::StoreLocation.filesystem_id: Vec<u8>
+pub field malak::layers::StoreLocation.folder_number: u64
+pub field malak::layers::TransportInfo.authenticates_ends: bool
+pub field malak::layers::TransportInfo.distinguishes_sources: bool
+pub field malak::server::LocalStartup.general_address: String
+pub field malak::server::LocalStartup.lead_address: String
+pub field malak::server::LocalStartup.lead_handover: std::path::PathBuf
+pub field malak::server::LocalStartup.mechanism_name: String
+pub field malak::server::LocalStartup.owner_address: String
+pub fn malak::ChannelName::as_str(&self) -> &str
+pub fn malak::ChannelPattern::as_str(&self) -> &str
+pub fn malak::ChannelPattern::matches(&self, channel: &ChannelName) -> bool
+pub fn malak::Error::at_limit(self) -> Self
+pub fn malak::Error::not_supported(reason: impl Into<Cow<'static, str>>) -> Self
+pub fn malak::Error::refused(reason: impl Into<Cow<'static, str>>) -> Self
+pub fn malak::Error::unavailable(reason: impl Into<Cow<'static, str>>) -> Self
+pub fn malak::Grant::allow(&mut self, pattern: ChannelPattern, actions: impl IntoIterator<Item = Action>)
+pub fn malak::Grant::covers(&self, action: Action, channel: &ChannelName) -> bool
+pub fn malak::Grant::ends(&self) -> Option<SystemTime>
+pub fn malak::Grant::expired_at(&self, now: SystemTime) -> bool
+pub fn malak::Grant::rules(&self) -> &[GrantRule]
+pub fn malak::Grant::set_end(&mut self, ends: Option<SystemTime>)
+pub fn malak::GrantRule::actions(&self) -> impl Iterator<Item = Action> + '_
+pub fn malak::GrantRule::pattern(&self) -> &ChannelPattern
+pub fn malak::Handle::ack(&self, channel: &str, creation: CreationId, position: u64) -> Result<(), Error>
+pub fn malak::Handle::get(&self, channel: &str, position: u64) -> Result<GetReply, Error>
+pub fn malak::Handle::id(&self) -> &ParticipantId
+pub fn malak::Handle::read(&self, channels: &[&str], max_messages: usize, wait: Duration) -> Result<ReadReply, Error>
+pub fn malak::Handle::send(&self, request: SendRequest<'_>) -> Result<Receipt, Error>
+pub fn malak::Header::key(&self) -> &str
+pub fn malak::Limits::limit_inbox(&mut self, pattern: ChannelPattern, max_messages: usize, max_per_sender: Option<usize>) -> Result<(), Error>
+pub fn malak::Limits::set_default_inbox_limit(&mut self, max_messages: usize, max_per_sender: Option<usize>) -> Result<(), Error>
+pub fn malak::Limits::validate(&self) -> Result<(), Error>
+pub fn malak::MessageId::as_str(&self) -> &str
+pub fn malak::Owner::create_channel(&self, name: &str) -> Result<(CreationId, bool), Error>
+pub fn malak::Owner::create_durable(store: impl Store + 'static, limits: Limits, state: impl AsRef<Path>) -> Result<Self, Error>
+pub fn malak::Owner::enrol(&self, name: &str, grant: Grant) -> Result<Handle, Error>
+pub fn malak::Owner::handle(&self, id: &ParticipantId) -> Result<Handle, Error>
+pub fn malak::Owner::in_memory(store: impl Store + 'static, limits: Limits) -> Result<Self, Error>
+pub fn malak::Owner::lead(&self) -> Handle
+pub fn malak::Owner::remove_channel(&self, name: &str, creation: CreationId) -> Result<(bool, Option<CreationId>), Error>
+pub fn malak::Owner::replace_grant(&self, id: &ParticipantId, grant: Grant) -> Result<(), Error>
+pub fn malak::Owner::restart_durable(store: impl Store + 'static, limits: Limits, state: impl AsRef<Path>) -> Result<Self, Error>
+pub fn malak::Owner::revoke(&self, id: &ParticipantId) -> Result<(), Error>
+pub fn malak::Owner::status(&self, participant: Option<&ParticipantId>, channel: Option<&ChannelName>) -> BoardStatus
+pub fn malak::Owner::stop(&self, run: CreationId) -> Result<(), Error>
+pub fn malak::Owner::trim(&self, channel: &str, creation: CreationId, before: u64) -> Result<u64, Error>
+pub fn malak::ParticipantId::as_str(&self) -> &str
+pub fn malak::ParticipantId::inbox(&self) -> ChannelName
+pub fn malak::ParticipantId::is_lead(&self) -> bool
+pub fn malak::ParticipantId::lead() -> Self
+pub fn malak::ParticipantName::as_str(&self) -> &str
+pub fn malak::SendRequest::note(channel: &'a str, id: &'a str, body: &'a [u8]) -> Self
+pub fn malak::SenderTrace::transport(kind: &str) -> Self
+pub fn malak::TraceId::as_str(&self) -> &str
+pub fn malak::client::Client::ack(&mut self, channel: &str, creation: CreationId, position: u64) -> Result<(), Error>
+pub fn malak::client::Client::connect(transport: Arc<T>, path: impl AsRef<Path>, mechanism: Option<Arc<dyn Mechanism>>) -> Result<Self, Error>
+pub fn malak::client::Client::get(&mut self, channel: &str, position: u64) -> Result<GetReply, Error>
+pub fn malak::client::Client::read(&mut self, channels: &[&str], max: usize, wait: Duration) -> Result<ReadReply, Error>
+pub fn malak::client::Client::send(&mut self, request: SendRequest<'_>) -> Result<Receipt, Error>
+pub fn malak::create_durable(state: impl AsRef<std::path::Path>, sync: bool) -> Result<Owner, Error>
+pub fn malak::in_memory() -> Result<Owner, Error>
+pub fn malak::layers::Event::new(kind: EventKind) -> Self
+pub fn malak::layers::SenderOrigin::deferred(lookup: impl Fn + Send + Sync + 'static) -> Self
+pub fn malak::layers::SenderOrigin::observe(&self) -> &Arc<SenderPeer>
+pub fn malak::layers::SenderOrigin::transport(kind: &str) -> Self
+pub fn malak::layers::SenderPeer::transport(kind: &str) -> Self
+pub fn malak::restart_durable(state: impl AsRef<std::path::Path>, sync: bool) -> Result<Owner, Error>
+pub fn malak::server::Server::create(store: impl Store + 'static, limits: Limits, state: impl AsRef<Path>, startup: LocalStartup, mechanism: Arc<dyn Mechanism>, lead_uid: u32) -> Result<(Owner, Self), Error>
+pub fn malak::server::Server::listen<T>(&self, entrance: Entrance, transport: Arc<T>, address: String, capacity: usize) -> Result<(), Error> where T: Transport + 'static, <T>::Connection: 'static
+pub fn malak::server::Server::ready(&self)
+pub fn malak::server::Server::run(self) -> Result<(), Error>
+pub fn malak::server::Server::stop_handle(&self) -> StopHandle
+pub fn malak::server::StopHandle::stop(&self)
+pub fn malak::stores::MarkdownStore::manages_file(name: &str) -> bool
+pub fn malak::stores::MarkdownStore::new(path: impl Into<PathBuf>, sync_writes: bool) -> Self
+pub fn malak::stores::MarkdownStore::with_place_socket(self, socket: impl Into<PathBuf>) -> Self
+pub fn malak::stores::SqliteStore::manages_file(name: &str) -> bool
+pub fn malak::stores::SqliteStore::new(directory: impl Into<PathBuf>) -> Self
+pub fn malak::transport::UnixTransport::bind(address: &str) -> Result<Self, Error>
+pub mod malak::client
+pub mod malak::layers
+pub mod malak::mechanism
+pub mod malak::server
+pub mod malak::stores
+pub mod malak::transport
+pub struct malak::BoardStatus
+pub struct malak::ChannelName(..)
+pub struct malak::ChannelPattern(..)
+pub struct malak::ChannelStatus
+pub struct malak::Claim
+pub struct malak::CreationId(..)
+pub struct malak::Error
+pub struct malak::Grant
+pub struct malak::GrantRule
+pub struct malak::Handle
+pub struct malak::LeadSession
+pub struct malak::Limits
+pub struct malak::Message
+pub struct malak::MessageId(..)
+pub struct malak::Owner
+pub struct malak::ParticipantId(..)
+pub struct malak::ParticipantName(..)
+pub struct malak::ParticipantStatus
+pub struct malak::Position(..)
+pub struct malak::ProcessIdentity
+pub struct malak::ReadChannel
+pub struct malak::ReadReply
+pub struct malak::Receipt
+pub struct malak::RetentionRule
+pub struct malak::SendRequest<'a>
+pub struct malak::SenderShareRule
+pub struct malak::SenderTrace
+pub struct malak::SessionProcess
+pub struct malak::TraceId
+pub struct malak::client::Client<T: Transport>
+pub struct malak::layers::Candidate
+pub struct malak::layers::ClaimedSession
+pub struct malak::layers::Enrolment<'a>
+pub struct malak::layers::Event
+pub struct malak::layers::Handover
+pub struct malak::layers::Identity<'a>
+pub struct malak::layers::Interest
+pub struct malak::layers::KeptRecord
+pub struct malak::layers::Link<T>
+pub struct malak::layers::Ownership
+pub struct malak::layers::Proves
+pub struct malak::layers::ReadLimit
+pub struct malak::layers::Record
+pub struct malak::layers::SenderOrigin
+pub struct malak::layers::SenderPeer
+pub struct malak::layers::Session<'a>
+pub struct malak::layers::StoreInfo
+pub struct malak::layers::StoreLocation
+pub struct malak::layers::TransportInfo
+pub struct malak::mechanism::Key
+pub struct malak::server::LocalStartup
+pub struct malak::server::Server
+pub struct malak::server::StopHandle(..)
+pub struct malak::stores::MarkdownStore
+pub struct malak::stores::MemoryStore
+pub struct malak::stores::SqliteStore
+pub struct malak::transport::UnixTransport
+pub trait fn malak::layers::Mechanism::allow(&self, who: &Identity<'_>, action: Action, channel: &ChannelName) -> Result<bool, Error>
+pub trait fn malak::layers::Mechanism::describe(&self) -> Proves
+pub trait fn malak::layers::Mechanism::enrol(&self, who: &ParticipantId, hints: &Enrolment<'_>) -> Result<Handover, Error>
+pub trait fn malak::layers::Mechanism::revoke(&self, who: &ParticipantId) -> Result<(), Error>
+pub trait fn malak::layers::Mechanism::step(&self, session: &Session<'_>, incoming: &[u8]) -> Result<Step, Error>
+pub trait fn malak::layers::Observer::describe(&self) -> Interest
+pub trait fn malak::layers::Observer::flush(&mut self, deadline: Duration)
+pub trait fn malak::layers::Observer::on_event(&mut self, event: &Event)
+pub trait fn malak::layers::Store::append(&self, generation: u64, channel: &str, records: &[Record]) -> Result<(), Error>
+pub trait fn malak::layers::Store::claim(&self, mode: Claim<'_>) -> Result<Claimed, Error>
+pub trait fn malak::layers::Store::describe(&self) -> StoreInfo
+pub trait fn malak::layers::Store::read(&self, channel: &str, from: Position, limit: ReadLimit) -> Result<ReadResult, Error>
+pub trait fn malak::layers::Store::trim(&self, generation: u64, channel: &str, trim: Trim<'_>) -> Result<Trimmed, Error>
+pub trait fn malak::layers::Transport::accept(&self, address: &str) -> Result<Link<Self::Connection>, Error>
+pub trait fn malak::layers::Transport::describe(&self) -> TransportInfo
+pub trait fn malak::layers::Transport::dial(&self, address: &str) -> Result<Link<Self::Connection>, Error>
+pub trait fn malak::layers::Transport::receive(&self, link: &Self::Connection, output: &mut [u8]) -> Result<Received, Error>
+pub trait fn malak::layers::Transport::send(&self, link: &Self::Connection, bytes: &[u8]) -> Result<usize, Error>
+pub trait malak::layers::Mechanism: Send + Sync
+pub trait malak::layers::Observer: Send
+pub trait malak::layers::Store: Send + Sync
+pub trait malak::layers::Transport: Send + Sync
+pub trait type malak::layers::Transport::Connection
+pub variant malak::Action::Ack
+pub variant malak::Action::Create
+pub variant malak::Action::Get
+pub variant malak::Action::Read
+pub variant malak::Action::Send
+pub variant malak::ClaimEvent::Ended { at_ms: u64 }
+pub variant malak::ClaimEvent::Issued { at_ms: u64, session: malak_layers::ClaimedSession, issuer: malak_layers::ParticipantId }
+pub variant malak::ClaimEvent::Refused { at_ms: u64, peer: malak_layers::SenderTrace }
+pub variant malak::ClaimEvent::Released { at_ms: u64 }
+pub variant malak::ClaimState::Bound
+pub variant malak::ClaimState::Ended
+pub variant malak::ClaimState::Released
+pub variant malak::Durability::Memory
+pub variant malak::Durability::Restart
+pub variant malak::Durability::Synced
+pub variant malak::GetReply::Absent
+pub variant malak::GetReply::Message(crate::Message)
+pub variant malak::GetReply::NeverWritten { creation: crate::CreationId }
+pub variant malak::GetReply::Trimmed { creation: crate::CreationId, before: u64 }
+pub variant malak::GetReply::Void { creation: crate::CreationId }
+pub variant malak::Grade::LinkOnly
+pub variant malak::Grade::Proven
+pub variant malak::Header::ContentType(Box<str>)
+pub variant malak::Header::Extension { key: Box<str>, value: Box<str> }
+pub variant malak::Header::ReplyTo { channel: malak_layers::ChannelName, creation: malak_layers::CreationId, position: malak_layers::Position }
+pub variant malak::Header::Trace(Box<str>)
+pub variant malak::HeaderValue::ReplyTo { channel: &'a str, creation: malak_layers::CreationId, position: u64 }
+pub variant malak::HeaderValue::Text(&'a str)
+pub variant malak::Kind::Note
+pub variant malak::Kind::Report
+pub variant malak::Kind::Task
+pub variant malak::Outcome::Done
+pub variant malak::Outcome::NotSupported
+pub variant malak::Outcome::Refused
+pub variant malak::Outcome::Unavailable
+pub variant malak::layers::Claim::Release { generation: u64 }
+pub variant malak::layers::Claim::Repair
+pub variant malak::layers::Claim::Settle { generation: u64, channel: &'a str }
+pub variant malak::layers::Claim::Take
+pub variant malak::layers::Claimed::Done
+pub variant malak::layers::Claimed::Repair { ownership: Ownership, place: StorePlace, channels: Vec<String> }
+pub variant malak::layers::Claimed::Taken(Ownership)
+pub variant malak::layers::EventKind::Acked
+pub variant malak::layers::EventKind::Connected
+pub variant malak::layers::EventKind::Denied
+pub variant malak::layers::EventKind::Disconnected
+pub variant malak::layers::EventKind::LimitHit
+pub variant malak::layers::EventKind::Owner
+pub variant malak::layers::EventKind::Read
+pub variant malak::layers::EventKind::Skipped
+pub variant malak::layers::EventKind::StoreDamaged
+pub variant malak::layers::EventKind::Stored
+pub variant malak::layers::EventKind::TailCut
+pub variant malak::layers::EventKind::TailTampered
+pub variant malak::layers::EventKind::Trimmed
+pub variant malak::layers::ReadResult::Records { records: Vec<Record>, unparseable: bool }
+pub variant malak::layers::ReadResult::Repair { candidates: Vec<Candidate>, bytes: u64, digest: [u8; 32], exact: bool }
+pub variant malak::layers::Received::Bytes(std::num::NonZeroUsize)
+pub variant malak::layers::Received::Closed
+pub variant malak::layers::Side::Board
+pub variant malak::layers::Side::Participant
+pub variant malak::layers::Source::LocalUser(u32)
+pub variant malak::layers::Source::Other(String)
+pub variant malak::layers::Source::VirtualMachine(crate::CreationId)
+pub variant malak::layers::Step::Denied
+pub variant malak::layers::Step::More(Vec<u8>)
+pub variant malak::layers::Step::Proven { ends: Option<std::time::SystemTime>, register_key: bool, record: Option<Vec<u8>> }
+pub variant malak::layers::StorePlace::Established(Vec<u8>)
+pub variant malak::layers::StorePlace::NotEstablished
+pub variant malak::layers::StorePlace::OwnerConfirmation
+pub variant malak::layers::Trim::Keep(std::ops::Range<u64>)
+pub variant malak::layers::Trim::Repair { plan: [u8; 32], input: [u8; 32], keep: &'a [KeptRecord] }
+pub variant malak::layers::Trimmed::AlreadyRewritten
+pub variant malak::layers::Trimmed::ChangedInput
+pub variant malak::layers::Trimmed::Done
+pub variant malak::server::Entrance::General
+pub variant malak::server::Entrance::Lead
+pub variant malak::server::Entrance::Owner

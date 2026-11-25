@@ -13,6 +13,7 @@ from typing import NamedTuple
 
 sys.dont_write_bytecode = True
 
+import adapters
 import board_data as board
 from recipe_board import board_config, board_name, board_selector, selected_config
 import recipe_output as out
@@ -39,7 +40,7 @@ def running_sessions():
         if len(fields) != 9 or fields[0] != uid or fields[2].startswith("Z"):
             continue
         program = Path(fields[8]).name
-        if program in {"claude", "codex"}:
+        if program in adapters.programs():
             sessions.append(Session(int(fields[1]), program, " ".join(fields[3:8])))
     return sorted(sessions)
 
@@ -55,7 +56,7 @@ def session_info(session):
 
 def pick_session(sessions, folders):
     if not sessions:
-        raise board.RecipeError("no running Claude Code or Codex sessions found")
+        raise board.RecipeError(f"no running {adapters.names()} sessions found")
     print("Running agent sessions", file=sys.stderr)
     print("   PID  Program  Started  Folder", file=sys.stderr)
     for number, session in enumerate(sessions, 1):
@@ -100,7 +101,7 @@ def arguments():
     parser = out.ArgumentParser(
         prog="malak recipe adopt", allow_abbrev=False,
         usage="%(prog)s NAME [--session PID] [--grant PATTERN:ACTIONS] [--board NAME | --config PATH]",
-        description="Bring a running Claude Code or Codex session onto the board.",
+        description=f"Bring a running {adapters.names()} session onto the board.",
     )
     parser.add_argument("name", metavar="NAME", help="Name for the adopted worker")
     parser.add_argument("--session", type=session_pid, metavar="PID",

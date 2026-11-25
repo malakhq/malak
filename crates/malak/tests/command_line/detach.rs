@@ -5,12 +5,12 @@ use std::os::unix::fs::PermissionsExt;
 
 struct Detached {
     config: PathBuf,
-    socket: SocketDir,
+    socket: BoardHome,
 }
 
 impl Detached {
     fn new() -> Self {
-        let socket = SocketDir::new().unwrap();
+        let socket = BoardHome::new();
         let config = write_config(socket.path(), "markdown");
         Self { config, socket }
     }
@@ -47,12 +47,6 @@ impl Detached {
             .arg(&self.config)
             .output()
             .unwrap()
-    }
-}
-
-impl Drop for Detached {
-    fn drop(&mut self) {
-        let _ = self.stop();
     }
 }
 

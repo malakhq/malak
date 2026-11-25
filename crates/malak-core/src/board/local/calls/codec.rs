@@ -205,7 +205,11 @@ fn message_frame(
             }
             text(out, "creation", &receipt.creation.to_string());
             number(out, "position", receipt.position.get());
-            text(out, "durability", durability_name(receipt.durability));
+            text(
+                out,
+                "durability",
+                crate::message::durability_name(receipt.durability),
+            );
             if lost_before != 0 {
                 number(out, "lost_before", lost_before);
             }
@@ -222,7 +226,11 @@ pub(super) fn sent(rid: u64, receipt: Receipt) -> Result<Bytes, Error> {
         |out| {
             text(out, "creation", &receipt.creation.to_string());
             number(out, "position", receipt.position.get());
-            text(out, "durability", durability_name(receipt.durability));
+            text(
+                out,
+                "durability",
+                crate::message::durability_name(receipt.durability),
+            );
             boolean(out, "duplicate", receipt.duplicate);
             if let Some(trace) = &receipt.trace {
                 text(out, "trace", trace.as_str());
@@ -345,21 +353,8 @@ fn write_header(out: &mut Encoder<Vec<u8>>, header: &Header) {
     }
 }
 
-fn durability_name(value: Durability) -> &'static str {
-    match value {
-        Durability::Memory => "memory",
-        Durability::Restart => "restart",
-        Durability::Synced => "synced",
-    }
-}
-
 fn durability(value: &str) -> Result<Durability, Error> {
-    match value {
-        "memory" => Ok(Durability::Memory),
-        "restart" => Ok(Durability::Restart),
-        "synced" => Ok(Durability::Synced),
-        _ => Err(shape()),
-    }
+    crate::message::parse_durability(value).ok_or_else(shape)
 }
 
 fn build(

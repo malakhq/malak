@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install Malak's project instructions for Codex and Claude Code."""
+"""Install Malak's project instructions for each agent tool."""
 
 import fcntl
 import json
@@ -10,6 +10,7 @@ import sys
 import tempfile
 import tomllib
 
+import adapters
 import recipe_output as out
 from recipe_board import board_config, board_identity, board_name, board_selector, local_board_label, selected_config
 
@@ -17,7 +18,7 @@ from recipe_board import board_config, board_identity, board_name, board_selecto
 BEGIN = b"<!-- malak:begin (managed by malak recipe agents-md; remove with --remove) -->"
 END = b"<!-- malak:end -->"
 CREATED = b"<!-- malak:created-file -->"
-FILENAMES = ("AGENTS.md", "CLAUDE.md")
+FILENAMES = tuple(sorted({a.instruction_file for a in adapters.agents() if a.instruction_file}))
 
 
 def project_board(config, handover):
@@ -160,7 +161,7 @@ def main():
     parser = out.ArgumentParser(
         prog="malak recipe agents-md",
         usage="malak recipe agents-md [--board NAME | --config PATH] [--dir DIR] [--remove]",
-        description="Install or remove a Malak instructions block in AGENTS.md and CLAUDE.md.",
+        description=f"Install or remove a Malak instructions block in {adapters.join_words(FILENAMES, 'and')}.",
         allow_abbrev=False,
     )
     selection = parser.add_mutually_exclusive_group()

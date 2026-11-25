@@ -6,11 +6,11 @@ use terminal::{TerminalOutput, terminal_pair};
 #[path = "upgrade.rs"]
 mod upgrade;
 
-struct Home(SocketDir);
+struct Home(BoardHome);
 
 impl Home {
     fn new() -> Self {
-        Self(SocketDir::new().unwrap())
+        Self(BoardHome::new())
     }
 
     fn path(&self) -> &Path {

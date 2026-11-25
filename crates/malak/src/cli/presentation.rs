@@ -62,6 +62,19 @@ pub(super) struct Message {
     body: Vec<u8>,
 }
 
+/// The command that re-issues the handover of the session an ended-session notice
+/// names. The board's notice names no tool, so this layer supplies the command.
+fn reissue_command(text: &str) -> Option<String> {
+    let name = malak_core::claim_notice::ended_session_name(text)?;
+    Some(if name.as_str() == "lead" {
+        "malak recipe lead-up".to_owned()
+    } else {
+        format!(
+            "malak recipe worker-start {name} --again (launched worker) or malak recipe adopt {name} (adopted worker)"
+        )
+    })
+}
+
 #[derive(Serialize)]
 struct View<'a> {
     #[serde(flatten)]
@@ -70,6 +83,8 @@ struct View<'a> {
     body: String,
     body_encoding: &'static str,
     body_bytes: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reissue: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     fetch: Option<Fetch<'a>>,
 }
@@ -137,6 +152,9 @@ impl Message {
             body,
             body_encoding,
             body_bytes: self.body.len(),
+            reissue: std::str::from_utf8(&self.body)
+                .ok()
+                .and_then(reissue_command),
             fetch: (end < self.body.len()).then_some(Fetch {
                 tool: "get",
                 channel: &self.label.channel,
@@ -227,6 +245,9 @@ pub(super) fn text(
         }
         if let Some(inbox) = reply_inbox(&view.label.channel, &view.label.sender) {
             writeln!(rendered, "Reply inbox {inbox}").unwrap();
+        }
+        if let Some(command) = &view.reissue {
+            writeln!(rendered, "Re-issue {command}").unwrap();
         }
         writeln!(
             rendered,
@@ -344,6 +365,45 @@ mod tests {
             assert_eq!(shown.values[0]["presentation"], expected);
             assert_eq!(shown.values[0]["body"], "Presentation task");
         }
+    }
+
+    fn ended_notice(name: &str) -> Message {
+        let notice = malak_core::claim_notice::ended(&name.parse().unwrap());
+        message("lead", "proven", "note", notice.into_bytes())
+    }
+
+    #[test]
+    fn an_ended_worker_notice_shows_both_ways_to_reissue_its_handover() {
+        let shown = structured(&[ended_notice("builder")], 0, BUDGET).unwrap();
+
+        assert_eq!(
+            shown.values[0]["reissue"],
+            "malak recipe worker-start builder --again (launched worker) or malak recipe adopt builder (adopted worker)"
+        );
+    }
+
+    #[test]
+    fn an_ended_lead_notice_shows_lead_up() {
+        let shown = structured(&[ended_notice("lead")], 0, BUDGET).unwrap();
+
+        assert_eq!(shown.values[0]["reissue"], "malak recipe lead-up");
+    }
+
+    #[test]
+    fn the_text_view_has_a_reissue_line_for_an_ended_notice() {
+        let shown = text(&[ended_notice("builder")], 0, 1, BUDGET).unwrap();
+
+        assert!(shown.values[0].contains("\nRe-issue malak recipe worker-start builder --again"));
+    }
+
+    #[test]
+    fn other_messages_have_no_reissue_command() {
+        let input = message("lead", "proven", "note", b"Please re-issue it.".to_vec());
+
+        let shown = structured(std::slice::from_ref(&input), 0, BUDGET).unwrap();
+
+        assert!(shown.values[0].get("reissue").is_none());
+        assert!(!text(&[input], 0, 1, BUDGET).unwrap().values[0].contains("Re-issue"));
     }
 
     #[test]

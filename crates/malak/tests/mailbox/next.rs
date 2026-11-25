@@ -296,7 +296,7 @@ fn next_returns_a_reason_after_the_board_stays_down() {
     let mut board = Board::start();
     let (mut watcher, lines) = start(&board);
     board.run(&["board", "stop"]);
-    board.process.0.wait().unwrap();
+    board.process.wait().unwrap();
 
     assert_eq!(
         lines.recv_timeout(WATCHDOG),

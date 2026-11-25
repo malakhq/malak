@@ -159,3 +159,187 @@ impl Board {
         }
     }
 }
+
+/// How many inbox messages are listed by name before the rest are only counted.
+const LISTED_UNREAD: usize = 5;
+
+/// What a participant left in its inbox without acknowledging it.
+pub(super) struct Unread {
+    /// How many messages the participant has not acknowledged.
+    pub(super) count: u64,
+    /// The first few, with their positions and senders.
+    pub(super) listed: Vec<(u64, Option<ParticipantName>)>,
+}
+
+impl Board {
+    /// Find the inbox messages a participant has not acknowledged.
+    ///
+    /// A message counts as unread until the reader acknowledges it, whether or
+    /// not a read has already delivered it.
+    pub(super) fn unread(self: &Arc<Self>, id: &ParticipantId) -> Unread {
+        let none = Unread {
+            count: 0,
+            listed: Vec::new(),
+        };
+        let name = id.inbox();
+        let Some(channel) = self.table.check().channels.get(&name).cloned() else {
+            return none;
+        };
+        let (floor, head, _) = channel.status();
+        let acknowledged = channel.activity.readers.load().get(id).copied();
+        let first = acknowledged.map_or(floor, |position| floor.max(position + 1));
+        if first >= head {
+            return none;
+        }
+        let listed = (first..head)
+            .take(LISTED_UNREAD)
+            .map(|position| (position, self.sender_at(&channel, position)))
+            .collect();
+        Unread {
+            count: head - first,
+            listed,
+        }
+    }
+
+    fn sender_at(
+        self: &Arc<Self>,
+        channel: &Arc<Channel>,
+        position: u64,
+    ) -> Option<ParticipantName> {
+        match self.fetch(channel.clone(), crate::Position::try_from(position).ok()?) {
+            Ok((crate::GetReply::Message(message), _)) => Some(message.sender_name),
+            _ => None,
+        }
+    }
+}
+
+impl Unread {
+    /// Words for an exit report, such as `, 2 unread (lead #3, lead #4)`, or
+    /// nothing when the inbox was left empty.
+    pub(super) fn describe(&self) -> String {
+        if self.count == 0 {
+            return String::new();
+        }
+        let mut list = self
+            .listed
+            .iter()
+            .map(|(position, sender)| match sender {
+                Some(sender) => format!("{sender} #{position}"),
+                None => format!("#{position}"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let more = self.count - self.listed.len() as u64;
+        if more > 0 {
+            list.push_str(&format!(", and {more} more"));
+        }
+        format!(", {} unread ({list})", self.count)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Action, Grant, Limits, SendRequest};
+    use malak_store_memory::MemoryStore;
+    use std::time::Duration;
+
+    struct Worker {
+        owner: Owner,
+        handle: crate::Handle,
+    }
+
+    impl Worker {
+        fn new() -> Self {
+            let owner = Owner::in_memory(MemoryStore::default(), Limits::default()).unwrap();
+            let mut grant = Grant::default();
+            grant.allow("**".parse().unwrap(), [Action::Read, Action::Ack]);
+            let handle = owner.enrol("worker", grant).unwrap();
+            Self { owner, handle }
+        }
+
+        fn task(&self, id: &str) -> crate::Receipt {
+            let inbox = self.handle.id().inbox();
+            let request = SendRequest::note(inbox.as_str(), id, b"task");
+            self.owner.lead().send(request).unwrap()
+        }
+
+        fn unread(&self) -> Unread {
+            self.owner.board.unread(self.handle.id())
+        }
+    }
+
+    #[test]
+    fn an_empty_inbox_has_nothing_unread() {
+        let worker = Worker::new();
+
+        assert_eq!(worker.unread().describe(), "");
+    }
+
+    #[test]
+    fn unacknowledged_messages_are_listed_with_sender_and_position() {
+        let worker = Worker::new();
+        let (first, second) = (worker.task("one"), worker.task("two"));
+
+        let unread = worker.unread();
+
+        assert_eq!(unread.count, 2);
+        assert_eq!(
+            unread.describe(),
+            format!(
+                ", 2 unread (lead #{}, lead #{})",
+                first.position, second.position
+            )
+        );
+    }
+
+    #[test]
+    fn a_message_that_was_read_but_not_acknowledged_is_still_unread() {
+        let worker = Worker::new();
+        worker.task("one");
+        let inbox = worker.handle.id().inbox();
+
+        let read = worker
+            .handle
+            .read(&[inbox.as_str()], 10, Duration::ZERO)
+            .unwrap();
+
+        assert_eq!(read.messages.len(), 1);
+        assert_eq!(worker.unread().count, 1);
+    }
+
+    #[test]
+    fn acknowledged_messages_are_not_counted() {
+        let worker = Worker::new();
+        let (first, second) = (worker.task("one"), worker.task("two"));
+        let inbox = worker.handle.id().inbox();
+        worker
+            .handle
+            .read(&[inbox.as_str()], 1, Duration::ZERO)
+            .unwrap();
+        worker
+            .handle
+            .ack(inbox.as_str(), first.creation, first.position.get())
+            .unwrap();
+
+        let unread = worker.unread();
+
+        assert_eq!(
+            unread.describe(),
+            format!(", 1 unread (lead #{})", second.position)
+        );
+    }
+
+    #[test]
+    fn a_long_list_names_the_first_few_and_counts_the_rest() {
+        let worker = Worker::new();
+        for id in ["a", "b", "c", "d", "e", "f", "g"] {
+            worker.task(id);
+        }
+
+        let text = worker.unread().describe();
+
+        assert!(text.starts_with(", 7 unread (lead #"), "{text}");
+        assert!(text.ends_with(", and 2 more)"), "{text}");
+    }
+}
