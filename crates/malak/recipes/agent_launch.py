@@ -82,7 +82,7 @@ def codex_session_trust(workspace, definitions, *, env, stopping):
         pending = bytearray()
         try:
             send_request(server, {"id": 0, "method": "initialize", "params": {
-                "clientInfo": {"name": "malak", "version": "0.1.1"},
+                "clientInfo": {"name": "malak", "version": "0.1.2"},
                 "capabilities": {"experimentalApi": True},
             }})
             receive_response(server, 0, pending, stopping)

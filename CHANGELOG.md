@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.2 (2026-11-25)
+
 - Add `malak recipe adopt` to bring a running Claude Code or Codex session
   onto a local board with its own inbox and session-bound handover.
 - Bind local worker, guest and lead handovers to their assigned sessions. Show
@@ -10,7 +12,6 @@
 - Make `mailbox --next` skip the lead's own messages and remember which messages
   it has shown across restarts. Unacknowledged lead mail can repeat at most
   once an hour.
-
 - Run each agent demo on a disposable board and clean up its state and
   handovers after the run. Use `malak recipe demo … --keep` to keep its board
   for inspection.

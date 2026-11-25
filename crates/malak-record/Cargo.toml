@@ -13,7 +13,7 @@ repository.workspace = true
 [dependencies]
 bytes = "1"
 hmac = { version = "0.13", features = ["zeroize"] }
-malak-layers = { path = "../malak-layers", version = "0.1.1" }
+malak-layers = { path = "../malak-layers", version = "0.1.2" }
 sha2 = { version = "0.11", default-features = false }
 
 [dev-dependencies]

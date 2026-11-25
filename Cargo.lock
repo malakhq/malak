@@ -847,7 +847,7 @@ dependencies = [
 
 [[package]]
 name = "malak"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "criterion",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "malak-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "malak-fs"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "nix",
  "rustix",
@@ -912,7 +912,7 @@ dependencies = [
 
 [[package]]
 name = "malak-journal"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cobs",
  "malak-fs",
@@ -923,7 +923,7 @@ dependencies = [
 
 [[package]]
 name = "malak-layers"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "zeroize",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "malak-mechanism-key"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "malak-layers",
  "malak-proto",
@@ -939,7 +939,7 @@ dependencies = [
 
 [[package]]
 name = "malak-proto"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "criterion",
@@ -951,7 +951,7 @@ dependencies = [
 
 [[package]]
 name = "malak-record"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "criterion",
@@ -962,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "malak-store-markdown"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "data-encoding",
@@ -977,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "malak-store-memory"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "getrandom",
  "malak-layers",
@@ -986,7 +986,7 @@ dependencies = [
 
 [[package]]
 name = "malak-store-sqlite"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "getrandom",
  "malak-fs",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "malak-supervise"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "getrandom",
  "malak-fs",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "malak-testkit"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "malak-fs",
  "malak-layers",
@@ -1017,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "malak-transport-unix"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "getrandom",
  "malak-layers",

@@ -66,7 +66,7 @@ a fresh board and enrol participants again.
 ```json
 {
   "version": 1,
-  "board_version": "0.1.1",
+  "board_version": "0.1.2",
   "run": "00000000000000000000000000000001",
   "started_at_ms": 1795349000000,
   "layers": {"entrance": "local", "mechanism": "key", "store_durability": "synced"},
