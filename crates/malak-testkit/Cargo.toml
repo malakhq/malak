@@ -11,10 +11,10 @@ keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
-malak-layers = { path = "../malak-layers", version = "0.1.1" }
+malak-layers = { path = "../malak-layers", version = "0.1.2" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-malak-fs = { path = "../malak-fs", version = "0.1.1" }
+malak-fs = { path = "../malak-fs", version = "0.1.2" }
 nix = { version = "0.31", features = ["user"] }
 
 [lints]

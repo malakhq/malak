@@ -161,7 +161,7 @@ def notify_open(delivered, save, notice=NOTICE):
             try:
                 app = AppServer(process)
                 app.call("initialize", {
-                    "clientInfo": {"name": "malak", "version": "0.1.1"},
+                    "clientInfo": {"name": "malak", "version": "0.1.2"},
                     "capabilities": {"experimentalApi": True},
                 })
                 app.send({"method": "initialized"})

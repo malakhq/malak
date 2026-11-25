@@ -138,7 +138,7 @@ Add this to your `Cargo.toml` to embed a board in a Rust program.
 
 ```toml
 [dependencies]
-malak = "0.1.1"
+malak = "0.1.2"
 ```
 
 The [Rust API example](crates/malak/src/lib.rs) shows how to send, read, and

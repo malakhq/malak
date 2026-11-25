@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "malak-layers"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "zeroize",
@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "malak-proto"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "minicbor",
@@ -342,7 +342,7 @@ dependencies = [
 
 [[package]]
 name = "malak-record"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "bytes",
  "hmac",

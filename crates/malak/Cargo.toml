@@ -11,19 +11,19 @@ keywords.workspace = true
 repository.workspace = true
 
 [dependencies]
-malak-core = { path = "../malak-core", version = "0.1.1" }
-malak-store-memory = { path = "../malak-store-memory", version = "0.1.1" }
+malak-core = { path = "../malak-core", version = "0.1.2" }
+malak-store-memory = { path = "../malak-store-memory", version = "0.1.2" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
 getrandom = "0.3"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
-malak-fs = { path = "../malak-fs", version = "0.1.1" }
-malak-journal = { path = "../malak-journal", version = "0.1.1" }
-malak-layers = { path = "../malak-layers", version = "0.1.1" }
-malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.1" }
-malak-proto = { path = "../malak-proto", version = "0.1.1" }
-malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.1" }
+malak-fs = { path = "../malak-fs", version = "0.1.2" }
+malak-journal = { path = "../malak-journal", version = "0.1.2" }
+malak-layers = { path = "../malak-layers", version = "0.1.2" }
+malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.2" }
+malak-proto = { path = "../malak-proto", version = "0.1.2" }
+malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.2" }
 minicbor = "2"
 nix = { version = "0.31", features = ["fs", "poll", "resource", "signal", "socket", "user"] }
 rustix = { version = "1.1", features = ["termios"] }
@@ -33,14 +33,14 @@ signal-hook = { version = "0.3", default-features = false }
 sha2 = { version = "0.11", default-features = false }
 time = { version = "0.3", default-features = false, features = ["local-offset"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
-malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.1" }
-malak-store-sqlite = { path = "../malak-store-sqlite", version = "0.1.1" }
+malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.2" }
+malak-store-sqlite = { path = "../malak-store-sqlite", version = "0.1.2" }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
-malak-testkit = { path = "../malak-testkit", version = "0.1.1" }
+malak-testkit = { path = "../malak-testkit", version = "0.1.2" }
 
 [lints]
 workspace = true

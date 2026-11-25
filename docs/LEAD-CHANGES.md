@@ -2,6 +2,9 @@
 
 Add new entries at the top. Start each line with its date and keep existing lines stable so upgrades can find the previous build's place in the list.
 
+- 2026-11-25 · Malak 0.1.2 release.
+- 2026-11-25 · Use `recipe adopt` to bring a running Claude Code or Codex session onto a local board. The mailbox and `recipe workers` show the status of session-bound handovers.
+- 2026-11-25 · Registered guest replies show up in the home lead inbox, watcher and Stop hook. Use `recipe guest --register-home` to register existing guest handovers.
 - 2026-11-24 · The one-shot watcher skips messages you sent and remembers shown messages across runs. It repeats unacknowledged lead mail at most once an hour.
 - 2026-11-24 · A lead about to end its turn with unacknowledged lead messages or unanswered agent questions is handed them once through the Stop hook, to handle and acknowledge first. Run `recipe agents` upgrade to register it; Codex asks you to trust the new `Stop` hook.
 - 2026-11-24 · Stay awake in your host loop: once per tick run `mailbox --plain --for lead --next --timeout 60` (Claude Code `/loop`, a Codex App automation), handle its output and acknowledge lead messages. A tick within 10 minutes counts as watching.
