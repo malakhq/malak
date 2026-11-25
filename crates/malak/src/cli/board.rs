@@ -1,14 +1,13 @@
 use super::config::{Board, io_error, owned_directory, private_directory};
 use super::{board_version, client_transport::ClientTransport, output, owner_commands, user_id};
-use malak::{Error, Owner};
-use malak_core::{LocalClient, LocalEntrances, LocalStartup, OwnerCredential};
+use malak::Error;
+use malak::server::{Entrance, Server};
+use malak_core::{LocalClient, LocalStartup, OwnerCredential};
 use malak_fs::{
     AccountAccess, Directory, check_user_permissions, share_with, trusted_parent,
     trusted_parent_for_account,
 };
-use malak_layers::Transport;
 use malak_mechanism_key::Key;
-use malak_proto::Entrance;
 use malak_transport_unix::UnixTransport;
 use nix::errno::Errno;
 use nix::fcntl::{FcntlArg, OFlag, fcntl};
@@ -24,7 +23,6 @@ use std::os::unix::net::SocketAddr;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -57,7 +55,7 @@ pub(super) struct Wait {
 /// if the existing board is serving. The board's log is
 /// `board.log` in its state folder, and its path is printed.
 pub(super) fn detach(
-    config_path: Option<&Path>,
+    config_path: &Path,
     config: Board,
     lead_handover: Option<PathBuf>,
     lead_account: Option<String>,
@@ -78,10 +76,11 @@ pub(super) fn detach(
         .map_err(|error| Error::refused(format!("log {}: {error}", log.display())))?;
     let shown = output.metadata().map_err(io_error)?.len();
     let mut command = Command::new(std::env::current_exe().map_err(io_error)?);
-    if let Some(path) = config_path {
-        command.arg("--config").arg(path);
-    }
-    command.args(["board", "start"]);
+    // Keep the same configuration even when the caller used the default.
+    command
+        .arg("--config")
+        .arg(config_path)
+        .args(["board", "start"]);
     if let Some(path) = &lead_handover {
         command.arg("--lead-handover").arg(path);
     }
@@ -334,7 +333,7 @@ pub(super) fn start(
     )?;
     step("entrance sockets prepared");
     let lead_handover = lead_handover.unwrap_or_else(|| config.lead_handover());
-    let (board_owner, mut entrances) = Owner::create_local_for_account(
+    let (board_owner, server) = Server::create(
         config.store(),
         limits,
         &config.state,
@@ -348,11 +347,6 @@ pub(super) fn start(
         Arc::new(Key),
         lead_uid,
     )?;
-    entrances.set_session_lookup(
-        malak_transport_unix::session_at,
-        malak_transport_unix::starting_session_at,
-    )?;
-    entrances.set_process_identity(malak_transport_unix::process_identity)?;
     step("store opened");
     for name in STANDARD_CHANNELS {
         board_owner.create_channel(name)?;
@@ -363,15 +357,13 @@ pub(super) fn start(
             .flatten()
             .is_some_and(|dir| super::worker_launch::live_claim(&dir, id).unwrap_or(false))
     };
-    let _ = entrances.refresh_claims(launcher_active);
+    let _ = server.entrances().refresh_claims(launcher_active);
     let _version_record = board_version::record(&owner.directory, board_uid).map_err(io_error)?;
-    let (faults, fault) = mpsc::channel();
-    let ready = Arc::new(AtomicBool::new(false));
-    let _owner_socket = owner.listen(&entrances, &faults, &ready)?;
-    let _lead_socket = lead.listen(&entrances, &faults, &ready)?;
-    let _general_socket = general.listen(&entrances, &faults, &ready)?;
+    let _owner_socket = owner.listen(&server)?;
+    let _lead_socket = lead.listen(&server)?;
+    let _general_socket = general.listen(&server)?;
     step("entrances listening");
-    ready.store(true, Ordering::Release);
+    server.ready();
     step(READY_STEP);
     if io::stdout().is_terminal() {
         ready_screen("Board ready.", "Lead handover", &lead_handover)?;
@@ -381,21 +373,9 @@ pub(super) fn start(
         // The detached launcher may close its pipe when --wait runs out.
         return Err(io_error(error));
     }
-    let mut next_claim_check = std::time::Instant::now() + std::time::Duration::from_secs(1);
-    loop {
-        if std::time::Instant::now() >= next_claim_check {
-            let _ = entrances.refresh_claims(launcher_active);
-            next_claim_check = std::time::Instant::now() + std::time::Duration::from_secs(1);
-        }
-        match fault.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(error) => return Err(error),
-            Err(mpsc::RecvTimeoutError::Timeout) if entrances.stopped() => return Ok(()),
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(Error::unavailable("entrances stopped"));
-            }
-        }
-    }
+    server.run_with(|entrances| {
+        let _ = entrances.refresh_claims(launcher_active);
+    })
 }
 
 fn ready_screen(title: &str, label: &str, path: &Path) -> Result<(), Error> {
@@ -552,12 +532,7 @@ impl Door {
         })
     }
 
-    fn listen(
-        self,
-        entrances: &LocalEntrances,
-        faults: &mpsc::Sender<Error>,
-        ready: &Arc<AtomicBool>,
-    ) -> Result<BoundSocket, Error> {
+    fn listen(self, server: &Server) -> Result<BoundSocket, Error> {
         if self.stale {
             self.directory.remove(SOCKET_FILE).map_err(io_error)?;
         }
@@ -573,50 +548,7 @@ impl Door {
             )
             .map_err(|error| io_error(error.into()))?;
         }
-        let places = Arc::new(AtomicUsize::new(self.capacity));
-        let entrances = entrances.clone();
-        let faults = faults.clone();
-        let ready = ready.clone();
-        let entrance = self.entrance;
-        thread::Builder::new()
-            .name(format!("malak-{entrance:?}"))
-            .spawn(move || {
-                loop {
-                    let link = match transport.accept(&self.address) {
-                        Ok(link) => link,
-                        Err(error) => {
-                            let _ = faults.send(Error::unavailable(format!(
-                                "{entrance:?} entrance listener failed ({error})"
-                            )));
-                            break;
-                        }
-                    };
-                    if !ready.load(Ordering::Acquire) {
-                        continue;
-                    }
-                    let Some(place) = Place::take(&places) else {
-                        continue;
-                    };
-                    let transport = transport.clone();
-                    let entrances = entrances.clone();
-                    let _ = thread::Builder::new().spawn(move || {
-                        let _place = place;
-                        if let Ok(opening) = entrances.open(entrance, transport, link) {
-                            match entrance {
-                                Entrance::Owner => {
-                                    let _ = opening.serve_owner();
-                                }
-                                Entrance::General | Entrance::Lead => {
-                                    if let Ok(participant) = opening.attach_participant() {
-                                        let _ = participant.serve();
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-            })
-            .map_err(io_error)?;
+        server.listen(self.entrance, transport, self.address, self.capacity)?;
         Ok(socket)
     }
 }
@@ -645,25 +577,6 @@ struct BoundSocket(Directory);
 impl Drop for BoundSocket {
     fn drop(&mut self) {
         let _ = self.0.remove(SOCKET_FILE);
-    }
-}
-
-struct Place(Arc<AtomicUsize>);
-
-impl Place {
-    fn take(places: &Arc<AtomicUsize>) -> Option<Self> {
-        places
-            .try_update(Ordering::AcqRel, Ordering::Acquire, |remaining| {
-                remaining.checked_sub(1)
-            })
-            .ok()?;
-        Some(Self(places.clone()))
-    }
-}
-
-impl Drop for Place {
-    fn drop(&mut self) {
-        self.0.fetch_add(1, Ordering::Release);
     }
 }
 

@@ -18,6 +18,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
+import adapters
 import recipe_output as out
 from recipe_board import (
     LEAD_WATCHER_CONSEQUENCE, board_config, board_entries, board_identity, board_name,
@@ -71,7 +72,7 @@ def malak(*args, handover=None, check=True, body=None, timeout=None, session=Non
             env["MALAK_HANDOVER"] = str(handover)
         if session is not None:
             # The CLI records this value as the agent session on a lead send.
-            env["CODEX_SESSION_ID"] = session
+            env[adapters.session_env_names()[0]] = session
     result = subprocess.run(
         malak_command(*args), env=env, stdin=subprocess.DEVNULL if body is None else None,
         input=body, capture_output=True, text=not isinstance(body, bytes), timeout=timeout,
@@ -293,7 +294,7 @@ def lead_up(config, parent_config=None):
     fields += (
         ("Board commands", f"Pass {selector} on every board command."),
         ("Lead watcher", f"Run `{lead_watcher_command(config, name)}` in the background. "
-                         "Use background Bash in Claude Code or a background command in Codex. "
+                         f"Use {adapters.join_words(a.background_use for a in adapters.agents() if a.background_use)}. "
                          "Handle the output, acknowledge lead messages, and run it again."),
         ("Acknowledgements", "Acknowledge each lead message once handled with "
                              f"`malak {selector} ack --creation CREATION lead POSITION`."),

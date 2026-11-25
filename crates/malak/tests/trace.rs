@@ -2,7 +2,6 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use malak_testkit::unix_socket::SocketDir;
 use serde_json::Value;
 use std::env;
 use std::fs;
@@ -10,10 +9,14 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
+#[path = "fixtures/board_home.rs"]
+mod board_home;
+use board_home::BoardHome;
+
 const MALAK: &str = env!("CARGO_BIN_EXE_malak");
 
 struct Board {
-    home: SocketDir,
+    home: BoardHome,
     config: PathBuf,
 }
 
@@ -31,7 +34,7 @@ struct Receipt {
 
 impl Board {
     fn start() -> Self {
-        let home = SocketDir::new().unwrap();
+        let home = BoardHome::new();
         let directory = home.path().join(".malak/trace");
         fs::create_dir_all(&directory).unwrap();
         let config = directory.join("board.toml");
@@ -134,12 +137,6 @@ impl Board {
         channels.iter().find(|c| c["name"] == channel).unwrap()["head"]
             .as_u64()
             .unwrap()
-    }
-}
-
-impl Drop for Board {
-    fn drop(&mut self) {
-        let _ = self.run(None, &["board", "stop"]);
     }
 }
 

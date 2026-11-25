@@ -10,31 +10,49 @@ readme.workspace = true
 keywords.workspace = true
 repository.workspace = true
 
+[features]
+default = ["cli"]
+# The command line, mailbox screen, recipes and every built-in layer.
+cli = [
+    "markdown", "sqlite", "unix", "key",
+    "dep:clap", "dep:getrandom", "dep:ratatui", "dep:malak-fs", "dep:malak-journal",
+    "dep:malak-proto", "dep:minicbor", "dep:nix", "dep:rustix",
+    "dep:serde", "dep:serde_json", "dep:signal-hook", "dep:sha2", "dep:time", "dep:toml",
+]
+# Markdown message store and the durable board constructors.
+markdown = ["dep:malak-store-markdown"]
+# SQLite message store.
+sqlite = ["dep:malak-store-sqlite"]
+# Unix socket transport.
+unix = ["dep:malak-transport-unix", "dep:malak-proto"]
+# Key mechanism: enrolled static keys.
+key = ["dep:malak-mechanism-key"]
+
 [dependencies]
 malak-core = { path = "../malak-core", version = "0.1.2" }
+malak-layers = { path = "../malak-layers", version = "0.1.2" }
 malak-store-memory = { path = "../malak-store-memory", version = "0.1.2" }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
-clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"] }
-getrandom = "0.3"
-ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"] }
-malak-fs = { path = "../malak-fs", version = "0.1.2" }
-malak-journal = { path = "../malak-journal", version = "0.1.2" }
-malak-layers = { path = "../malak-layers", version = "0.1.2" }
-malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.2" }
-malak-proto = { path = "../malak-proto", version = "0.1.2" }
-malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.2" }
-minicbor = "2"
-nix = { version = "0.31", features = ["fs", "poll", "resource", "signal", "socket", "user"] }
-rustix = { version = "1.1", features = ["termios"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-signal-hook = { version = "0.3", default-features = false }
-sha2 = { version = "0.11", default-features = false }
-time = { version = "0.3", default-features = false, features = ["local-offset"] }
-toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
-malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.2" }
-malak-store-sqlite = { path = "../malak-store-sqlite", version = "0.1.2" }
+clap = { version = "4", default-features = false, features = ["derive", "std", "help", "usage", "error-context"], optional = true }
+getrandom = { version = "0.3", optional = true }
+ratatui = { version = "0.30", default-features = false, features = ["crossterm_0_29"], optional = true }
+malak-fs = { path = "../malak-fs", version = "0.1.2", optional = true }
+malak-journal = { path = "../malak-journal", version = "0.1.2", optional = true }
+malak-mechanism-key = { path = "../malak-mechanism-key", version = "0.1.2", optional = true }
+malak-proto = { path = "../malak-proto", version = "0.1.2", optional = true }
+malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.2", optional = true }
+minicbor = { version = "2", optional = true }
+nix = { version = "0.31", features = ["fs", "poll", "resource", "signal", "socket", "user"], optional = true }
+rustix = { version = "1.1", features = ["termios"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+signal-hook = { version = "0.3", default-features = false, optional = true }
+sha2 = { version = "0.11", default-features = false, optional = true }
+time = { version = "0.3", default-features = false, features = ["local-offset"], optional = true }
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"], optional = true }
+malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.2", optional = true }
+malak-store-sqlite = { path = "../malak-store-sqlite", version = "0.1.2", optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.8", default-features = false }
@@ -45,10 +63,41 @@ malak-testkit = { path = "../malak-testkit", version = "0.1.2" }
 [lints]
 workspace = true
 
+[[bin]]
+name = "malak"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [[bench]]
 name = "direct"
 harness = false
+required-features = ["cli"]
 
 [[bench]]
 name = "local"
 harness = false
+required-features = ["cli"]
+
+[[test]]
+name = "release_store"
+required-features = ["cli"]
+
+[[test]]
+name = "command_line"
+required-features = ["cli"]
+
+[[test]]
+name = "trace"
+required-features = ["cli"]
+
+[[test]]
+name = "mailbox"
+required-features = ["cli"]
+
+[[test]]
+name = "recipes"
+required-features = ["cli"]
+
+[[example]]
+name = "socket_board"
+required-features = ["unix", "markdown", "key"]

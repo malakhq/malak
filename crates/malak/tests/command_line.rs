@@ -10,6 +10,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
+#[path = "fixtures/board_home.rs"]
+mod board_home;
+use board_home::BoardHome;
+
+#[path = "fixtures/board_child.rs"]
+mod board_child;
+use board_child::BoardChild;
+
 const MALAK: &str = env!("CARGO_BIN_EXE_malak");
 
 #[path = "command_line/board_lifecycle.rs"]
@@ -38,9 +46,9 @@ mod tail_shutdown;
 mod terminal;
 
 struct Fixture {
-    board: Child,
+    board: BoardChild,
     config: PathBuf,
-    socket: SocketDir,
+    socket: BoardHome,
 }
 
 impl Fixture {
@@ -48,12 +56,12 @@ impl Fixture {
         Self::start(launch)
     }
 
-    fn start(launch: impl FnOnce(&Path) -> Child) -> Self {
+    fn start(launch: impl FnOnce(&Path) -> BoardChild) -> Self {
         Self::with_store("markdown", launch)
     }
 
-    fn with_store(persistence: &str, launch: impl FnOnce(&Path) -> Child) -> Self {
-        let socket = SocketDir::new().unwrap();
+    fn with_store(persistence: &str, launch: impl FnOnce(&Path) -> BoardChild) -> Self {
+        let socket = BoardHome::new();
         let config = write_config(socket.path(), persistence);
         let board = launch(&config);
         let mut fixture = Self {
@@ -73,9 +81,7 @@ impl Fixture {
     }
 
     fn wait_until_ready(&mut self) {
-        let stdout = self.board.stdout.take().unwrap();
-        let line = BufReader::new(stdout).lines().next().transpose().unwrap();
-        assert_eq!(line.as_deref(), Some("ready"));
+        self.board.wait_ready();
     }
 
     fn lead(&self) -> PathBuf {
@@ -125,23 +131,16 @@ impl Fixture {
     }
 }
 
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        let _ = self.board.kill();
-        let _ = self.board.wait();
-    }
-}
-
-fn launch(config: &Path) -> Child {
+fn launch(config: &Path) -> BoardChild {
     spawn_board(Command::new(MALAK), config)
 }
 
-fn launch_with_one_general_place(config: &Path) -> Child {
+fn launch_with_one_general_place(config: &Path) -> BoardChild {
     // The reserve leaves two lead places and one general place under this budget.
     launch_with_descriptor_limits(config, "120", "120")
 }
 
-fn launch_with_descriptor_limits(config: &Path, soft: &str, hard: &str) -> Child {
+fn launch_with_descriptor_limits(config: &Path, soft: &str, hard: &str) -> BoardChild {
     let mut command = Command::new("sh");
     command.args([
         "-c",
@@ -154,16 +153,12 @@ fn launch_with_descriptor_limits(config: &Path, soft: &str, hard: &str) -> Child
     spawn_board(command, config)
 }
 
-fn spawn_board(mut command: Command, config: &Path) -> Child {
+fn spawn_board(mut command: Command, config: &Path) -> BoardChild {
     if !command.get_envs().any(|(name, _)| name == "HOME") {
         command.env("HOME", config.parent().unwrap());
     }
-    command
-        .args(["board", "start", "--config"])
-        .arg(config)
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap()
+    command.args(["board", "start", "--config"]).arg(config);
+    BoardChild::spawn(&mut command)
 }
 
 fn write_config(root: &Path, persistence: &str) -> PathBuf {
@@ -1328,17 +1323,15 @@ mod separate_accounts {
 
     struct Accounts {
         user: User,
-        root: SocketDir,
+        root: BoardHome,
         config: PathBuf,
     }
 
     impl Accounts {
         fn new() -> Self {
             let user = test_account("MALAK_TEST_SECOND_ACCOUNT");
-            let root = match std::env::var_os("MALAK_TEST_SHARED_ROOT") {
-                Some(directory) => SocketDir::under(Path::new(&directory)).unwrap(),
-                None => SocketDir::new().unwrap(),
-            };
+            let directory = std::env::var_os("MALAK_TEST_SHARED_ROOT");
+            let root = BoardHome::under(directory.as_deref().map(Path::new));
             let folder = Directory::open(root.path()).unwrap();
             share_with(folder.file(), user.uid.as_raw(), AccountAccess::Search).unwrap();
             trusted_parent_for_account(
@@ -1369,9 +1362,8 @@ mod separate_accounts {
                     .arg("--lead-handover")
                     .arg(self.root.path().join("lead"));
             }
-            let child = command.stdout(Stdio::piped()).spawn().unwrap();
             let mut fixture = Fixture {
-                board: child,
+                board: BoardChild::spawn(&mut command),
                 config: self.config,
                 socket: self.root,
             };

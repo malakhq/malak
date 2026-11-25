@@ -7,12 +7,17 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+with patch.object(sys, "path", [str(ROOT / "tests/fixtures"), *sys.path]):
+    from board_processes import start_test_board, watch_board_home
+
 OBSERVE = ROOT / "recipes" / "observe"
 PAYLOADS = json.loads(Path(__file__).with_name("observe-payloads.json").read_text())
 
@@ -174,7 +179,8 @@ class ObserveTests(unittest.TestCase):
 class RunningBoardsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        built = ROOT.parents[1] / "target/debug/malak"
+        target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT.parents[1] / "target"))
+        built = target / "debug/malak"
         cls.malak = built if built.is_file() else shutil.which("malak")
         if cls.malak is None:
             raise RuntimeError("Build malak with cargo build -p malak or add malak to PATH")
@@ -183,6 +189,7 @@ class RunningBoardsTests(unittest.TestCase):
         # unsuitable. Keep the board socket paths short even in a deep checkout.
         cls.root = Path(cls.enterClassContext(tempfile.TemporaryDirectory(
             prefix=".mk-", dir=home.resolve())))
+        cls.enterClassContext(watch_board_home(cls.root))
         cls.real_registry = home / ".malak" / "boards.jsonl"
         cls.registry_before = cls.registry_snapshot()
         cls.addClassCleanup(cls.check_real_registry)
@@ -204,8 +211,9 @@ class RunningBoardsTests(unittest.TestCase):
                 f"[board]\nname = {json.dumps(name)}\nstate = {json.dumps(str(state))}\n"
                 f"socket_folder = {json.dumps(str(socket))}\n"
             )
-            cls.addClassCleanup(cls.owner, config, "board", "stop", check=False)
-            cls.owner(config, "board", "start", "--detach")
+            cls.enterClassContext(start_test_board(
+                [cls.malak, "--config", config, "board", "start"], env=cls.env,
+            ))
             cls.configs.append(config)
             cls.sockets.append(socket)
 

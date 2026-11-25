@@ -124,6 +124,7 @@ impl Owner {
     /// Configure the local entrances once, using the board's and owner's credentials.
     ///
     /// Use the returned capability only on trusted listeners for this board.
+    #[doc(hidden)]
     pub fn local_entrances(
         &self,
         config: LocalConfig,

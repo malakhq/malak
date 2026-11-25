@@ -17,7 +17,8 @@ import sys
 import tempfile
 import time
 
-from agent_launch import MALAK_EXE, codex_session_trust, hook_definitions
+import adapters
+from agent_launch import MALAK_EXE, hook_definitions
 import board_data
 import demo_board
 from recipe_board import handover_identity
@@ -73,23 +74,7 @@ def running_board(board, marker, stopping, *, keep):
 
 
 def agent_command(tool, sockets, sandbox, *, lead=False, trust=()):
-    if tool == "claude":
-        if sandbox == "off":
-            return ["claude", "-p", "--no-session-persistence", "--dangerously-skip-permissions", "--"]
-        return ["claude", "-p", "--no-session-persistence", "--tools", "Bash,Write,Read",
-                "--allowedTools", "Bash(malak *)", "Write", "Read", "--"]
-    command = ["codex", "-a", "never", "exec", "--ephemeral", "--skip-git-repo-check",
-               "--color", "never", "-c", "allow_login_shell=false", *trust]
-    if sandbox == "off":
-        return [*command, "--sandbox", "danger-full-access", "--"]
-    doors = ("l", "p") if lead else ("p",)
-    allowed = ",".join(f'{json.dumps(str(sockets / door / "s"))}="allow"' for door in doors)
-    return [*command, "-c", 'default_permissions="malak-demo"',
-            "-c", 'permissions.malak-demo.filesystem={":root"="read",'
-                  '":workspace_roots"="write",":tmpdir"="write"}',
-            "-c", 'permissions.malak-demo.network={enabled=true,mode="limited"}',
-            "-c", "features.network_proxy.enabled=true",
-            "-c", f"permissions.malak-demo.network.unix_sockets={{{allowed}}}", "--"]
+    return adapters.get(tool).demo_command(sockets, sandbox, lead, trust)
 
 
 WORKER_PROMPT = """Handle the proven lead task delivered by the Malak hook. If you received no
@@ -136,12 +121,13 @@ def progress(message):
 
 def start(tool, goal, sandbox, yes, timeout, keep):
     definitions = None
-    if tool == "codex":
-        definitions = hook_definitions(tool)
+    adapter = adapters.get(tool)
+    if adapter.demo_trust:
+        definitions = hook_definitions(adapter.delivery_tool or adapter.key)
         if out.interactive(sys.stderr):
-            out.details("Codex hooks for this demo", tuple(definitions.items()), stream=sys.stderr)
+            out.details(f"{adapter.display} hooks for this demo", tuple(definitions.items()), stream=sys.stderr)
         else:
-            print("Codex hooks for this demo", file=sys.stderr)
+            print(f"{adapter.display} hooks for this demo", file=sys.stderr)
             for event, command in definitions.items():
                 print(f"  {event}: {out.display(command)}", file=sys.stderr)
         if not yes:
@@ -150,7 +136,7 @@ def start(tool, goal, sandbox, yes, timeout, keep):
             if not sys.stdin.isatty():
                 print(file=sys.stderr)
             if answer.strip().lower() not in {"y", "yes"}:
-                print("Codex hook trust was declined.", file=sys.stderr)
+                print(f"{adapter.display} hook trust was declined.", file=sys.stderr)
                 return 2
     if sandbox == "off":
         print("Warning: the demo lead and workers have full access as your user.", file=sys.stderr)
@@ -224,7 +210,7 @@ def supervise(board, tool, goal, sandbox, definitions, workspace, interruption, 
             env["TMPDIR"] = stack.enter_context(
                 tempfile.TemporaryDirectory(prefix="tmp.", dir=workspace))
             progress(f"Starting {tool} lead.")
-            trust = (codex_session_trust(workspace, definitions, env=env, stopping=stopping)
+            trust = (adapters.get(tool).session_trust(workspace, definitions, env=env, stopping=stopping)
                      if definitions else [])
             if not stopping():
                 lead_log = stack.enter_context((workspace / "lead.log").open("x+b"))
@@ -625,7 +611,7 @@ def main(args):
     if args and args[0].split("=", 1)[0] == "--remove":
         parser.add_argument("--remove", required=True, metavar="NAME")
         return remove(parser.parse_args(args).remove)
-    parser.add_argument("tool", choices=("claude", "codex"))
+    parser.add_argument("tool", choices=adapters.demo_tools())
     parser.add_argument("goal")
     parser.add_argument("--sandbox", choices=("on", "off"), default="on")
     parser.add_argument("--yes", action="store_true")

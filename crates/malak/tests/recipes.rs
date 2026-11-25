@@ -2,7 +2,6 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use malak_testkit::unix_socket::SocketDir;
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -21,6 +20,10 @@ mod retained;
 #[path = "recipes/worker_await.rs"]
 mod worker_await;
 
+#[path = "fixtures/board_home.rs"]
+mod board_home;
+use board_home::BoardHome;
+
 const MALAK: &str = env!("CARGO_BIN_EXE_malak");
 const BOARD: &str = "malak";
 const TEST_WATCHDOG: Duration = Duration::from_secs(180);
@@ -30,19 +33,14 @@ const MALAK_BLOCK_START: &str =
 const MALAK_BLOCK_END: &str = "<!-- malak:end -->";
 
 struct Fixture {
-    home: Rc<SocketDir>,
+    home: Rc<BoardHome>,
     config: PathBuf,
     state: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let board = Self::in_home(
-            Rc::new(SocketDir::new().unwrap()),
-            BOARD,
-            "st ' quoted",
-            "d",
-        );
+        let board = Self::in_home(Rc::new(BoardHome::new()), BOARD, "st ' quoted", "d");
         // This config also occupies the fixture's default XDG path.
         board.configure(&format!("name = {BOARD:?}"));
         board
@@ -57,7 +55,7 @@ impl Fixture {
         )
     }
 
-    fn in_home(home: Rc<SocketDir>, name: &str, state: &str, sockets: &str) -> Self {
+    fn in_home(home: Rc<BoardHome>, name: &str, state: &str, sockets: &str) -> Self {
         let state = home.path().join(state);
         let config = Self::write_config(home.path(), name, &state, sockets);
         Self {
@@ -182,17 +180,6 @@ impl Fixture {
             .as_str()
             .unwrap()
             .into()
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        if Rc::strong_count(&self.home) == 1 {
-            for folder in demo_folders(self) {
-                let _ = demo_owner(self, &folder, &["board", "stop"]).output();
-            }
-        }
-        let _ = self.owner(&["board", "stop"]).output();
     }
 }
 
@@ -489,7 +476,7 @@ fn agents_md_does_not_rewrite_an_identical_block() {
 
 #[test]
 fn agents_md_updates_a_managed_block_and_preserves_existing_bytes() {
-    let board = Fixture::in_home(Rc::new(SocketDir::new().unwrap()), BOARD, "state", "d");
+    let board = Fixture::in_home(Rc::new(BoardHome::new()), BOARD, "state", "d");
     board.configure("name = \"research\"");
     let project = board.home.path().join("separate project");
     fs::create_dir(&project).unwrap();

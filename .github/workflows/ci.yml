@@ -25,3 +25,9 @@ jobs:
           components: rustfmt, clippy
       - name: Check
         run: scripts/check
+      - name: Board-only size budget
+        run: scripts/board-size
+      - name: Board and examples without Python
+        run: |
+          scripts/without-python cargo build --locked -p malak --no-default-features
+          scripts/without-python cargo run --locked -q -p malak --example team --no-default-features

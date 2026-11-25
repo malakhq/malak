@@ -5,11 +5,11 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 
 /// A fresh home with no configuration, and the commands run in it.
-struct Home(SocketDir);
+struct Home(BoardHome);
 
 impl Home {
     fn new() -> Self {
-        Self(SocketDir::new().unwrap())
+        Self(BoardHome::new())
     }
 
     fn command(&self, words: &[&str]) -> Command {
@@ -56,12 +56,6 @@ impl Home {
             .iter()
             .map(|channel| channel["name"].as_str().unwrap().to_owned())
             .collect()
-    }
-}
-
-impl Drop for Home {
-    fn drop(&mut self) {
-        let _ = self.output(&["board", "stop"]);
     }
 }
 

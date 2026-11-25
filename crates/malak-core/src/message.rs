@@ -182,6 +182,7 @@ impl<'a> SendRequest<'a> {
     ///
     /// The grade must come from the board's identity check. Returns `refused` if
     /// the shape or kind is invalid for that grade.
+    #[doc(hidden)]
     pub fn validate(self, limits: &Limits, grade: Grade) -> Result<SendContent<'a>, Error> {
         if self.body.len() > limits.body_bytes || self.headers.len() > limits.header_entries {
             return Err(Error::refused("message exceeds size limits").at_limit());

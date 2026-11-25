@@ -55,6 +55,7 @@ impl Owner {
     /// Returns only after the credentials and the completion marker are durable.
     /// The runner is responsible for provisioning the listener directories and
     /// opening sockets according to their access policy.
+    #[doc(hidden)]
     pub fn create_local(
         store: impl Store + 'static,
         limits: Limits,
@@ -77,6 +78,7 @@ impl Owner {
     /// The runner provisions the directory of that entrance for the lead account
     /// and protects the owner entrance separately. The handover's ancestors
     /// must already allow the lead account to traverse them.
+    #[doc(hidden)]
     pub fn create_local_for_account(
         store: impl Store + 'static,
         limits: Limits,

@@ -6,7 +6,8 @@ recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 . "$recipes/board.sh"
 
 usage() {
-    recipe_usage "${1:-help}" 'Usage: malak recipe demo claude|codex "GOAL" [--sandbox on|off] [--yes] [--timeout SECONDS] [--keep]' \
+    tools=$(python3 "$recipes/adapters.py" demo-tools)
+    recipe_usage "${1:-help}" "Usage: malak recipe demo $tools \"GOAL\" [--sandbox on|off] [--yes] [--timeout SECONDS] [--keep]" \
         '       malak recipe demo --remove NAME' \
         'Runs on its own board and prints a mailbox command to watch it.' \
         'Stops and removes the board on exit. --keep leaves the board and logs for inspection.'

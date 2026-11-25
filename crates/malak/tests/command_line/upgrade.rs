@@ -88,18 +88,6 @@ fn old_board(fixture: &CargoInstall) -> Fixture {
     Fixture::start(|path| spawn_board(command(fixture, &[]), path))
 }
 
-struct StopDetached(PathBuf);
-
-impl Drop for StopDetached {
-    fn drop(&mut self) {
-        let _ = Command::new(MALAK)
-            .arg("--config")
-            .arg(&self.0)
-            .args(["board", "stop"])
-            .output();
-    }
-}
-
 struct ReleaseWorker(PathBuf);
 
 impl Drop for ReleaseWorker {
@@ -169,7 +157,6 @@ fn upgrade_restarts_with_an_active_detached_worker_without_prompting() {
     cargo(&fixture, INSTALL);
     let source = checkout(&fixture.home, VERSION);
     let mut board = old_board(&fixture);
-    let _stop = StopDetached(board.config.clone());
     let gate = ReleaseWorker(fixture.home.path().join("release-worker"));
     run(command(&fixture, &["--config"])
         .arg(&board.config)
@@ -287,7 +274,6 @@ fn local_upgrade_restarts_the_listed_running_board_once_on_the_installed_build()
     let mut serving = old_board(&fixture);
     let mut stopped = old_board(&fixture);
     fixture.home.default_alias(&serving);
-    let _stop = StopDetached(serving.config.clone());
     let before = serving.status();
     call(&serving.lead(), &["send", "lead", "keep this message"]);
     run(&mut stopped.without_handover(&["board", "stop"]));
@@ -340,8 +326,6 @@ fn upgrade_posts_one_owner_note_with_new_changes_to_each_running_board() {
     let mut second = old_board(&fixture);
     fixture.home.default_alias(&first);
     let mut stopped = old_board(&fixture);
-    let _stop_first = StopDetached(first.config.clone());
-    let _stop_second = StopDetached(second.config.clone());
     run(&mut stopped.without_handover(&["board", "stop"]));
     assert!(stopped.board.wait().unwrap().success());
     replace_with_current_build(&fixture);
@@ -397,7 +381,6 @@ fn a_stored_upgrade_notice_survives_another_board_restart() {
     cargo(&fixture, INSTALL);
     let source = checkout(&fixture.home, VERSION);
     let mut board = old_board(&fixture);
-    let _stop = StopDetached(board.config.clone());
     run(command(&fixture, &["upgrade", "--yes", "--path"]).arg(source));
     assert!(board.board.wait().unwrap().success());
     run(&mut board.without_handover(&["board", "stop"]));
@@ -414,7 +397,6 @@ fn the_older_upgrade_handoff_uses_the_previous_served_build_for_the_notice() {
     change_build(&fixture);
     let before = build(&fixture.exe);
     let mut board = old_board(&fixture);
-    let _stop = StopDetached(board.config.clone());
     replace_with_current_build(&fixture);
     let installed = build(&fixture.exe);
     let plan = serde_json::json!({
@@ -471,7 +453,6 @@ fn an_installed_release_finishes_pending_restarts_without_cargo() {
     let fixture = upgrade_fixture();
     change_build(&fixture);
     let mut older = old_board(&fixture);
-    let _stop = StopDetached(older.config.clone());
     let before = older.status();
     replace_with_current_build(&fixture);
     let current = old_board(&fixture);
@@ -497,7 +478,6 @@ fn an_identical_local_install_finishes_pending_restarts() {
     let fixture = upgrade_fixture();
     change_build(&fixture);
     let mut older = old_board(&fixture);
-    let _stop = StopDetached(older.config.clone());
     replace_with_current_build(&fixture);
     cargo(&fixture, INSTALL);
     let source = checkout(&fixture.home, VERSION);
@@ -518,7 +498,6 @@ fn upgrade_leaves_a_replacement_run_started_during_installation_alone() {
     change_build(&fixture);
     let source = checkout(&fixture.home, VERSION);
     let board = old_board(&fixture);
-    let _stop = StopDetached(board.config.clone());
     let before = board.status();
     cargo(
         &fixture,
@@ -562,7 +541,6 @@ exec "$MALAK_TEST_BOARD_EXE" "$@"
 "#,
     );
     let board = old_board(&fixture);
-    let _stop = StopDetached(board.config.clone());
     let before = board.status();
 
     let result = command(

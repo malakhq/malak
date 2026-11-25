@@ -1,18 +1,56 @@
 #!/usr/bin/env python3
-"""Run the workspace checks and report new Malak entries in the temp folder."""
+"""Run the workspace checks and report leftover test files and boards."""
 
 import os
 from pathlib import Path
+import pwd
 import shlex
 import sys
 import tempfile
 
 sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "crates/malak/tests/fixtures"))
+from board_processes import board_processes
 from process_cleanup import cleanup_on_interrupt, command_process
 
 
-def temp_entries(folder):
-    return {entry.name for entry in folder.iterdir() if entry.name.startswith("malak")}
+# Each optional feature of the malak crate off, on alone, and all on together.
+FEATURE_SETS = (
+    [],
+    ["--features", "markdown"],
+    ["--features", "sqlite"],
+    ["--features", "unix"],
+    ["--features", "key"],
+    ["--features", "markdown,sqlite,unix,key"],
+)
+
+
+def entries(folder, prefix=""):
+    try:
+        return {entry for entry in folder.iterdir() if entry.name.startswith(prefix)}
+    except FileNotFoundError:
+        return set()
+
+
+def snapshot(temporary, homes):
+    return (
+        entries(temporary, "malak"),
+        entries(homes),
+        board_processes(homes, temporary),
+    )
+
+
+def report(label, before, after, describe):
+    leftovers = after - before
+    counts = f"{len(before)} before, {len(after)} after, {len(leftovers)} new"
+    if leftovers:
+        print(f"{label} check failed ({counts}):", file=sys.stderr)
+        for entry in sorted(map(describe, leftovers)):
+            print(f"  {entry}", file=sys.stderr)
+    else:
+        print(f"{label} check passed ({counts}).", file=sys.stderr)
+    return bool(leftovers)
 
 
 def run_checks():
@@ -21,6 +59,10 @@ def run_checks():
     for command, env in (
         (["cargo", "fmt", "--check"], None),
         (["cargo", "clippy", "--all-targets", "--all-features", "--", "-D", "warnings"], None),
+        *(
+            (["cargo", "check", "--locked", "-p", "malak", "--no-default-features", *features], None)
+            for features in FEATURE_SETS
+        ),
         (["cargo", "test", "--all"], None),
         ([sys.executable, "-B", "-m", "unittest", "discover", "-s", "crates/malak/recipes/tests"], None),
         ([sys.executable, "-B", "-m", "unittest", "discover", "-s", "scripts/tests"], None),
@@ -36,22 +78,21 @@ def run_checks():
 
 def main():
     temporary = Path(os.environ.get("TMPDIR") or tempfile.gettempdir()).resolve()
-    os.chdir(Path(__file__).resolve().parents[1])
-    before = temp_entries(temporary)
+    homes = (Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve() / ".m")
+    os.chdir(ROOT)
+    before = snapshot(temporary, homes)
     with cleanup_on_interrupt():
         try:
             status = run_checks()
         finally:
-            after = temp_entries(temporary)
-            leftovers = after - before
-            counts = f"{len(before)} before, {len(after)} after, {len(leftovers)} new"
-            if leftovers:
-                print(f"Temp directory check failed ({counts}):", file=sys.stderr)
-                for name in sorted(leftovers):
-                    print(f"  {str(temporary / name)!r}", file=sys.stderr)
-            else:
-                print(f"Temp directory check passed ({counts}).", file=sys.stderr)
-    return status or bool(leftovers)
+            after = snapshot(temporary, homes)
+            leftovers = (
+                report("Temp directory", before[0], after[0], lambda path: repr(str(path))),
+                report("Short test home", before[1], after[1], lambda path: repr(str(path))),
+                report("Test board process", before[2], after[2],
+                       lambda board: f"PID {board.pid} (group {board.group}), config {str(board.config)!r}"),
+            )
+    return status or any(leftovers)
 
 
 if __name__ == "__main__":

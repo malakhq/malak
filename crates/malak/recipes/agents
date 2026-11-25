@@ -13,26 +13,24 @@ from agent_settings import (
     decode, directory_exists, encode, plan_settings, plan_settings_removal,
     read_file, replace_file, settings_additions,
 )
-from codex_notice import notify_open, reload_hooks
+import adapters
 import recipe_output as out
 
 
 SKILL = Path(__file__).with_name("malak-skill.md")
+
+
+def skill_bytes():
+    return adapters.render_skill(SKILL.read_text()).encode()
 # Private recipe result consumed by the upgrade continuation.
 REFRESHED_HOOKS = 10
 REFRESH_PENDING = 11
-# Every event Malak listens to, for Claude Code and Codex alike. Both tools fire an
+# Every event Malak listens to, for every agent tool alike. The tools fire an
 # entry with no matcher on every occurrence, so the dispatcher in `observe` decides
 # from the payload and a new behaviour never needs a new entry.
 EVENTS = (
     "SessionStart", "UserPromptSubmit", "SubagentStart", "SubagentStop",
     "PreToolUse", "PostToolUse", "Stop", "SessionEnd",
-)
-TRUST_STEPS = (
-    "In Codex CLI, open /hooks and press Enter on each of "
-    f"{', '.join(EVENTS)}. Select the Malak command from hooks.json, review it, then press t "
-    "to trust it. Press Esc and repeat for the other events. "
-    "In Codex desktop, open Settings > Hooks to review and trust the Malak commands."
 )
 
 
@@ -47,7 +45,9 @@ def registrations(command):
 
 
 def tool_of(settings):
-    return "codex" if Path(settings).name == "hooks.json" else "claude"
+    name = Path(settings).name
+    found = next((a for a in adapters.agents() if a.settings_file == name), None)
+    return (found or next(a for a in adapters.agents() if a.default)).key
 
 
 def installed_registrations(tool):
@@ -60,8 +60,8 @@ def installed_registrations(tool):
 def plan_install(home):
     plan = {"settings": [], "skills": [], "notified": [], "complete": False}
     configs = [
-        (user_config(home, "CLAUDE_CONFIG_DIR", ".claude"), "settings.json"),
-        (user_config(home, "CODEX_HOME", ".codex"), "hooks.json"),
+        (user_config(home, adapter.config_env, adapter.config_dir), adapter.settings_file)
+        for adapter in adapters.agents() if adapter.config_env
     ]
     for root, settings in configs:
         if not directory_exists(root):
@@ -75,7 +75,7 @@ def plan_install(home):
             plan["skills"].append({
                 "path": str(folder / "SKILL.md"),
                 "create_parent": not parent_exists,
-                "data": encode(SKILL.read_bytes()),
+                "data": encode(skill_bytes()),
             })
         change = plan_settings(root / settings, installed_registrations(tool_of(settings)))
         if change is not None:
@@ -199,7 +199,7 @@ def refresh(plan, save, dry_run):
         plan["complete"] = True
         save()
         changed = True
-    new_skill = SKILL.read_bytes()
+    new_skill = skill_bytes()
     for skill in plan["skills"]:
         old_skill = decode(skill["data"])
         if old_skill == new_skill:
@@ -242,24 +242,28 @@ def refresh(plan, save, dry_run):
     return REFRESHED_HOOKS if hooks_changed else 0
 
 
-def notify_upgrade(plan, home, notice):
+def notifiers(plan, home):
+    """The adapters with open sessions to notify whose files this install wrote."""
     if plan is None or not plan["complete"]:
         return
-    codex = user_config(home, "CODEX_HOME", ".codex")
-    if not directory_exists(codex):
-        return
     paths = [Path(item["path"]) for item in plan["settings"] + plan["skills"]]
-    if codex / "hooks.json" in paths or codex / "skills/malak/SKILL.md" in paths:
-        # An installation notice and an upgrade notice are distinct deliveries.
-        notify_open([], lambda: None, notice)
+    for adapter in adapters.agents():
+        root = user_config(home, adapter.config_env, adapter.config_dir) if adapter.notice else None
+        if root is not None and directory_exists(root):
+            yield adapter, root, paths
+
+
+def notify_upgrade(plan, home, notice):
+    for adapter, root, paths in notifiers(plan, home):
+        if root / adapter.settings_file in paths or root / "skills/malak/SKILL.md" in paths:
+            # An installation notice and an upgrade notice are distinct deliveries.
+            adapter.notice.notify_open([], lambda: None, notice)
 
 
 def reload_upgrade(plan, home):
-    if plan is None or not plan["complete"]:
-        return
-    codex = user_config(home, "CODEX_HOME", ".codex")
-    if directory_exists(codex) and codex / "hooks.json" in [Path(item["path"]) for item in plan["settings"]]:
-        reload_hooks()
+    for adapter, root, paths in notifiers(plan, home):
+        if root / adapter.settings_file in [Path(item["path"]) for item in plan["settings"]]:
+            adapter.notice.reload_hooks()
 
 
 def run(args, home):
@@ -302,7 +306,7 @@ def run(args, home):
             if not args.dry_run:
                 save()
         else:
-            print("No new Claude Code or Codex skill or hooks to install.")
+            print(f"No new {adapters.names()} skill or hooks to install.")
             plan["complete"] = True
     elif plan["complete"]:
         print("Malak agent integration is already installed.")
@@ -311,27 +315,32 @@ def run(args, home):
         if not args.dry_run:
             plan["complete"] = True
             save()
-    if any(Path(change["path"]).name == "hooks.json" for change in plan["settings"]):
-        print(TRUST_STEPS)
+    written = {Path(change["path"]).name for change in plan["settings"]}
+    for adapter in adapters.agents():
+        if adapter.trust_steps and adapter.settings_file in written:
+            print(adapter.trust_steps(EVENTS))
     if args.notify_open:
-        if args.dry_run:
-            print("Would notify open local Codex threads once.")
-        elif not notify_open(plan["notified"], save):
-            print("No new Codex threads were notified.")
+        for adapter in adapters.agents():
+            if adapter.notice is None:
+                continue
+            if args.dry_run:
+                print(adapter.notice.WOULD_NOTIFY)
+            elif not adapter.notice.notify_open(plan["notified"], save):
+                print(adapter.notice.NONE_NOTIFIED)
 
 
 def main():
     parser = out.ArgumentParser(
         prog="malak recipe agents",
         usage="malak recipe agents [--yes] [--dry-run] [--remove | --notify-open]",
-        description="Install or remove Malak's user-level Claude Code and Codex integration.",
+        description=f"Install or remove Malak's user-level {adapters.names('and')} integration.",
         allow_abbrev=False,
     )
     parser.add_argument("--yes", action="store_true", help="confirm installation or removal")
     parser.add_argument("--dry-run", action="store_true", help="preview changes without saving or notifying")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--remove", action="store_true", help="remove Malak's installed files and hook entries")
-    mode.add_argument("--notify-open", action="store_true", help="also notify open local Codex app-server threads")
+    mode.add_argument("--notify-open", action="store_true", help=" and ".join(a.notice.HELP for a in adapters.agents() if a.notice))
     mode.add_argument("--upgrade-refresh", action="store_true", help=out.argparse.SUPPRESS)
     mode.add_argument("--upgrade-reload", action="store_true", help=out.argparse.SUPPRESS)
     parser.add_argument("--upgrade-notice", help=out.argparse.SUPPRESS)
@@ -342,9 +351,9 @@ def main():
         if not sys.stdin.isatty():
             parser.error("use --yes when running without a terminal")
         action = "Remove" if args.remove else "Install"
-        question = f"{action} Malak's skill and reminders for Claude Code and Codex"
+        question = f"{action} Malak's skill and reminders for {adapters.names('and')}"
         if args.notify_open:
-            question += " and notify open local Codex threads"
+            question += "".join(a.notice.QUESTION for a in adapters.agents() if a.notice)
         try:
             confirmed = input(f"{question}? [y/N] ").strip().lower() in ("y", "yes")
         except EOFError:

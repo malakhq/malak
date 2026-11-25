@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""Build the board-only profile for size and fail above the budget.
+
+The profile is the one the kilobyte-board research measured: size-optimised,
+link-time optimised, abort on panic, stripped. The program is
+crates/malak/examples/board_probe.rs, built without the default features.
+"""
+
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+# Bytes allowed for each feature set. Measured on macOS arm64 with rustc 1.99:
+# 520,992 (memory store) and 622,192 (with the Markdown store). The budget
+# adds about 20% because Linux sizes were not measured (research caveat).
+# Lower it once CI has reported a Linux number.
+BUDGETS = {
+    "": 640_000,
+    "markdown": 760_000,
+}
+# The board served over Unix sockets (examples/socket_board.rs), which needs
+# the unix, markdown and key layers.
+SERVER_FEATURES = "unix,markdown,key"
+SERVER_BUDGET = 1_130_000
+# Text that only the command line, mailbox screen, recipes and SQLite carry. A
+# board-only build must not contain any of it.
+TOOLING = (b"worker-start", b"recipe_board", b"agent_launch", b"ratatui", b"clap_builder", b"rusqlite")
+# The served board names `worker-start` in the text of a launcher's end notice
+# (local/claims.rs), so that one marker is not tooling there.
+SERVER_TOOLING = tuple(marker for marker in TOOLING if marker != b"worker-start")
+PROFILE = {
+    "OPT_LEVEL": "z",
+    "LTO": "true",
+    "CODEGEN_UNITS": "1",
+    "PANIC": "abort",
+    "STRIP": "true",
+}
+
+
+def build(features, example="board_probe", markers=TOOLING):
+    env = {f"CARGO_PROFILE_RELEASE_{key}": value for key, value in PROFILE.items()}
+    target = ROOT / "target" / "board-size"
+    command = [
+        "cargo", "build", "--release", "--locked", "-p", "malak",
+        "--example", example, "--no-default-features",
+        "--target-dir", str(target),
+    ]
+    if features:
+        command += ["--features", features]
+    subprocess.run(command, cwd=ROOT, env={**os.environ, **env}, check=True)
+    probe = (target / "release" / "examples" / example).read_bytes()
+    found = [marker.decode() for marker in markers if marker in probe]
+    if found:
+        sys.exit(f"board-only build ({features or 'memory store only'}) contains tooling: {found}")
+    return len(probe)
+
+
+def main():
+    failed = False
+    for features, budget in BUDGETS.items():
+        size = build(features)
+        label = features or "memory store only"
+        verdict = "ok" if size <= budget else "OVER BUDGET"
+        print(f"board-only ({label}): {size} bytes, budget {budget}: {verdict}")
+        failed |= size > budget
+    size = build(SERVER_FEATURES, "socket_board", SERVER_TOOLING)
+    verdict = "ok" if size <= SERVER_BUDGET else "OVER BUDGET"
+    print(f"board server ({SERVER_FEATURES}): {size} bytes, budget {SERVER_BUDGET}: {verdict}")
+    failed |= size > SERVER_BUDGET
+    return int(failed)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
