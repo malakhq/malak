@@ -66,7 +66,7 @@ pub(super) fn worker_next(
     wait_for_inbox(config, id.inbox().to_string(), timeout)
 }
 
-const REFRESH: Duration = Duration::from_secs(1);
+pub(super) const REFRESH: Duration = Duration::from_secs(1);
 
 type SnapshotRequest = SyncSender<Result<Status, Error>>;
 

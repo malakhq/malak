@@ -140,7 +140,13 @@ and recorded exit code. After its launcher exits, `malak recipe worker-start
 researcher --again -- COMMAND` replaces its old enrolment and reuses its brief.
 Use `malak revoke researcher` or `malak revoke ID` to retire access by itself.
 
-To message another board, use [`recipe guest`](RECIPES.md#message-another-boards-lead) to send as a guest, watch the guest inbox for replies, and revoke access when done.
+To message another board, use [`recipe guest`](RECIPES.md#message-another-boards-lead)
+to send as a guest. Run the printed `Watch` command to read replies, handle
+each reply, then run the printed `Ack` command with its creation and position.
+If Malak identifies your home board when issuing the handover, its lead inbox
+and watcher also show guest replies. Acknowledge those with `ack --creation`
+on `lead` while using the home board.
+Revoke guest access when done.
 
 ### Check and re-issue a handover
 

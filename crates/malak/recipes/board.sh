@@ -1,6 +1,13 @@
 # Shared board selection for the shell recipes.
 malak_exe=${MALAK_RECIPE_EXE:-malak}
 
+question_body() {
+    printf '%s\n' "$1"
+    if [ -n "$2" ]; then printf 'Blocks: %s\n' "$2"; fi
+    if [ -n "$3" ]; then printf 'Options:\n%s' "$3"; fi
+    if [ -n "$4" ]; then printf 'Recommendation: %s\n' "$4"; fi
+}
+
 task_send() {
     if [ -n "${MALAK_TASK_TRACE-}" ]; then
         set -- --trace "$MALAK_TASK_TRACE" "$@"

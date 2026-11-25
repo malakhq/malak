@@ -16,7 +16,6 @@ from recipe_board import handover_identity
 DEFAULT_WAIT = 30 * 60
 TICK = 0.2
 NANOSECONDS = 1_000_000_000
-RETRY_WINDOW = 10_000
 
 
 class QueueError(board.RecipeError):
@@ -201,10 +200,7 @@ class QueueBoard:
         except board.RecipeError as unavailable:
             raise QueueError(f"delivery to {channel} could not be confirmed: {unavailable}") from error
         now = board.channel_status(current, channel)
-        # In the same run, every new position bounds one possible retry entry.
-        if (now is None or now["stopped"] or now["creation"] != initial["creation"]
-                or current["run"] != status["run"]
-                or not 0 <= now["head"] - initial["head"] < RETRY_WINDOW):
+        if not board.may_retry_send(status["run"], initial, current["run"], now):
             raise QueueError(f"delivery to {channel} could not be confirmed safely") from error
         try:
             return board.malak(*request, handover=self.lead, body=body)

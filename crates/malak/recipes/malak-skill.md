@@ -49,18 +49,28 @@ Malak runs in the background to delegate work across your agents and subagents.
   If your watcher is missing, Stop continues the turn once with the restart command
   after any pending mail. Run the command in the background. If the watcher is
   still missing at the next Stop, the hook shows a one-line reminder.
-  The reminder checks at most every three minutes for unacknowledged lead messages, older owner questions, and a stopped watcher. A lead whose last one-shot tick started or ended within 10 minutes counts as watching.
-- When you need the owner to decide, post it with `malak --board NAME recipe ask`
-  (options and a recommendation), then raise it in chat, so the board keeps the decision.
+  On prompts and tool use, the reminder checks at most every three minutes
+  for waiting lead mail, owner answers to record, a stopped watcher, and
+  unread final reports from exited workers. A lead whose last one-shot tick
+  started or ended within 10 minutes counts as watching.
+- Ask the owner through the question tool on a single lead board with question
+  hooks installed, or post it with `malak --board NAME recipe ask` before
+  writing it in chat. Include options and a recommendation. If this chat
+  leads several boards, choose the board explicitly with `recipe ask --board NAME`.
 - Put a question from the watcher to the owner in chat right away if you posted
   it for them or only they can answer a worker's question. Include the options
-  and recommendation. Pipe the owner's reply to
+  and recommendation. If the owner answers in chat and the hook has yet to
+  record it, quote their reply and pipe it to
   `malak --board NAME recipe answer questions POSITION`.
 - Read and handle messages in order. Run `malak --board NAME read lead` and
   acknowledge through the last handled lead message with
   `malak --board NAME ack --creation CREATION lead POSITION`. Workers read
   their `to/ID` inbox and send reports to `lead`.
-- For cross-board messages, use `malak --board RECEIVING recipe guest NAME --out HANDOVER`, send as the guest, run the printed watch command for replies, and revoke the guest when done.
+- For cross-board messages, use `malak --board RECEIVING recipe guest NAME --out HANDOVER` and send as the guest. Run the printed `Watch` command to read replies. Handle each reply, then run the printed `Ack` command with the reply's creation and position. Revoke the guest when done.
+  If the handover is registered with your home board, your lead inbox and
+  watcher show these replies as `guest · BOARD #N`. Handle them and acknowledge
+  them from home with `malak --board HOME ack --creation CREATION lead POSITION`.
+  Register an existing guest with `malak --board HOME recipe guest --register-home HANDOVER`.
 - As lead, re-read this skill as soon as you receive a Malak upgrade note.
 - To bring a running Claude Code or Codex chat onto the board, use
   `malak --board NAME recipe adopt WORKER`, select its session and have the

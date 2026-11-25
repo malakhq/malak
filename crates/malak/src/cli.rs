@@ -21,6 +21,7 @@ mod cargo_install;
 mod client_transport;
 mod config;
 mod examples;
+mod guest_inbox;
 mod help;
 mod hook;
 mod mailbox;

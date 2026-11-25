@@ -1,7 +1,10 @@
 use super::{
     client_transport::{ClientTransport, link_failed, link_io_error, reconnect},
     config::{Config, START_HINT, io_error},
-    examples, output, owner_commands, owner_for_board_quiet, presentation,
+    examples,
+    guest_inbox::{self, GuestInbox},
+    mailbox::REFRESH,
+    output, owner_commands, owner_for_board_quiet, presentation,
 };
 use clap::Subcommand;
 use malak::{ChannelName, CreationId, Error, Kind, Limits, Outcome, ParticipantId};
@@ -22,8 +25,8 @@ use std::time::{Duration, Instant};
 
 mod reply;
 
-pub(super) use reply::json_message;
 use reply::{Output, agent_text};
+pub(super) use reply::{json_message, message_block};
 
 const CALL_WAIT: Duration = Duration::from_secs(60);
 pub(super) const REPORT_CONNECTION_EXIT: u8 = 75;
@@ -115,7 +118,20 @@ impl Command {
         )
     }
 
-    pub(super) fn execute(self, config: Option<PathBuf>) -> Result<(), Error> {
+    pub(super) fn execute(mut self, config: Option<PathBuf>) -> Result<(), Error> {
+        let guests = match &self {
+            Self::Read {
+                channels, limit, ..
+            } if *limit != Some(0) && channels.iter().any(|channel| channel == "lead") => {
+                guest_inbox::for_lead(&config)
+            }
+            Self::Ack {
+                channel,
+                creation: Some(_),
+                ..
+            } if channel == "lead" => guest_inbox::for_lead(&config),
+            _ => Vec::new(),
+        };
         let mut session = Session::new(config);
         session.launcher_report = self.is_launcher_report();
         let ack = matches!(self, Self::Read { ack: true, .. });
@@ -136,9 +152,27 @@ impl Command {
                 Some("Press Ctrl-C to stop."),
             );
         }
-        let (mut output, header) = self
-            .exchange(&mut session, None)
-            .map_err(|error| session.launcher_report_error(error))?;
+        if let Self::Ack {
+            channel,
+            creation: Some(creation),
+            ..
+        } = &mut self
+            && !guests.is_empty()
+            && session.current_creation("lead".parse()?).ok() != Some(*creation)
+            && let Some((remote, inbox)) = guests
+                .iter()
+                .find_map(|guest| guest.for_creation(*creation))
+        {
+            session = remote;
+            *channel = inbox.to_string();
+        }
+        let mut remote = Vec::new();
+        let (mut output, header) = if matches!(self, Self::Read { .. }) && !guests.is_empty() {
+            self.read_with_guests(&mut session, &guests, &mut remote)?
+        } else {
+            self.exchange(&mut session, None)
+                .map_err(|error| session.launcher_report_error(error))?
+        };
         let printed = output.take_printed();
         output.ok(&header, !printed.is_empty())?;
         if human && !ack && !printed.is_empty() {
@@ -153,9 +187,61 @@ impl Command {
         }
         if ack {
             io::stdout().flush().map_err(io_error)?;
-            session.ack_printed(printed, human)?;
+            let mut local = Vec::new();
+            for (channel, creation, position) in printed {
+                match remote.iter().find(|(_, key)| key == &creation) {
+                    Some((guest, _)) => guest.acknowledge(&creation, position, human)?,
+                    None => local.push((channel, creation, position)),
+                }
+            }
+            session.ack_printed(local, human)?;
         }
         Ok(())
+    }
+
+    fn read_with_guests<'a>(
+        &self,
+        session: &mut Session,
+        guests: &'a [GuestInbox],
+        remote: &mut Vec<(&'a GuestInbox, String)>,
+    ) -> Result<(Output, Map<String, Value>), Error> {
+        let Self::Read {
+            channels,
+            limit,
+            wait,
+            json,
+            agent,
+            offset,
+            ..
+        } = self
+        else {
+            unreachable!("only lead reads include guests");
+        };
+        let deadline = Instant::now() + Duration::from_secs(*wait).min(Limits::default().read_wait);
+        let mut interval = Duration::ZERO;
+        loop {
+            let (mut output, header) = session.read_command(channels, interval, *limit, || {
+                Output::messages(*json, *agent, offset.unwrap_or(0))
+            })?;
+            for guest in guests {
+                let remaining =
+                    limit.map(|limit| limit.saturating_sub(output.message_count() as u64));
+                if remaining == Some(0) {
+                    break;
+                }
+                for mut record in guest.read(remaining) {
+                    let (creation, _) = record.address()?;
+                    if remote.last().is_none_or(|(_, key)| key != creation) {
+                        remote.push((guest, creation.to_owned()));
+                    }
+                    output.message(&mut record.label, &record.body)?;
+                }
+            }
+            interval = REFRESH.min(deadline.saturating_duration_since(Instant::now()));
+            if output.message_count() != 0 || interval.is_zero() {
+                return Ok((output, header));
+            }
+        }
     }
 
     pub(super) fn execute_tool(
@@ -285,17 +371,7 @@ impl Command {
             } => {
                 let wait = Duration::from_secs(wait).min(Limits::default().read_wait);
                 let output = || Output::messages(json, agent, offset.unwrap_or(0));
-                if !wait.is_zero() {
-                    return session.read_waiting(&channels, wait, limit, output);
-                }
-                let frame = encode_frame(
-                    2,
-                    "READ",
-                    2 + usize::from(limit.is_some()),
-                    |out| read_fields(out, &channels, wait, limit),
-                    &[],
-                );
-                (frame, output(), CALL_WAIT)
+                return session.read_command(&channels, wait, limit, output);
             }
             Self::Get {
                 channel,
@@ -407,6 +483,20 @@ pub(super) struct ParticipantRecord {
     pub preview_cut: bool,
 }
 
+pub(super) struct GuestRecord {
+    pub label: Map<String, Value>,
+    pub body: Vec<u8>,
+}
+
+impl GuestRecord {
+    pub fn address(&self) -> Result<(&str, u64), Error> {
+        Ok((
+            field(&self.label, "creation")?,
+            number_field(&self.label, "position")?,
+        ))
+    }
+}
+
 impl ParticipantRecord {
     fn new(label: Map<String, Value>, body: &[u8], include_text: bool) -> Self {
         let mut record = Self {
@@ -448,6 +538,40 @@ impl Session {
         let mut session = Self::new(config);
         session.client()?;
         Ok(session)
+    }
+
+    pub(super) fn open_guest(handover: HandoverFile, wait: Duration) -> Result<Self, Error> {
+        let mechanism = mechanism(&handover)?;
+        let (client, _) = ClientTransport::connect(|transport| {
+            LocalClient::participant_with_wait(transport, handover, mechanism, wait)
+                .map_err(link_io_error)
+        })?;
+        let mut session = Self::new(None);
+        session.client = Some(client);
+        Ok(session)
+    }
+
+    pub(super) fn read_guest(
+        &mut self,
+        inbox: &str,
+        limit: Option<u64>,
+        wait: Duration,
+    ) -> Result<Vec<GuestRecord>, Error> {
+        let frame = encode_frame(
+            2,
+            "READ",
+            2 + usize::from(limit.is_some()),
+            |out| read_fields(out, &[inbox], Duration::ZERO, limit),
+            &[],
+        )
+        .map_err(|_| invalid_reply())?;
+        let (output, _) = self.request(Output::Collected(Vec::new()), wait, false, |client| {
+            client.send_frame(frame, wait)
+        })?;
+        let Output::Collected(records) = output else {
+            unreachable!("guest reads collect records")
+        };
+        Ok(records)
     }
 
     fn client(&mut self) -> Result<&mut LocalClient<ClientTransport>, Error> {
@@ -526,7 +650,7 @@ impl Session {
     }
 
     /// Acknowledge the highest printed position of each channel creation.
-    fn ack_printed(
+    pub(super) fn ack_printed(
         &mut self,
         printed: Vec<(String, String, u64)>,
         feedback: bool,
@@ -596,6 +720,14 @@ impl Session {
     }
 
     fn current_creation(&mut self, channel: ChannelName) -> Result<CreationId, Error> {
+        self.creation_within(channel, CALL_WAIT)
+    }
+
+    pub(super) fn creation_within(
+        &mut self,
+        channel: ChannelName,
+        wait: Duration,
+    ) -> Result<CreationId, Error> {
         // A zero-message read discovers the creation without giving the reader
         // a position it could then acknowledge.
         let frame = encode_frame(
@@ -608,8 +740,8 @@ impl Session {
         .map_err(|_| Error::refused("request does not fit"))?;
         self.client()?;
         let (_, header) = self
-            .request(Output::Quiet, CALL_WAIT, false, |client| {
-                client.send_frame(frame, CALL_WAIT)
+            .request(Output::Quiet, wait, false, |client| {
+                client.send_frame(frame, wait)
             })
             .map_err(|error| match error.outcome() {
                 Outcome::Refused => {
@@ -714,6 +846,29 @@ impl Session {
             }),
             result => result,
         }
+    }
+
+    fn read_command(
+        &mut self,
+        channels: &[String],
+        wait: Duration,
+        limit: Option<u64>,
+        output: impl Fn() -> Output,
+    ) -> Result<(Output, Map<String, Value>), Error> {
+        if !wait.is_zero() {
+            return self.read_waiting(channels, wait, limit, output);
+        }
+        let frame = encode_frame(
+            2,
+            "READ",
+            2 + usize::from(limit.is_some()),
+            |out| read_fields(out, channels, wait, limit),
+            &[],
+        )
+        .map_err(|_| Error::refused("request does not fit"))?;
+        self.request(output(), CALL_WAIT, false, |client| {
+            client.send_frame(frame, CALL_WAIT)
+        })
     }
 
     pub(super) fn open_preview(config: Option<PathBuf>) -> Option<(Self, ParticipantId)> {

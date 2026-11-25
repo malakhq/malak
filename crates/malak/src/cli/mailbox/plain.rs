@@ -9,8 +9,9 @@ use super::{
 use crate::cli::{
     board::OWNER_FOLDER,
     config::{self, io_error},
+    guest_inbox::{self, GuestShown},
     output::{self, now_ms},
-    participant::Session,
+    participant::{Session, message_block},
 };
 use malak::Error;
 use malak_fs::Directory;
@@ -80,6 +81,7 @@ pub(super) fn run(
     let mut reader = Some(reader);
     let mut output = io::stdout().lock();
     let mut loading = true;
+    let mut guest_shown = GuestShown::default();
     let title = format!("{title} ({})", output::local_zone(now_ms()));
     let mut heading = output::Format::stdout().details(&title, &[]);
     for row in summary::lines(model, now_ms(), usize::MAX) {
@@ -97,6 +99,13 @@ pub(super) fn run(
         if Instant::now() >= next_refresh {
             if let Some(status) = live_status(&mut reader, false, settings)? {
                 refresh(model, status)?;
+            }
+            if !loading
+                && watch.is_some()
+                && model.viewer.as_deref() == Some("lead")
+                && !print_guests(settings, &mut guest_shown, &mut output)?
+            {
+                return Ok(());
             }
             next_refresh = Instant::now() + REFRESH;
         }
@@ -156,6 +165,7 @@ pub(super) fn run(
                     }
                 }
                 loading = false;
+                next_refresh = Instant::now();
             }
             Some(Update::End(end)) => return end,
             _ => {}
@@ -168,6 +178,26 @@ pub(super) fn run(
             }
         }
     }
+}
+
+fn print_guests(
+    settings: &config::Board,
+    shown: &mut GuestShown,
+    output: &mut impl Write,
+) -> Result<bool, Error> {
+    for guest in guest_inbox::for_board(settings) {
+        let key = guest.key();
+        for record in guest.read(None) {
+            let (creation, position) = record.address()?;
+            if shown.is_new(&key, creation, position) {
+                if !write_plain(output, &message_block(&record.label, &record.body)?)? {
+                    return Ok(false);
+                }
+                shown.advance(&key, creation, position);
+            }
+        }
+    }
+    Ok(true)
 }
 
 fn print_event(

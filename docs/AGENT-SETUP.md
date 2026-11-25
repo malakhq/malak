@@ -66,10 +66,16 @@ existing Claude Code and Codex configuration directories. It also registers
 `Stop`, so a lead about to end its turn with unacknowledged lead messages or
 unanswered agent questions is handed them once and asked to handle and
 acknowledge them first.
-On prompts and tool use, the reminder checks at most every three minutes for unacknowledged lead messages, older owner questions, and a stopped watcher.
+On prompts and tool use, the reminder checks at most every three minutes and
+shows commands for waiting work. It also records questions from Claude Code's
+`AskUserQuestion`, Codex's Plan-mode `request_user_input`, and Codex's
+`request_user_input_async` on the chat's single lead board. It quotes the
+owner's answer when the tool returns it. For the async tool, record the
+reply with `recipe answer` when the owner answers. The reminder gives the
+command when Codex supplies a reply linked to that question.
 
 In Codex CLI, open `/hooks` and press Enter on `UserPromptSubmit`,
-`SubagentStart`, `PreToolUse`, `Stop` or `SessionEnd`. Select the Malak command from
+`SubagentStart`, `PreToolUse`, `PostToolUse`, `Stop` or `SessionEnd`. Select the Malak command from
 `hooks.json`, review it and press `t` to trust it. Press Esc and repeat
 for the other events. In Codex desktop use **Settings > Hooks**.
 If the owner also wants a one-time notice in already open local Codex
@@ -166,6 +172,10 @@ and stop it. Keep the test files path and the worker's ID from `to/ID` for clean
 
 ## 5. Ask the owner a test question
 
+Use the question tool with the hooks installed on a single lead board, or
+run `recipe ask` before writing the question in chat. If this chat leads
+several boards, pass the intended board explicitly to `recipe ask`.
+
 ```sh
 printf '%s\n' 'Which check should the Malak setup test use?' |
     malak --board "$board" recipe ask --blocks 'the test handoff' --option 'delivery' \
@@ -226,7 +236,11 @@ required if several active participants have the same name. Use
 exits. Keep the board and your watcher running for the rest of the session.
 If you are polling, keep using the poll in step 3.
 
-For cross-board messages, use [`recipe guest`](RECIPES.md#message-another-boards-lead) to send as a guest, watch the guest inbox for replies, and revoke access when done.
+For cross-board messages, use [`recipe guest`](RECIPES.md#message-another-boards-lead)
+to send as a guest. Use the printed commands to watch for replies and
+acknowledge each reply after handling it. A registered guest handover also
+brings replies into your home lead inbox and watcher. Revoke guest access
+when done.
 
 Give the owner a few plain lines on how Malak helps their project. Use what
 you saw in the project and the test. Mention how they can see delegated

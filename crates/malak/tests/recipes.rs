@@ -2936,6 +2936,16 @@ fn worker_start_resumes_when_a_lead_task_arrives_after_exit() {
     assert_ne!(reports[0]["id"], initial["id"]);
     assert_eq!(body(&reports[0]), body(initial));
 
+    let record = board
+        .state
+        .join("launches")
+        .join(format!("{}.json", board.worker_id()));
+    let evidence = wait_for_event("the latest verified worker report", || {
+        let value: Value = serde_json::from_slice(&fs::read(&record).ok()?).ok()?;
+        (value["last_report"]["id"] == reports[0]["id"]).then_some(value)
+    });
+    assert_eq!(evidence["report"]["id"], initial["id"]);
+
     run(board.owner(&["board", "stop"]));
     wait_for_event("worker to stop after the board stops", || {
         worker.0.try_wait().unwrap()

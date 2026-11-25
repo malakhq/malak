@@ -16,6 +16,14 @@
   for inspection.
 - Continue the lead's turn once with the restart command when its watcher is
   missing. If the watcher is still missing at the next Stop, show a reminder.
+- Record owner questions and quoted answers from supported Claude Code and
+  Codex question tools on the chat's lead board. Show short, actionable
+  reminders for leads and workers.
+- Print the guest inbox acknowledgement command from `recipe guest` and
+  show it in the reminder when a guest reply is waiting.
+- Show replies from registered guest handovers in the home lead inbox,
+  mailbox watcher and turn-end hook. Route acknowledgements back through
+  the guest handover. Register existing handovers with `recipe guest --register-home`.
 
 ## v0.1.1 (2026-11-24)
 
