@@ -24,6 +24,8 @@ pub(super) struct Label {
     channel: String,
     position: u64,
     creation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    guest_board: Option<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     lost_before: u64,
     /// The `trace` header, taken from the message's headers.
@@ -123,8 +125,13 @@ impl Message {
         };
         Ok(View {
             label: &self.label,
-            presentation: match (&*self.label.sender, self.label.grade, self.label.kind) {
-                ("lead", Grade::Proven, Kind::Task) => Presentation::Task,
+            presentation: match (
+                &*self.label.sender,
+                self.label.grade,
+                self.label.kind,
+                &self.label.guest_board,
+            ) {
+                ("lead", Grade::Proven, Kind::Task, None) => Presentation::Task,
                 _ => Presentation::Information,
             },
             body,
@@ -198,6 +205,15 @@ pub(super) fn text(
                 Presentation::Information => "information",
             },
         );
+        if let Some(board) = &view.label.guest_board {
+            writeln!(
+                rendered,
+                "guest · {} #{}",
+                super::output::display(board),
+                view.label.position
+            )
+            .unwrap();
+        }
         if view.label.lost_before > 0 {
             writeln!(
                 rendered,
@@ -219,12 +235,16 @@ pub(super) fn text(
         )
         .unwrap();
         if let Some(fetch) = view.fetch {
-            writeln!(
-                rendered,
-                "Fetch more with malak get --agent --offset {} -- {} {}",
-                fetch.offset, fetch.channel, fetch.position
-            )
-            .unwrap();
+            if view.label.guest_board.is_some() {
+                writeln!(rendered, "Read the full guest reply with malak read lead.").unwrap();
+            } else {
+                writeln!(
+                    rendered,
+                    "Fetch more with malak get --agent --offset {} -- {} {}",
+                    fetch.offset, fetch.channel, fetch.position
+                )
+                .unwrap();
+            }
         }
         writeln!(rendered, "BEGIN {marker}\n{body}\nEND {marker}").unwrap();
         let size = rendered.len();

@@ -77,5 +77,5 @@ case $question in
     *) recipe_notice 'post the question' 'No question was provided.' \
            'Give a question on standard input.' 'Give a question on standard input.' >&2; exit 2 ;;
 esac
-printf '%s\nBlocks: %s\nOptions:\n%sRecommendation: %s\n' "$question" "$blocks" "$options" "$recommend" |
+question_body "$question" "$blocks" "$options" "$recommend" |
     task_send --kind note questions -

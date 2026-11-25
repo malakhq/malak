@@ -31,6 +31,8 @@ const CHECK_BOARD: &str = "__check-board";
 const BOARD_CONFIG: &str = "__board-config";
 const BOARD_NAME: &str = "__board-name";
 const BOARD_LIST: &str = "__board-list";
+const REGISTER_GUEST: &str = "__register-guest";
+const GUEST_REPLIES: &str = "__guest-replies";
 const SESSION_PROCESS: &str = "__session-process";
 const WORKER_EXIT: &str = "__worker-exit";
 const WORKER_STARTED: &str = "malak-worker-started\n";
@@ -192,6 +194,7 @@ const SUPPORT: &[Script] = &[
     script!("lead_status.py"),
     script!("lead_turn_end.py"),
     script!("malak-skill.md"),
+    script!("question_hooks.py"),
     script!("recipe_board.py"),
     script!("recipe_output.py"),
     script!("report.sh"),
@@ -228,6 +231,27 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
         return Ok(ExitCode::SUCCESS);
     };
     match name.to_str() {
+        Some(REGISTER_GUEST) => {
+            let [board, handover] = arguments else {
+                return Err(Error::refused(
+                    "supply the receiving board name and guest handover",
+                ));
+            };
+            let board = board
+                .to_str()
+                .ok_or_else(|| Error::refused("use a UTF-8 board name"))?;
+            super::guest_inbox::register(config, board, Path::new(handover))?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(GUEST_REPLIES) if arguments.is_empty() => {
+            let records: Vec<_> = super::guest_inbox::for_lead(&config)
+                .into_iter()
+                .flat_map(|guest| guest.read(None))
+                .map(|record| participant::json_message(record.label, &record.body))
+                .collect();
+            output::line(format_args!("{}", serde_json::Value::Array(records)))?;
+            return Ok(ExitCode::SUCCESS);
+        }
         Some(CHECK_BOARD) if arguments.is_empty() => {
             participant::check_recipe_handover(config)?;
             return Ok(ExitCode::SUCCESS);

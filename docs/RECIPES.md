@@ -283,11 +283,26 @@ guest_handover="$HOME/.malak/team-to-review.handover"
 malak --board review recipe guest team-to-review --out "$guest_handover"
 ```
 
-The recipe prints the guest ID, inbox, handover path, and `Send` and `Watch`
-commands. Add `--json` for the same fields in a JSON object. The sending lead
-pipes a message into `Send` and runs `Watch` to wait up to 60 seconds for replies.
-Run `Watch` again as needed and use `malak ack` with the guest handover after
-handling a reply. Both commands select the receiving board through the handover.
+The recipe prints the guest ID, inbox, handover path, and `Send`, `Watch`, and
+`Ack` commands. Add `--json` for the same fields in a JSON object. The sending
+lead pipes a message into `Send` and runs `Watch` to wait up to 60 seconds for
+replies. Read and handle each reply, then run `Ack` with its `Creation` value
+and position in place of `CREATION` and `POSITION`. Run `Watch` again as needed.
+All three commands select the receiving board through the guest handover.
+
+When the recipe can identify the issuing lead's home board, it registers the
+guest handover path there. The home lead's `read lead`, plain `mailbox --for lead`
+and `mailbox --for lead --next` show waiting guest replies as `guest · BOARD #N`.
+Structured reads identify the receiving board in `guest_board`. On the home
+board, run `malak --board HOME ack --creation CREATION lead POSITION` with the
+creation and position of the guest reply. Malak uses the guest handover to
+acknowledge the reply on the receiving board.
+
+Register a handover you already hold with
+`malak --board HOME recipe guest --register-home HANDOVER`. The home board
+stores the path to the private handover. Keep the file available while you
+watch its replies. If a home board could not be identified when issuing the
+handover, you can register it explicitly or use the printed guest commands.
 
 The receiving lead sees the proven guest name and its `Reply inbox`. Send to
 that inbox as you would to a worker. Add `--reply-to lead CREATION POSITION` to
@@ -838,6 +853,33 @@ command, after any pending mail in the same reply. If the watcher is still
 missing at the next `turn_end`, the lead gets a one-line reminder. Seeing a running
 watcher clears the restart limit for a later outage.
 
+The lead's reminder also handles question-tool calls. On Claude Code it uses
+`AskUserQuestion`. On Codex 0.169 with native function hooks, it uses
+Plan-mode `request_user_input` and `request_user_input_async` where available.
+The installed `PreToolUse` hook posts each question with its options and any
+marked recommendation. Replaying a call keeps its original question positions.
+The matching `PostToolUse` quotes available answers as replies and closes
+the questions they answer. Codex's async tool returns an acceptance receipt.
+The question stays open until the lead records the owner's reply with
+`recipe answer`. If Codex submits the reply with its question identity,
+the reminder gives the command for that question. Desktop-specific input
+boxes are outside this hook.
+
+For a generic agent, send the following objects to
+`malak recipe observe --reminder` at the start and completion of a question
+tool call. Reuse the same session and tool call ID in both events.
+
+```json
+{"event":"question_start","session":"session-1","tool_use_id":"call-1","tool_input":{"questions":[{"id":"store","question":"Which store should we use?","options":[{"label":"SQLite"},{"label":"Memory"}],"recommendation":"SQLite"}]}}
+{"event":"question_end","session":"session-1","tool_use_id":"call-1","tool_response":{"answers":{"store":"SQLite"}}}
+```
+
+Each question can include `blocks`. Each option can include `description`.
+The command can return a JSON object with a `context` string for the agent.
+It records questions only when the session is the recorded lead of one
+selected board. A chat leading several boards uses
+`malak recipe ask --board NAME` to choose where to post.
+
 The hook can acknowledge a delivery before you finish handling it. If a
 later `read` omits the message, use `malak get --agent CHANNEL POSITION`
 with the channel and position in the hook header and compare the creation
@@ -861,14 +903,18 @@ the board's latest lead message, including the self-test from `lead-up`.
 It compares agent session IDs when available and uses the OS process ID and
 start time otherwise. The recorded session survives a board restart and is
 visible as `lead_session` in `malak board status --json`. A fresh chat gets
-general guidance. The hook sends no board messages.
+general guidance. Workers get commands for their own inbox and for reporting
+to the lead.
 
-For a recognized lead, submitted prompts and tool calls trigger a status check
-at most every three minutes. The reminder gives the count and oldest age of
-unacknowledged lead messages and owner questions that have been open at least
-three minutes. It gives the restart command if the watcher has stopped. It
-reports when it cannot confirm the watcher status. Checks with nothing waiting
-or with a board error make no announcement.
+When a chat uses a guest handover and a reply is waiting, the reminder gives
+the commands to read it and acknowledge it after handling it.
+
+For a recognized lead, submitted prompts and tool calls trigger a reminder
+at most every three minutes. It always tells the lead how to ask the owner.
+When applicable, it gives the commands to record an answer, read and
+acknowledge waiting lead messages, restart the watcher, or read an exited
+worker's unread final report. The reminder and the turn-end hook also give
+exact acknowledgement commands for waiting replies in registered guest inboxes.
 
 Follow the Codex approval steps in the [agent setup guide](AGENT-SETUP.md).
 Claude Code normally

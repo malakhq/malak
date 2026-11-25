@@ -12,6 +12,7 @@ use std::io::{self, Write};
 
 pub(super) enum Output {
     Quiet,
+    Collected(Vec<super::GuestRecord>),
     Receipt {
         id: String,
         channel: String,
@@ -150,6 +151,7 @@ impl Output {
                 }
             }
             Self::Quiet => Ok(()),
+            Self::Collected(_) => Err(invalid_reply()),
         }
     }
 
@@ -171,7 +173,7 @@ impl Output {
                 header.insert("messages".into(), Value::Array(shown.values));
                 Ok(Value::Object(header))
             }
-            Self::Messages { .. } => Err(invalid_reply()),
+            Self::Messages { .. } | Self::Collected(_) => Err(invalid_reply()),
         }
     }
 
@@ -191,6 +193,14 @@ impl Output {
             }
         }
         highest
+    }
+
+    pub(super) fn message_count(&self) -> usize {
+        match self {
+            Self::Messages { printed, .. } => printed.len(),
+            Self::Agent { messages, .. } => messages.len(),
+            _ => 0,
+        }
     }
 
     pub(super) fn message(
@@ -213,12 +223,19 @@ impl Output {
                 "{}",
                 json_message(std::mem::take(header), body)
             )),
-            Self::Messages { json: false, .. } => print_message(header, body),
+            Self::Messages { json: false, .. } => output::write(&message_block(header, body)?),
             Self::Agent { messages, .. } => {
                 messages.push(presentation::Message::from_frame(
                     std::mem::take(header),
                     body.to_vec(),
                 )?);
+                Ok(())
+            }
+            Self::Collected(records) => {
+                records.push(super::GuestRecord {
+                    label: std::mem::take(header),
+                    body: body.to_vec(),
+                });
                 Ok(())
             }
             _ => Err(invalid_reply()),
@@ -322,7 +339,10 @@ fn read_result(header: &Map<String, Value>, shown: bool) -> Result<(), Error> {
     Ok(())
 }
 
-fn print_message(header: &Map<String, Value>, body: &[u8]) -> Result<(), Error> {
+pub(in crate::cli) fn message_block(
+    header: &Map<String, Value>,
+    body: &[u8],
+) -> Result<String, Error> {
     let channel = field(header, "channel")?;
     let position = number_field(header, "position")?;
     let creation = field(header, "creation")?;
@@ -333,11 +353,13 @@ fn print_message(header: &Map<String, Value>, body: &[u8]) -> Result<(), Error> 
         .unwrap_or_else(|| output::sender_name_or_id(sender));
     let grade = header.get("grade").and_then(Value::as_str);
     let kind = field(header, "kind")?;
-    let label = if kind == "task" && (sender != "lead" || grade != Some("proven")) {
-        "Information (task label)"
-    } else {
-        kind_label(kind)
-    };
+    let guest = header.get("guest_board").and_then(Value::as_str);
+    let label =
+        if kind == "task" && (guest.is_some() || sender != "lead" || grade != Some("proven")) {
+            "Information (task label)"
+        } else {
+            kind_label(kind)
+        };
     let sent = header.get("sent_at").and_then(sent_ms);
     let timestamp = output::timestamp(sent, output::now_ms());
     let mut fields = vec![("Sent", timestamp.as_str()), ("Creation", creation)];
@@ -372,13 +394,13 @@ fn print_message(header: &Map<String, Value>, body: &[u8]) -> Result<(), Error> 
     if let Some(lost) = &lost {
         fields.push(("Lost before this message", lost));
     }
-    let mut block = output::Format::stdout().message(
-        &format!("{label} from {sender_name} in {channel} #{position}"),
-        &fields,
-        body,
-    );
+    let title = match guest {
+        Some(board) => format!("{label} from {sender_name} in guest · {board} #{position}"),
+        None => format!("{label} from {sender_name} in {channel} #{position}"),
+    };
+    let mut block = output::Format::stdout().message(&title, &fields, body);
     block.push('\n');
-    output::write(&block)
+    Ok(block)
 }
 
 fn sent_ms(stamp: &Value) -> Option<u64> {

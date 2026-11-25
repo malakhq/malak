@@ -16,15 +16,19 @@ import sys
 import time
 
 import recipe_output as out
-from board_data import RecipeError, board_status, malak
+from board_data import (
+    RecipeError, ack_command, board_status, channel_status, first_due, guest_command, guest_grant, malak,
+)
+from question_hooks import async_replies, is_question, note_async_replies, record, translate
 from recipe_board import (
-    board_entries, board_identity, board_name, board_settings, config_for_socket,
-    lead_watcher_command, local_board_label, selected_config,
+    board_entries, board_identity, board_name, board_selector, board_settings, config_for_socket,
+    lead_watcher_command, local_board_label, matches_session, selected_config,
 )
 
 
 COOLDOWN_SECONDS = 60
 LEAD_STATUS_INTERVAL_SECONDS = 3 * 60
+REMINDER_BYTES = 600
 INTRO = "Malak is installed for visibility."
 NO_BOARD = (
     "Malak is installed. If this chat already leads a board, keep leading it with its --board name. "
@@ -39,23 +43,41 @@ class HookDeadline(Exception):
     pass
 
 
-def worker_context(board, participant, config):
+def worker_context(board, participant, config, handover, intro, review):
     name = local_board_label(board)
+    status = None
     if config is not None:
         try:
             name = board_name(config)
-            if status := read_status(config):
-                participant = next(
-                    (person["name"] for person in status["participants"] if person["id"] == participant),
-                    participant,
-                )
+            status = read_status(config)
         except (HookDeadline, OSError, ValueError):
             pass
-    return (
-        f"{INTRO} You are {participant} on board {json.dumps(name)}. "
-        "Use the inherited MALAK_HANDOVER for this session and its subagents. "
-        "Ask the person before joining another board."
-    )
+    lines = []
+    person = next((person for person in (status or {}).get("participants", [])
+                   if person["id"] == participant), None)
+    if intro:
+        label = person["name"] if person else participant
+        lines.append(
+            f"{INTRO} You are {label} on board {json.dumps(name)}. "
+            "Use the inherited MALAK_HANDOVER for this session and its subagents. "
+            "Ask the person before joining another board."
+        )
+    if review:
+        command = f"malak {board_selector(config, name)}" if config else "malak"
+        inbox = f"to/{participant}"
+        channel = channel_status(status, inbox) if status else None
+        if person and not person["revoked"] and person["grant"] == guest_grant(inbox):
+            from lead_status import available, first_waiting
+
+            if channel and (pos := available(first_waiting, config, handover, channel, participant)):
+                command = guest_command(handover)
+                ack = ack_command(command, inbox, channel["creation"], pos)
+                lines.append(f"Guest reply waiting: `{command} read --limit 1 {inbox}`, handle, then `{ack}`.")
+        else:
+            if channel and first_due(channel, participant) < channel["head"]:
+                lines.append(f"Inbox waiting: `{command} read --ack {inbox}`")
+            lines.append(f"Report when done: `{command} send --kind report lead -`")
+    return lines
 
 
 def lead_handover_for(config):
@@ -92,35 +114,26 @@ def hook_process():
         return None
 
 
-def same_session(recorded, session_id):
-    if not recorded:
-        return False
-    if session_id and (lead_id := recorded.get("agent_session_id")):
-        return session_id == lead_id
-    process = hook_process()
-    return process is not None and process == {
-        "pid": recorded["pid"], "start_time": recorded["start_time"],
-    }
-
-
 def matching_leads(config, session_id):
     try:
         entries = [(board_name(config), config)] if config is not None else sorted(board_entries())
         for name, path in entries:
             if status := read_status(path):
-                if same_session(status.get("lead_session"), session_id):
+                if matches_session(status.get("lead_session"), session_id, hook_process):
                     yield name, path, status
     except (OSError, ValueError):
         # An unavailable board cannot establish leadership.
         return
 
 
-def hook_context(config, handover, intro, session_id, review=False):
+def hook_context(config, handover, intro, session_id, *, installed=False, review=False,
+                 question=None, replied=()):
+    inherited_board = None
     if handover is not None:
         board, participant = board_identity(handover)
-        if participant != "lead" and not intro:
-            return None, []
-        if config is None:
+        if participant != "lead" and not (intro or review):
+            return []
+        if config is None and participant != "lead":
             try:
                 config = config_for_socket(board)
             except (HookDeadline, OSError, ValueError):
@@ -128,24 +141,66 @@ def hook_context(config, handover, intro, session_id, review=False):
         if config is not None and Path(board_settings(config)["socket_folder"]) != board:
             raise ValueError("MALAK_HANDOVER does not match the selected board")
         if participant != "lead":
-            return worker_context(board, participant, config) if intro else None, []
-        if config is None:
-            return NO_BOARD if intro else None, []
-    introductions, notices = [], []
+            return worker_context(board, participant, config, handover, intro, review)
+        inherited_board = board
+    lines = []
     try:
-        from lead_status import waiting_context
+        from lead_status import reminder_lines
 
-        for name, path, status in matching_leads(config, session_id):
+        leads = list(matching_leads(config, session_id))
+        if not leads:
+            return [NO_BOARD] if intro else []
+        # A globally installed hook must never guess which of several boards
+        # should receive a question. An explicit config is already a selection.
+        if (question or replied) and len(leads) == 1:
+            _, path, status = leads[0]
+            same_board = inherited_board is None or Path(board_settings(path)["socket_folder"]) == inherited_board
+            if same_board and (lead_handover := lead_handover_for(path)):
+                try:
+                    if question:
+                        review = record(question, path, lead_handover, status) or review
+                    else:
+                        review = note_async_replies(replied, path, status, session_id) or review
+                except (RecipeError, OSError, ValueError, KeyError, TypeError):
+                    pass
+        if review or (intro and installed) or (question and len(leads) > 1):
+            if len(leads) == 1:
+                name, path, _ = leads[0]
+                command = f"malak {board_selector(path, name)} recipe ask ..."
+                lines.append(f"Asking the owner something? Use the question tool, or run `{command}` before writing it in chat.")
+            else:
+                lines.append(
+                    "Asking the owner something? This chat leads several boards. "
+                    "Choose one with `malak recipe ask --board BOARD ...` before writing in chat."
+                )
             if intro:
-                introductions.append(lead_context(name, path))
-            if review and (lead_handover := lead_handover_for(path)):
-                if waiting := waiting_context(name, path, lead_handover, status):
-                    notices.append(waiting)
+                identity = " ".join(f"You lead board {json.dumps(name)}." for name, _, _ in leads)
+                first = f"{INTRO} {identity} {lines[0]}"
+                if len(first.encode()) <= REMINDER_BYTES:
+                    lines[0] = first
+            if review:
+                for name, path, status in leads:
+                    if lead_handover := lead_handover_for(path):
+                        lines.extend(reminder_lines(name, path, lead_handover, status, session_id))
+        elif intro:
+            lines.extend(lead_context(name, path) for name, path, _ in leads)
     except HookDeadline:
         # Keep completed reviews if a later board runs out of time.
         pass
-    context = ("\n".join(introductions) or NO_BOARD) if intro else None
-    return context, notices
+    return lines or ([NO_BOARD] if intro else [])
+
+
+def bounded_context(lines):
+    kept = []
+    remaining = REMINDER_BYTES
+    for line in lines:
+        size = len(line.encode())
+        if size <= remaining:
+            kept.append(line)
+            remaining -= size + 1
+        if len(kept) == 5:
+            break
+    return "\n".join(kept)
 
 
 def detached(tool_input):
@@ -366,11 +421,12 @@ def main(installed, config):
         payload = json.load(sys.stdin)
         if not isinstance(payload, dict):
             return
-        generic = payload.get("event") == "turn_end"
-        if generic:
+        generic_stop = payload.get("event") == "turn_end"
+        if generic_stop:
             # The generic hook format: {"event": "turn_end", "session": ID}.
             payload = {"hook_event_name": "Stop", "session_id": payload.get("session"),
                        "stop_hook_active": payload.get("stop_hook_active")}
+        payload = translate(payload)
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             session_id = None
@@ -383,7 +439,7 @@ def main(installed, config):
             return
         if event == "Stop":
             if installed and (reply := turn_end_reply(payload, path, config, session_id)):
-                if generic and "reason" in reply:
+                if generic_stop and "reason" in reply:
                     reply = {"decision": "continue", "context": reply["reason"]}
                 print(json.dumps(reply))
             return
@@ -395,23 +451,31 @@ def main(installed, config):
             review = event in {"UserPromptSubmit", "PreToolUse"} and should_show(
                 path, "lead-status", cooldown=LEAD_STATUS_INTERVAL_SECONDS,
             )
-            if not intro and not review:
+            question = payload if session_id and is_question(payload) else None
+            replied = async_replies(payload.get("prompt")) if session_id and event == "UserPromptSubmit" else []
+            if not intro and not review and not question and not replied:
                 return
-            context, notices = hook_context(config, handover, intro, session_id, review)
             if intro and not should_show(path, intro, once=True):
-                context = None
-            context = "\n".join([context, *notices] if context else notices)
+                intro = None
+            lines = hook_context(
+                config, handover, intro, session_id, installed=True, review=review,
+                question=question, replied=replied,
+            )
+            context = bounded_context(lines)
             signal.setitimer(signal.ITIMER_REAL, 0)
         else:
             if marker is None:
                 return
-            context, _ = hook_context(config, handover, marker, session_id)
+            context = "\n".join(hook_context(config, handover, marker, session_id))
             if not should_show(path, marker):
                 return
         if context:
-            print(json.dumps({
-                "hookSpecificOutput": {"hookEventName": event, "additionalContext": context}
-            }))
+            if payload.get("event") in {"question_start", "question_end"}:
+                print(json.dumps({"context": context}))
+            else:
+                print(json.dumps({
+                    "hookSpecificOutput": {"hookEventName": event, "additionalContext": context}
+                }))
     except (HookDeadline, KeyError, OSError, TypeError, ValueError):
         # A missing or malformed input is never a reason to block agent work
         # or to look for a replacement handover.

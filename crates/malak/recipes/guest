@@ -5,20 +5,17 @@ import json
 import os
 from pathlib import Path
 import re
-import shlex
 import sys
 
 sys.dont_write_bytecode = True
 
 import board_data as board
-from recipe_board import board_config, board_settings, handover_identity, selected_config
+from recipe_board import (
+    board_config, board_entries, board_name, board_settings, config_for_socket, handover_identity,
+    local_board_label, matches_session, selected_config,
+)
 import recipe_output as out
 from worker_queue import LaunchRecord, select_enrolment
-
-
-# Action bits in the owner status response.
-SEND = 1
-READ_GET_ACK = 2 | 4 | 8
 
 
 def ensure_guest(config, name, handover, session):
@@ -35,8 +32,8 @@ def ensure_guest(config, name, handover, session):
             record, running = LaunchRecord(state, participant).observe()
             if running or record is not None:
                 raise board.RecipeError(f"{name!r} already belongs to a worker")
-            legacy = [None, [["lead", SEND]]]
-            current = [None, [["lead", SEND], [inbox, READ_GET_ACK]]]
+            current = board.guest_grant(inbox)
+            legacy = [current[0], current[1][:1]]
             ends, rules = active["grant"]
             grant = [ends, sorted(rules)]
             if grant not in (legacy, current):
@@ -56,15 +53,47 @@ def ensure_guest(config, name, handover, session):
         return participant, inbox
 
 
+def home_for_session(receiving, process):
+    inherited = os.environ.get("MALAK_HANDOVER")
+    if inherited:
+        try:
+            socket, holder, _ = handover_identity(inherited)
+            if holder == "lead" and (home := config_for_socket(socket)) is not None:
+                if home != receiving:
+                    board.check_board(home, inherited)
+                    return home
+        except (board.RecipeError, OSError, ValueError):
+            pass
+        return None
+    session = next((os.environ[key] for key in
+                    ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID")
+                    if os.environ.get(key)), None)
+    homes = []
+    for _, config in board_entries():
+        if config == receiving:
+            continue
+        status = board.board_status(config, check=False)
+        if status and matches_session(status.get("lead_session"), session, lambda: process):
+            homes.append(config)
+    return homes[0] if len(homes) == 1 else None
+
+
+def register(home, name, handover):
+    board.malak("--config", home, "recipe", "__register-guest", name, handover)
+
+
 def main():
     parser = out.ArgumentParser(
         prog="malak recipe guest",
-        usage="%(prog)s NAME --out HANDOVER [--session PID] [--json] [--board NAME | --config PATH]",
+        usage=("%(prog)s NAME --out HANDOVER [--session PID] [--json] [--board NAME | --config PATH]\n"
+               "  %(prog)s --register-home HANDOVER [--board HOME | --config PATH]"),
         allow_abbrev=False,
     )
-    parser.add_argument("name", metavar="NAME", help="Guest name on the receiving board")
-    parser.add_argument("--out", type=Path, required=True, metavar="HANDOVER",
+    parser.add_argument("name", nargs="?", metavar="NAME", help="Guest name on the receiving board")
+    parser.add_argument("--out", type=Path, metavar="HANDOVER",
                         help="Private handover path, or the existing guest handover to upgrade")
+    parser.add_argument("--register-home", type=Path, metavar="HANDOVER",
+                        help="Add an existing guest handover to the selected home board's lead inbox")
     parser.add_argument("--session", type=int, metavar="PID",
                         help="Bind to this running session. Defaults to the invoking session.")
     parser.add_argument("--json", action="store_true", help="Print the guest and commands as JSON")
@@ -73,25 +102,42 @@ def main():
     selectors.add_argument("--config", type=Path, metavar="PATH", help="Select the receiving board config")
     args = parser.parse_args()
 
+    config = (selected_config(args.board, args.config) or board_config()).absolute()
+    if args.register_home is not None:
+        if args.name is not None or args.out is not None or args.session is not None or args.json:
+            parser.error("--register-home takes a handover and an optional home board selector")
+        path = args.register_home.absolute()
+        socket, _, _ = handover_identity(path)
+        receiving = config_for_socket(socket)
+        label = board_name(receiving) if receiving is not None else local_board_label(socket)
+        register(config, label, path)
+        out.details(f"Guest replies from {label} will appear on {board_name(config)}.")
+        return
+    if args.name is None or args.out is None:
+        parser.error("supply NAME --out HANDOVER")
     if args.name == "lead":
         raise board.RecipeError("'lead' is reserved for the lead")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
         raise board.RecipeError(f"invalid participant name {args.name!r}")
-    config = (selected_config(args.board, args.config) or board_config()).absolute()
     handover = args.out.absolute()
-    session = args.session if args.session is not None else board.current_session()["pid"]
+    process = board.current_session() if args.session is None else None
+    session = args.session if args.session is not None else process["pid"]
     participant, inbox = ensure_guest(config, args.name, handover, session)
-    cli = f"MALAK_HANDOVER={shlex.quote(str(handover))} malak"
+    if process and (home := home_for_session(config, process)) is not None:
+        register(home, board_name(config), handover)
+    cli = board.guest_command(handover)
     result = {
         "id": participant, "inbox": inbox, "handover": str(handover),
         "send": f"{cli} send lead -", "watch": f"{cli} read --wait 60 {inbox}",
+        "ack": board.ack_command(cli, inbox, "CREATION", "POSITION"),
     }
     if args.json:
         print(json.dumps(result))
     else:
         out.details(f"Guest {args.name} is ready.")
         out.fields_output((("ID", participant), ("Inbox", inbox), ("Handover", handover),
-                           ("Send", result["send"]), ("Watch", result["watch"])), stream=sys.stdout)
+                           ("Send", result["send"]), ("Watch", result["watch"]),
+                           ("Ack", result["ack"])), stream=sys.stdout)
 
 
 if __name__ == "__main__":

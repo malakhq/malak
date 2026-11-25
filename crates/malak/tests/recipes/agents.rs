@@ -46,6 +46,7 @@ fn installs_skills_and_hooks_for_existing_clients() {
             "UserPromptSubmit",
             "SubagentStart",
             "PreToolUse",
+            "PostToolUse",
             "Stop",
             "SessionEnd",
         ] {
@@ -55,6 +56,10 @@ fn installs_skills_and_hooks_for_existing_clients() {
             assert!(command.ends_with(" recipe observe --reminder"));
         }
         assert!(hooks["hooks"]["PreToolUse"][0].get("matcher").is_none());
+        assert_eq!(
+            hooks["hooks"]["PostToolUse"][0]["matcher"],
+            "^(AskUserQuestion|request_user_input)$"
+        );
     }
     assert!(output.contains("/hooks"));
     assert_eq!(
@@ -364,18 +369,22 @@ pub(super) fn lead_watcher(board: &Fixture) -> RunningWorker {
 }
 
 #[test]
-fn lead_status_reminder_is_quiet_when_all_is_clear() {
+fn lead_reminder_shows_only_the_asking_line_when_all_is_clear() {
     let board = fixture();
     board.start();
     let _watcher = lead_watcher(&board);
     assert!(context(&reminder(&board, prompt())).starts_with("Malak is installed"));
     expire_status_check(&board);
 
-    assert!(reminder(&board, tool_use()).is_empty());
+    let notice = context(&reminder(&board, tool_use()));
+    assert_eq!(
+        notice,
+        "Asking the owner something? Use the question tool, or run `malak --board malak recipe ask ...` before writing it in chat."
+    );
 }
 
 #[test]
-fn lead_status_reminder_reports_waiting_lead_messages_in_one_line() {
+fn lead_reminder_gives_the_read_and_ack_commands_for_waiting_mail() {
     let board = fixture();
     board.start();
     let _watcher = lead_watcher(&board);
@@ -385,10 +394,10 @@ fn lead_status_reminder_reports_waiting_lead_messages_in_one_line() {
     let notice = context(&reminder(&board, tool_use()));
 
     assert!(
-        notice.contains("2 lead messages unacknowledged (oldest"),
+        notice.contains("Lead mail waiting (2): `malak --board malak read lead`, handle, then `malak --board malak ack --creation"),
         "{notice}"
     );
-    assert_eq!(notice.lines().count(), 1);
+    assert_eq!(notice.lines().count(), 2);
 }
 
 fn status_boards() -> (Fixture, Fixture) {
@@ -522,11 +531,11 @@ fn reminders_only_report_waiting_work_and_watchers_on_the_matching_board() {
     let notice = context(&reminder(&first, tool_use()));
 
     assert!(
-        notice.starts_with(r#"Malak board "malak": 1 lead message unacknowledged"#),
+        notice.contains("Lead mail waiting (1): `malak --board malak read lead`"),
         "{notice}"
     );
     assert!(!notice.contains("review"), "{notice}");
-    assert!(!notice.contains("watcher is not running"), "{notice}");
+    assert!(!notice.contains("Restart your watcher"), "{notice}");
 }
 
 #[test]
@@ -540,7 +549,27 @@ fn a_worker_handover_names_only_its_board() {
         notice.contains(r#"You are reviewer on board "review""#),
         "{notice}"
     );
-    assert!(!notice.contains("malak"), "{notice}");
+    assert!(!notice.contains("--board malak"), "{notice}");
+    assert!(notice.contains("Report when done"), "{notice}");
+    assert!(!notice.contains("Asking the owner"), "{notice}");
+}
+
+#[test]
+fn a_worker_reminder_gives_the_command_for_its_waiting_inbox() {
+    let board = fixture();
+    board.start();
+    let worker = board.enrol("alice", &["lead:send"]);
+    let inbox = format!("to/{}", board.worker_id());
+    board.lead(&["send", &inbox, "Worker mail"]);
+
+    let notice = context(&reminder_with_handover(&board, prompt(), Some(&worker)));
+
+    assert!(
+        notice.contains(&format!(
+            "Inbox waiting: `malak --board malak read --ack {inbox}`"
+        )),
+        "{notice}"
+    );
 }
 
 #[test]
@@ -579,11 +608,11 @@ fn the_lead_session_survives_a_restart_after_its_message_is_removed() {
 fn lead_status_reminder_shares_the_cooldown_across_prompt_and_tool_hooks() {
     let board = fixture();
     board.start();
-    assert!(context(&reminder(&board, prompt())).contains("watcher is not running"));
+    assert!(context(&reminder(&board, prompt())).contains("Restart your watcher"));
 
     assert!(reminder(&board, tool_use()).is_empty());
     expire_status_check(&board);
-    assert!(context(&reminder(&board, tool_use())).contains("watcher is not running"));
+    assert!(context(&reminder(&board, tool_use())).contains("Restart your watcher"));
 }
 
 fn finish_lead_tick(board: &Fixture) {
@@ -610,7 +639,7 @@ fn lead_status_reminder_counts_a_lead_between_one_shot_ticks_as_watching() {
 
     let notice = context(&reminder(&board, prompt()));
 
-    assert!(!notice.contains("watcher is not running"), "{notice}");
+    assert!(!notice.contains("Restart your watcher"), "{notice}");
 }
 
 #[test]
@@ -627,7 +656,7 @@ fn lead_status_reminder_reports_a_lead_whose_last_tick_is_old() {
 
     let notice = context(&reminder(&board, prompt()));
 
-    assert!(notice.contains("watcher is not running"), "{notice}");
+    assert!(notice.contains("Restart your watcher"), "{notice}");
 }
 
 #[test]
@@ -635,13 +664,13 @@ fn lead_status_reminder_notices_when_its_watcher_exits() {
     let board = fixture();
     board.start();
     let watcher = lead_watcher(&board);
-    assert!(!context(&reminder(&board, prompt())).contains("watcher is not running"));
+    assert!(!context(&reminder(&board, prompt())).contains("Restart your watcher"));
     drop(watcher);
     expire_status_check(&board);
 
     let notice = context(&reminder(&board, tool_use()));
 
-    assert!(notice.contains("watcher is not running"), "{notice}");
+    assert!(notice.contains("Restart your watcher"), "{notice}");
     assert!(
         notice.contains("malak --board malak mailbox --plain --for lead"),
         "{notice}"
@@ -669,11 +698,7 @@ fn lead_status_reminder_recognizes_a_one_shot_watcher() {
 
     let notice = context(&reminder(&board, prompt()));
 
-    assert!(!notice.contains("watcher is not running"), "{notice}");
-    assert!(
-        !notice.contains("could not tell whether your watcher is running"),
-        "{notice}"
-    );
+    assert!(!notice.contains("Restart your watcher"), "{notice}");
 }
 
 #[test]
@@ -718,7 +743,7 @@ subprocess.run = slow_status
 }
 
 #[test]
-fn lead_status_reminder_surfaces_only_owner_questions_past_three_minutes() {
+fn reminder_does_not_ask_to_record_an_owner_answer_it_has_not_seen() {
     let board = fixture();
     board.start();
     let _watcher = lead_watcher(&board);
@@ -728,20 +753,334 @@ fn lead_status_reminder_surfaces_only_owner_questions_past_three_minutes() {
         &["send", "questions", "Agent question."],
     ));
     board.lead(&["send", "questions", "Owner question."]);
-    assert!(reminder(&board, tool_use()).is_empty());
+    let notice = context(&reminder(&board, tool_use()));
+
+    assert!(!notice.contains("Record the answer:"), "{notice}");
+}
+
+fn claude_question() -> Value {
+    json!({
+        "hook_event_name": "PreToolUse",
+        "session_id": "lead-reminder",
+        "tool_name": "AskUserQuestion",
+        "tool_use_id": "toolu_01TEST",
+        "tool_input": {"questions": [
+            {"header": "Review", "question": "Which review should run?", "multiSelect": false,
+             "options": [
+                {"label": "Quick (Recommended)", "description": "Checks the changed files."},
+                {"label": "Full", "description": "Checks the workspace."}
+             ]},
+            {"header": "When", "question": "When should it run?", "options": [
+                {"label": "Now"}, {"label": "Tomorrow"}
+            ]}
+        ]}
+    })
+}
+
+fn claude_answer() -> Value {
+    let mut payload = claude_question();
+    payload["hook_event_name"] = json!("PostToolUse");
+    payload["tool_response"] = json!({
+        "questions": payload["tool_input"]["questions"],
+        "answers": {"Which review should run?": "Quick, with every changed file"}
+    });
+    payload
+}
+
+fn question_board() -> Fixture {
+    let board = fixture();
+    board.start();
+    lead_up_with_agent_id(&board, "lead-reminder");
+    board
+}
+
+fn questions(board: &Fixture) -> Vec<Value> {
+    messages(&board.lead(&["read", "--json", "questions"]))
+}
+
+#[test]
+fn claude_hook_posts_each_question_with_its_options() {
+    let board = question_board();
+    reminder(&board, claude_question());
+
+    let posted = questions(&board);
+    assert_eq!(posted.len(), 2);
+    assert_eq!(
+        posted[0]["text"],
+        "Which review should run?\nOptions:\n- Quick: Checks the changed files.\n- Full: Checks the workspace.\nRecommendation: Quick\n"
+    );
+    assert_eq!(
+        posted[1]["text"],
+        "When should it run?\nOptions:\n- Now\n- Tomorrow\n"
+    );
+}
+
+#[test]
+fn repeating_a_question_call_does_not_repost_it() {
+    let board = question_board();
+    reminder(&board, claude_question());
+    reminder(&board, claude_question());
+
+    assert_eq!(questions(&board).len(), 2);
+}
+
+#[test]
+fn a_retry_recovers_a_question_receipt_lost_after_board_acceptance() {
+    let board = question_board();
+    let fault = board.home.path().join("sitecustomize.py");
+    fs::write(
+        &fault,
+        r#"import subprocess
+run = subprocess.run
+def lose_receipt(argv, *args, **kwargs):
+    result = run(argv, *args, **kwargs)
+    if "send" in argv and list(argv[-2:]) == ["questions", "-"]:
+        return subprocess.CompletedProcess(argv, 3, b"", b"lost receipt")
+    return result
+subprocess.run = lose_receipt
+"#,
+    )
+    .unwrap();
+    reminder(&board, claude_question());
+    fs::remove_file(fault).unwrap();
+
+    reminder(&board, claude_question());
+    reminder(&board, claude_answer());
+
+    let posted = questions(&board);
+    assert_eq!(posted.len(), 3);
+    assert_eq!(
+        posted[2]["headers"]["reply_to"],
+        json!(["questions", posted[0]["creation"], posted[0]["position"]])
+    );
+}
+
+#[test]
+fn claude_hook_quotes_and_links_the_selected_answer() {
+    let board = question_board();
+    reminder(&board, claude_question());
+    reminder(&board, claude_answer());
+    reminder(&board, claude_answer());
+
+    let posted = questions(&board);
+    assert_eq!(posted.len(), 3);
+    assert_eq!(
+        posted[2]["headers"]["reply_to"],
+        json!(["questions", posted[0]["creation"], posted[0]["position"]])
+    );
+    let answer = posted[2]["text"].as_str().unwrap();
+    assert!(answer.starts_with("Owner, in chat at "), "{answer}");
+    assert!(
+        answer.ends_with(": \"Quick, with every changed file\"\n"),
+        "{answer}"
+    );
+}
+
+#[test]
+fn generic_question_hooks_record_the_question_and_its_answer() {
+    let board = question_board();
+    let mut payload = json!({
+        "event": "question_start", "session": "lead-reminder", "tool_use_id": "generic-1",
+        "tool_input": {"questions": [
+            {"id": "timing", "question": "When should it run?", "blocks": "The handoff.",
+             "options": [{"label": "Now"}, {"label": "Tomorrow"}], "recommendation": "Now"}
+        ]}
+    });
+    reminder(&board, payload.clone());
+    payload["event"] = json!("question_end");
+    payload["tool_response"] = json!({"answers": {"timing": "Tomorrow"}});
+    reminder(&board, payload);
+
+    let posted = questions(&board);
+    assert_eq!(posted.len(), 2);
+    assert_eq!(
+        posted[0]["text"],
+        "When should it run?\nBlocks: The handoff.\nOptions:\n- Now\n- Tomorrow\nRecommendation: Now\n"
+    );
+    assert!(
+        posted[1]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with(": \"Tomorrow\"\n")
+    );
+}
+
+#[test]
+fn codex_question_hooks_use_the_question_id_and_parse_the_json_result() {
+    let board = question_board();
+    let mut payload = json!({
+        "hook_event_name": "PreToolUse", "session_id": "lead-reminder",
+        "turn_id": "turn-1", "tool_name": "request_user_input", "tool_use_id": "call_test",
+        "permission_mode": "default", "tool_input": {"questions": [
+            {"id": "storage", "header": "Storage", "question": "Which store should we use?",
+             "options": [{"label": "SQLite (Recommended)", "description": "Persists the records."},
+                         {"label": "Memory", "description": "Starts empty each run."}]}
+        ]}
+    });
+    reminder(&board, payload.clone());
+    payload["hook_event_name"] = json!("PostToolUse");
+    payload["tool_response"] =
+        json!(r#"{"answers":{"storage":{"answers":["SQLite (Recommended)"]}}}"#);
+    reminder(&board, payload);
+
+    let posted = questions(&board);
+    assert_eq!(posted.len(), 2);
+    assert!(
+        posted[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Recommendation: SQLite")
+    );
+    assert!(
+        posted[1]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with(": \"SQLite (Recommended)\"\n")
+    );
+}
+
+fn codex_async_question() -> Value {
+    json!({
+        "hook_event_name": "PreToolUse", "session_id": "lead-reminder",
+        "turn_id": "turn-1", "tool_name": "request_user_input_async", "tool_use_id": "call_test_async",
+        "tool_input": {"questions": [
+            {"title": "Which review should we use?", "options": ["Quick (Recommended)", "Full"]},
+            {"title": "What should we do after the review?"}
+        ]}
+    })
+}
+
+#[test]
+fn codex_async_question_hooks_leave_the_question_open_after_acceptance() {
+    let board = question_board();
+    let mut payload = codex_async_question();
+    reminder(&board, payload.clone());
+    reminder(&board, payload.clone());
+    payload["hook_event_name"] = json!("PostToolUse");
+    payload["tool_response"] = json!(r#"{"accepted":true}"#);
+    reminder(&board, payload);
+
+    let posted = questions(&board);
+    assert_eq!(posted.len(), 2);
+    assert_eq!(
+        posted[0]["text"],
+        "Which review should we use?\nOptions:\n- Quick\n- Full\nRecommendation: Quick\n"
+    );
+    assert_eq!(posted[1]["text"], "What should we do after the review?\n");
+}
+
+#[test]
+fn a_codex_async_card_reply_prompts_the_lead_to_record_the_matching_answer() {
+    let board = question_board();
+    reminder(&board, codex_async_question());
+    let mut reply = prompt();
+    let response = json!([{
+        "questionItemId": r#"["request_user_input_async","call_test_async",1]"#,
+        "question": "What should we do after the review?",
+        "answer": "Run the checks again"
+    }]);
+    reply["prompt"] = json!(format!(
+        "<send_user_message_question_reply>\n{response}\n</send_user_message_question_reply>"
+    ));
+
+    let notice = context(&reminder(&board, reply));
+
+    assert!(
+        notice.contains("Record the answer: `malak --board malak recipe answer questions 2`"),
+        "{notice}"
+    );
+    assert_eq!(questions(&board).len(), 2);
+}
+
+#[test]
+fn plain_chat_does_not_mark_an_async_question_answered() {
+    let board = question_board();
+    reminder(&board, codex_async_question());
     expire_status_check(&board);
+    let mut next_prompt = prompt();
+    next_prompt["prompt"] = json!("Run the checks again");
+
+    let notice = context(&reminder(&board, next_prompt));
+
+    assert!(!notice.contains("Record the answer:"), "{notice}");
+}
+
+#[test]
+fn a_different_chat_does_not_post_owner_questions() {
+    let board = question_board();
+    let mut payload = claude_question();
+    payload["session_id"] = json!("unrelated-chat");
+    reminder(&board, payload);
+
+    assert!(questions(&board).is_empty());
+}
+
+#[test]
+fn a_worker_does_not_post_owner_questions_even_with_the_same_session_id() {
+    let board = question_board();
+    let worker = board.enrol("tester", &["questions:send"]);
+    reminder_with_handover(&board, claude_question(), Some(&worker));
+
+    assert!(questions(&board).is_empty());
+}
+
+#[test]
+fn a_multi_board_lead_is_told_to_select_the_question_board() {
+    let (first, second) = status_boards();
+    lead_up_with_agent_id(&first, "lead-reminder");
+    lead_up_with_agent_id(&second, "lead-reminder");
+
+    let notice = context(&reminder(&first, claude_question()));
+
+    assert!(
+        notice.contains("malak recipe ask --board BOARD"),
+        "{notice}"
+    );
+    assert!(questions(&first).is_empty());
+    assert!(questions(&second).is_empty());
+}
+
+#[test]
+fn a_failed_answer_write_prompts_the_lead_to_record_it() {
+    let board = question_board();
+    reminder(&board, claude_question());
     fs::write(
         board.home.path().join("sitecustomize.py"),
-        "import time\nreal_time = time.time\ntime.time = lambda: real_time() + 181\n",
+        r#"import subprocess
+run = subprocess.run
+def refuse_answer(argv, *args, **kwargs):
+    if "send" in argv and "--reply-to" in argv and list(argv[-2:]) == ["questions", "-"]:
+        return subprocess.CompletedProcess(argv, 2, b"", b"answer refused")
+    return run(argv, *args, **kwargs)
+subprocess.run = refuse_answer
+"#,
     )
     .unwrap();
 
-    let notice = context(&reminder(&board, tool_use()));
+    let notice = context(&reminder(&board, claude_answer()));
 
+    assert!(notice.contains("Asking the owner something?"), "{notice}");
     assert!(
-        notice.contains("1 owner question open (oldest 3 min)"),
+        notice.contains("Record the answer: `malak --board malak recipe answer questions 1`"),
         "{notice}"
     );
+    assert!(notice.len() <= 600, "{notice}");
+}
+
+#[test]
+fn an_exited_workers_unread_final_report_is_named_in_the_reminder() {
+    let board = question_board();
+    run(board.worker_start(&[], &["/bin/echo", "Worker done"]));
+
+    let notice = context(&reminder(&board, prompt()));
+
+    assert!(
+        notice.contains("alice exited: read its final report"),
+        "{notice}"
+    );
+    assert!(notice.contains("Asking the owner something?"), "{notice}");
+    assert!(notice.len() <= 600, "{notice}");
+    assert!(notice.lines().count() <= 5, "{notice}");
 }
 
 #[test]
@@ -1104,14 +1443,14 @@ fn a_long_pending_message_is_shortened_within_the_32_kib_limit() {
     assert!(reason.ends_with(RESTART_WATCHER));
 }
 
-const WITHOUT_STOP: &str = r#"
+const WITHOUT_HOOK: &str = r#"
 import base64, json, sys
-manifest = sys.argv[1]
+manifest, event = sys.argv[1:]
 state = json.load(open(manifest))
 for change in state["settings"]:
-    change["added"].pop("Stop")
+    change["added"].pop(event)
     doc = json.load(open(change["path"]))
-    del doc["hooks"]["Stop"]
+    del doc["hooks"][event]
     data = (json.dumps(doc, indent=2) + "\n").encode()
     open(change["path"], "wb").write(data)
     change["after"] = base64.b64encode(data).decode()
@@ -1120,15 +1459,24 @@ open(manifest, "w").write(json.dumps(state, indent=2) + "\n")
 
 #[test]
 fn a_refresh_adds_the_stop_hook_to_an_install_made_before_it_existed() {
+    refresh_adds_hook("Stop");
+}
+
+#[test]
+fn a_refresh_adds_the_question_answer_hook_to_an_older_install() {
+    refresh_adds_hook("PostToolUse");
+}
+
+fn refresh_adds_hook(event: &str) {
     let board = fixture();
     run(agents(&board, &["--yes"]));
     let manifest = board.home.path().join(MANIFEST);
     let mut doctor = Command::new("python3");
-    doctor.args(["-c", WITHOUT_STOP]).arg(&manifest);
+    doctor.args(["-c", WITHOUT_HOOK]).arg(&manifest).arg(event);
     run(doctor);
     assert!(
         settings(&board, CLAUDE_SETTINGS)["hooks"]
-            .get("Stop")
+            .get(event)
             .is_none()
     );
 
@@ -1138,7 +1486,7 @@ fn a_refresh_adds_the_stop_hook_to_an_install_made_before_it_existed() {
 
     assert_eq!(status.code(), Some(10));
     for path in [CLAUDE_SETTINGS, CODEX_HOOKS] {
-        let command = settings(&board, path)["hooks"]["Stop"][0]["hooks"][0]["command"]
+        let command = settings(&board, path)["hooks"][event][0]["hooks"][0]["command"]
             .as_str()
             .unwrap()
             .to_owned();

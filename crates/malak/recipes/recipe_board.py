@@ -85,6 +85,14 @@ def config_for_socket(socket_folder):
     return None
 
 
+def matches_session(recorded, agent_id, process):
+    if not recorded:
+        return False
+    if agent_id and (recorded_id := recorded.get("agent_session_id")):
+        return agent_id == recorded_id
+    return process() == {"pid": recorded["pid"], "start_time": recorded["start_time"]}
+
+
 def local_board_label(socket_folder):
     home = Path.home()
     if socket_folder.is_relative_to(home):

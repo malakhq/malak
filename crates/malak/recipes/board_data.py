@@ -39,6 +39,7 @@ PROBE_ID_PREFIX = "lead-up-"
 PROBE_BODY = "Malak lead-up self-test"
 BOARD_COLUMNS = ("Board", "Status", "Participants", "Lead waiting")
 MALAK_EXE = os.environ.get("MALAK_RECIPE_EXE", "malak")
+RETRY_WINDOW = 10_000
 
 
 class RecipeError(Exception):
@@ -62,8 +63,15 @@ def malak_command(*args):
     return [MALAK_EXE, *chosen, *args]
 
 
-def malak(*args, handover=None, check=True, body=None, timeout=None):
-    env = None if handover is None else {**os.environ, "MALAK_HANDOVER": str(handover)}
+def malak(*args, handover=None, check=True, body=None, timeout=None, session=None):
+    env = None
+    if handover is not None or session is not None:
+        env = os.environ.copy()
+        if handover is not None:
+            env["MALAK_HANDOVER"] = str(handover)
+        if session is not None:
+            # The CLI records this value as the agent session on a lead send.
+            env["CODEX_SESSION_ID"] = session
     result = subprocess.run(
         malak_command(*args), env=env, stdin=subprocess.DEVNULL if body is None else None,
         input=body, capture_output=True, text=not isinstance(body, bytes), timeout=timeout,
@@ -304,8 +312,28 @@ def channel_status(status, name):
     return next((channel for channel in status["channels"] if channel["name"] == name), None)
 
 
+def may_retry_send(previous_run, previous, current_run, current):
+    # Each new position in the same run bounds one possible retry entry.
+    return (current is not None and not current["stopped"]
+            and current["creation"] == previous["creation"] and current_run == previous_run
+            and 0 <= current["head"] - previous["head"] < RETRY_WINDOW)
+
+
 def first_due(channel, reader):
     return max(channel["floor"], channel.get("readers", {}).get(reader, 0) + 1)
+
+
+def guest_grant(inbox):
+    # Action bits in the owner status response: send, then read/get/ack.
+    return [None, [["lead", 1], [inbox, 2 | 4 | 8]]]
+
+
+def guest_command(handover):
+    return f"MALAK_HANDOVER={shlex.quote(str(handover))} malak"
+
+
+def ack_command(command, inbox, creation, position):
+    return f"{command} ack --creation {creation} {inbox} {position}"
 
 
 def active_participants(status):
@@ -427,9 +455,10 @@ def get_message(channel, position, *, config=None, handover=None, allow_missing=
     return record
 
 
-def reply_command(inbox, channel, creation, position, kind="note"):
+def reply_command(inbox, channel, creation, position, kind="note", *, identifier=None):
+    options = ["--id", identifier] if identifier is not None else []
     return malak_command(
-        "send", "--json", "--kind", kind, "--reply-to",
+        "send", "--json", *options, "--kind", kind, "--reply-to",
         channel, creation, str(position),
         "--", inbox, "-",
     )

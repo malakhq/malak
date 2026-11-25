@@ -23,7 +23,7 @@ REFRESHED_HOOKS = 10
 REFRESH_PENDING = 11
 TRUST_STEPS = (
     "In Codex CLI, open /hooks and press Enter on UserPromptSubmit, SubagentStart, "
-    "PreToolUse, Stop or SessionEnd. Select the Malak command from hooks.json, review it, then press t "
+    "PreToolUse, PostToolUse, Stop or SessionEnd. Select the Malak command from hooks.json, review it, then press t "
     "to trust it. Press Esc and repeat for the other events. "
     "In Codex desktop, open Settings > Hooks to review and trust the Malak commands."
 )
@@ -40,6 +40,7 @@ def registrations(command):
         "UserPromptSubmit": {"hooks": [handler]},
         "SubagentStart": {"hooks": [handler]},
         "PreToolUse": {"hooks": [handler]},
+        "PostToolUse": {"matcher": "^(AskUserQuestion|request_user_input)$", "hooks": [handler]},
         "Stop": {"hooks": [handler]},
         "SessionEnd": {"hooks": [handler]},
     }

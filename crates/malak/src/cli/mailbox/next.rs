@@ -9,7 +9,8 @@ use super::{
 use crate::cli::{
     client_transport::link_failed,
     config::{Config, io_error},
-    participant::check_preview_board,
+    guest_inbox,
+    participant::{check_preview_board, message_block},
 };
 use malak::Error;
 use std::io::{self, Write};
@@ -74,6 +75,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
     let Some(mut view) = View::load(&config, &initial, started, &shown, &mut output)? else {
         return Ok(());
     };
+    if print_guest(&config, &shown, &mut output)? {
+        return Ok(());
+    }
     let mut resuming = false;
     let mut next_refresh = Instant::now() + REFRESH;
     let mut next_due = None;
@@ -103,6 +107,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
                         Err(error) => return Err(error),
                     }
                 }
+            }
+            if print_guest(&config, &shown, &mut output)? {
+                return Ok(());
             }
             next_refresh = Instant::now() + REFRESH;
         }
@@ -151,6 +158,35 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
             next_due = next;
         }
     }
+}
+
+fn print_guest(
+    config: &Option<PathBuf>,
+    store: &Store,
+    output: &mut impl Write,
+) -> Result<bool, Error> {
+    for guest in guest_inbox::for_lead(config) {
+        let records = guest.read(None);
+        if records.is_empty() {
+            continue;
+        }
+        let key = guest.key();
+        if store.update(|shown, _| {
+            for record in records {
+                let (creation, position) = record.address()?;
+                if shown.guests.is_new(&key, creation, position) {
+                    if plain::write_plain(output, &message_block(&record.label, &record.body)?)? {
+                        shown.guests.advance(&key, creation, position);
+                    }
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 struct View {

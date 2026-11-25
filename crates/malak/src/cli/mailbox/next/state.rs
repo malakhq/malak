@@ -2,6 +2,7 @@
 
 use super::super::model::{Address, Channel};
 use crate::cli::config::io_error;
+use crate::cli::guest_inbox::GuestShown;
 use malak::Error;
 use malak_fs::Directory;
 use nix::fcntl::OFlag;
@@ -77,6 +78,8 @@ pub(super) struct Shown {
     questions: Cursor,
     orders: Cursor,
     reminder: Option<Reminder>,
+    #[serde(default)]
+    pub guests: GuestShown,
 }
 
 #[derive(Clone, Default, Deserialize, PartialEq, Serialize)]

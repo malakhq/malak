@@ -468,17 +468,21 @@ class Worker:
             action = "already recorded in" if receipt["duplicate"] else "sent to"
             out.receipt(f"Report {action} lead #{receipt['position']}.", receipt, fields)
             sys.stdout.flush()
-            if initial:
-                try:
-                    record = (receipt["report"] if self.bound
-                              else self.connection.get("lead", receipt["position"]))
-                    if (not from_receipt(record, receipt) or receipt["id"] != identifier
-                            or not is_worker_report(record, self.record.id)):
-                        raise QueueError("the launcher's final report could not be verified")
-                    self.phase("failed" if failure else "complete", report=message_ref(record))
-                except (board.RecipeError, OSError, KeyError, ValueError) as error:
-                    out.details("Could not verify the launcher’s final report.",
-                                (("Reason", error),), stream=sys.stderr)
+            try:
+                record = (receipt["report"] if self.bound
+                          else self.connection.get("lead", receipt["position"]))
+                if (not from_receipt(record, receipt) or receipt["id"] != identifier
+                        or not is_worker_report(record, self.record.id)):
+                    raise QueueError("the launcher's final report could not be verified")
+                reference = message_ref(record)
+                if initial:
+                    self.phase("failed" if failure else "complete", report=reference)
+                else:
+                    self.phase(self.evidence["phase"], last_report=reference)
+            except (board.RecipeError, OSError, KeyError, ValueError) as error:
+                out.details("Could not verify the launcher’s final report.",
+                            (("Reason", error),), stream=sys.stderr)
+                if initial:
                     self.phase("failed", reason=failure or str(error))
         if result.returncode and initial:
             self.phase("failed", reason=failure or "the predecessor's final report could not be confirmed")

@@ -7,11 +7,12 @@ from pathlib import Path
 import stat
 import time
 
-from board_data import RecipeError, channel_status, first_due, get_message, malak
-from recipe_board import board_settings, lead_watcher_command
+from board_data import RecipeError, ack_command, channel_status, first_due, get_message, malak
+from question_hooks import pending_answer
+from recipe_board import board_selector, board_settings, lead_watcher_command
+from worker_queue import LaunchRecord, QueueBoard
 
 
-OWNER_QUESTION_AGE_SECONDS = 3 * 60
 # A lead that runs the one-shot watcher once per host-loop tick is idle between
 # ticks. It counts as watching while its last tick started or ended this recently.
 TICK_WINDOW_SECONDS = 10 * 60
@@ -52,15 +53,20 @@ def ticked_recently(directory):
     )
 
 
-def oldest_lead(config, handover, status, now):
+def first_waiting(config, handover, channel, reader):
+    for pos in range(first_due(channel, reader), channel["head"]):
+        message = get_message(channel["name"], str(pos), config=config, handover=handover,
+                              allow_missing=True)
+        if message is not None and message["creation"] == channel["creation"]:
+            return pos
+    return None
+
+
+def lead_due(config, handover, status, now):
     lead = channel_status(status, "lead")
-    if lead is None or not can_get_lead(status, now):
-        return None
-    for pos in range(first_due(lead, "lead"), lead["head"]):
-        message = get_message("lead", str(pos), config=config, handover=handover, allow_missing=True)
-        if message is not None and message["creation"] == lead["creation"]:
-            seconds, nanos = message["sent_at"]
-            return lead["head"] - pos, age(now - (seconds * 1000 + nanos // 1_000_000))
+    if lead is not None and can_get_lead(status, now):
+        if (pos := first_waiting(config, handover, lead, "lead")) is not None:
+            return lead["head"] - pos
     return None
 
 
@@ -77,45 +83,66 @@ def can_get_lead(status, now):
     return any(pattern in {"lead", "*", "**"} and mask & GET_GRANT for pattern, mask in rules)
 
 
-def age(milliseconds):
-    seconds = max(0, milliseconds // 1000)
-    return f"{seconds // 60} min" if seconds >= 60 else f"{seconds} sec"
+def exited_worker(config, status, lead):
+    if not lead:
+        return None
+    board = QueueBoard(config, Path(board_settings(config)["state"]))
+    for person in status["participants"]:
+        if person["id"] == "lead" or person["revoked"]:
+            continue
+        launch = LaunchRecord(board.state, person["id"])
+        evidence, live = launch.observe()
+        if (live or not launch.on_board(evidence, board.identity)
+                or not (report := evidence.get("last_report") or evidence.get("report"))):
+            continue
+        if (report["creation"] != lead["creation"]
+                or not first_due(lead, "lead") <= report["position"] < lead["head"]):
+            continue
+        try:
+            board.final_report(report, person["id"])
+        except RecipeError:
+            continue
+        return person["name"], report["position"]
+    return None
 
 
-def waiting_context(name, config, handover, status):
+def available(check, *args):
     try:
-        return describe_waiting(name, config, handover, status)
+        return check(*args)
     except (RecipeError, OSError, ValueError, KeyError, TypeError):
         return None
 
 
-def describe_waiting(name, config, handover, status):
-    now = int(time.time() * 1000)
-    waiting = []
-    if lead := oldest_lead(config, handover, status, now):
-        count, oldest = lead
-        noun = "message" if count == 1 else "messages"
-        waiting.append(f"{count} lead {noun} unacknowledged (oldest {oldest})")
-    questions = old_questions(config, handover, channel_status(status, "questions"), now)
-    if questions:
-        noun = "question" if len(questions) == 1 else "questions"
-        waiting.append(f"{len(questions)} owner {noun} open (oldest {age(now - min(questions))})")
-    running = watcher_running(config)
-    if running is None:
-        waiting.append("could not tell whether your watcher is running")
-    elif not running:
-        waiting.append(f"your watcher is not running. Restart with `{lead_watcher_command(config, name)}`")
-    if waiting:
-        return f"Malak board {json.dumps(name)}: {', '.join(waiting)}."
-    return None
+def pending_guests(config, handover):
+    result = malak("--config", config, "recipe", "__guest-replies", handover=handover)
+    return json.loads(result.stdout)
 
 
-def old_questions(config, handover, channel, now):
-    if channel is None or channel["floor"] >= channel["head"]:
-        return []
-    result = malak("--config", config, "mailbox", "--questions", "--json", handover=handover)
-    cutoff = now - OWNER_QUESTION_AGE_SECONDS * 1000
-    return [
-        question["at_ms"] for question in json.loads(result.stdout)
-        if question["kind"] == "owner" and question["at_ms"] <= cutoff
-    ]
+def guest_label(message):
+    return f"guest · {message['guest_board']} #{message['position']}"
+
+
+def guest_reply_ack(command, message):
+    return ack_command(command, "lead", message["creation"], message["position"])
+
+
+def reminder_lines(name, config, handover, status, session):
+    command = f"malak {board_selector(config, name)}"
+    if session and (position := available(pending_answer, config, handover, status, session)) is not None:
+        yield f"Record the answer: `{command} recipe answer questions {position}`"
+    count = available(lead_due, config, handover, status, int(time.time() * 1000))
+    lead = channel_status(status, "lead")
+    if count:
+        ack = ack_command(command, "lead", lead["creation"], lead["head"] - 1)
+        yield f"Lead mail waiting ({count}): `{command} read lead`, handle, then `{ack}`."
+    if watcher_running(config) is False:
+        yield f"Restart your watcher: `{lead_watcher_command(config, name)}`"
+    if count and (worker := available(exited_worker, config, status, lead)):
+        worker_name, position = worker
+        yield (
+            f"{worker_name} exited: read its final report with `{command} get lead {position}`, "
+            "then merge or retire it."
+        )
+    for message in available(pending_guests, config, handover) or ():
+        ack = guest_reply_ack(command, message)
+        yield f"{guest_label(message)} waiting: `{command} read lead`, handle, then `{ack}`."
