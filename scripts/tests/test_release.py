@@ -173,8 +173,8 @@ class ReleaseTests(unittest.TestCase):
         record = self.build.parent / "check-env"
         self.env["CHECK_RECORD"] = str(record)
         self.write_check('printf "%s\\n%s\\n" "$TMPDIR" "$MALAK_CHECK_RUN" > "$CHECK_RECORD"\n'
-                         'stat -f %Lp "$TMPDIR" >> "$CHECK_RECORD" 2>/dev/null '
-                         '|| stat -c %a "$TMPDIR" >> "$CHECK_RECORD"')
+                         'stat -c %a "$TMPDIR" >> "$CHECK_RECORD" 2>/dev/null '
+                         '|| stat -f %Lp "$TMPDIR" >> "$CHECK_RECORD"')
         self.tag()
 
         self.release()
