@@ -74,10 +74,19 @@ pub(super) fn ask_owner(seat: &Seat, args: AskArgs) -> Result<Reply, Error> {
             option.option, option.pros, option.cons
         ));
     }
-    let text = run(seat, &recipe, args.question.as_bytes())?;
+    let receipt = run(seat, &recipe, args.question.as_bytes())?;
+    let arrival = if seat.is_lead() {
+        "The owner's answer will arrive in your inbox, as a note on the questions channel that \
+         replies to this question, marked \"Owner answer\". A reply without that mark is a note \
+         from its sender, not the owner's answer. Call inbox with a wait to see it."
+    } else {
+        "The owner's answer will arrive in your inbox, as a note that replies to this question, \
+         marked \"Owner answer\". A reply without that mark is a note from its sender, not the \
+         owner's answer. Call inbox with a wait to see it."
+    };
     Ok(Reply {
-        value: json!({ "posted": true, "receipt": text }),
-        text,
+        value: json!({ "posted": true, "receipt": receipt, "answer": arrival }),
+        text: format!("{receipt}\n{arrival}"),
     })
 }
 
@@ -92,11 +101,27 @@ pub(super) fn start_agent(seat: &Seat, args: StartArgs) -> Result<Reply, Error> 
         "--".to_owned(),
     ];
     recipe.extend(args.tool.command().map(str::to_owned));
-    let text = run(seat, &recipe, &[])?;
+    let text = run(seat, &recipe, &[]).map_err(watcher_advice)?;
     Ok(Reply {
         value: json!({ "started": args.name, "output": text }),
         text,
     })
+}
+
+/// What the launcher says when no lead watcher is running.
+const NO_WATCHER: &str = "no lead watcher is running";
+
+/// The refusal for a lead that is not watching, in terms of the tools it has:
+/// the launcher's own advice is a shell command an MCP lead cannot run.
+fn watcher_advice(error: Error) -> Error {
+    if error.to_string().contains(NO_WATCHER) {
+        return Error::refused(
+            "no lead watcher is running, so reports from your agents would go unseen. \
+             Call inbox with a wait (for example wait 60), then call start_agent again. \
+             A lead that keeps calling inbox with a wait counts as watching.",
+        );
+    }
+    error
 }
 
 pub(super) fn agents(seat: &Seat) -> Result<Reply, Error> {

@@ -9,12 +9,39 @@ use crate::cli::{
 use malak::{CreationId, Error, Kind, Limits};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{path::PathBuf, sync::Mutex};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
+
+const QUESTIONS: &str = "questions";
+/// How often `inbox` looks again while it waits and only repeats are unread.
+const POLL: Duration = Duration::from_millis(500);
+
+/// What this server process has already returned from `inbox`.
+#[derive(Default)]
+struct Returned {
+    /// Channel, creation and position of each message returned.
+    messages: HashSet<(String, String, u64)>,
+    /// The text of each ended-session notice returned.
+    notices: HashSet<String>,
+}
+
+/// `text` with the handover's path replaced, so no output points at the file.
+pub(super) fn scrub_handover(text: &str, handover: Option<&str>) -> String {
+    match handover {
+        Some(path) if !path.is_empty() => text.replace(path, "MALAK_HANDOVER"),
+        _ => text.to_owned(),
+    }
+}
 
 pub(super) struct Seat {
     session: Mutex<Session>,
     /// The participant's inbox, where `inbox` reads.
     inbox: String,
+    returned: Mutex<Returned>,
     lead: bool,
     pub(super) config: Option<PathBuf>,
     board: crate::cli::config::Board,
@@ -29,6 +56,7 @@ impl Seat {
         Ok(Self {
             session: Mutex::new(session),
             inbox: id.inbox().to_string(),
+            returned: Mutex::default(),
             lead: id.is_lead(),
             board: Config::read(config.clone())?.board,
             config,
@@ -42,10 +70,7 @@ impl Seat {
 
     /// Text that names no handover file, so no tool output points at one.
     pub(super) fn scrub(&self, text: &str) -> String {
-        match &self.handover {
-            Some(path) if !path.is_empty() => text.replace(path.as_str(), "MALAK_HANDOVER"),
-            _ => text.to_owned(),
-        }
+        scrub_handover(text, self.handover.as_deref())
     }
 
     pub(super) fn call(&self, tool: &str, input: Value) -> Result<Reply, Error> {
@@ -67,21 +92,116 @@ impl Seat {
         command.execute_reply(&mut session, body)
     }
 
+    /// The channels `inbox` reads. The lead's owner answers arrive on
+    /// `questions`; a worker's arrive in its own inbox.
+    fn inbox_channels(&self) -> Vec<String> {
+        let mut channels = vec![self.inbox.clone()];
+        if self.lead {
+            channels.push(QUESTIONS.to_owned());
+        }
+        channels
+    }
+
+    /// One read of the inbox: the messages not yet returned by this process,
+    /// the notes and answers that count as new, and how many repeats it left out.
+    fn read_new(&self, args: &InboxArgs, wait: u64) -> Result<(String, Value, usize), Error> {
+        let returned = self
+            .returned
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let mut taken = 0;
+        let mut batch_notices = HashSet::new();
+        let mut repeats = 0;
+        let command = Command::Read {
+            channels: self.inbox_channels(),
+            // The limit counts what is returned, not repeats it skips.
+            limit: args.all.then_some(args.limit).flatten(),
+            wait,
+            json: true,
+            ack: false,
+            agent: true,
+            offset: None,
+        };
+        let mut session = self.session.lock().unwrap_or_else(|held| held.into_inner());
+        let (mut text, mut value, _) = command.execute_reply_keeping(&mut session, |message| {
+            message.mark_owner_answer();
+            let (channel, creation, position) = message.address();
+            if channel == QUESTIONS && !message.answers_a_question() {
+                return false;
+            }
+            if !args.all {
+                let key = (channel.to_owned(), creation.to_owned(), position);
+                let notice = message.ended_session_notice();
+                if returned.messages.contains(&key)
+                    || notice.is_some_and(|notice| {
+                        returned.notices.contains(notice)
+                            || !batch_notices.insert(notice.to_owned())
+                    })
+                {
+                    repeats += 1;
+                    return false;
+                }
+                if args.limit.is_some_and(|limit| taken >= limit) {
+                    return false;
+                }
+                taken += 1;
+            }
+            true
+        })?;
+        if repeats > 0 {
+            text.push_str(&format!(
+                "\n{repeats} earlier message(s) already returned by this server are not repeated; \
+                 inbox with all: true returns them again.\n"
+            ));
+            value["already_returned"] = json!(repeats);
+        }
+        Ok((text, value, repeats))
+    }
+
+    /// Remember what a reply showed in full, so the next `inbox` does not repeat it.
+    fn remember(&self, value: &Value) {
+        let mut returned = self
+            .returned
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        for message in value["messages"].as_array().map_or(&[][..], Vec::as_slice) {
+            let (Some(channel), Some(creation), Some(position)) = (
+                message["channel"].as_str(),
+                message["creation"].as_str(),
+                message["position"].as_u64(),
+            ) else {
+                continue;
+            };
+            if message.get("fetch").is_none() {
+                returned
+                    .messages
+                    .insert((channel.to_owned(), creation.to_owned(), position));
+            }
+            if message.get("reissue").is_some()
+                && let Some(body) = message["body"].as_str()
+            {
+                returned.notices.insert(body.to_owned());
+            }
+        }
+    }
+
     fn inbox(&self, args: InboxArgs) -> Result<Reply, Error> {
         // A lead that waits on its inbox counts as watching, as a `mailbox --next` tick does.
         let _tick = (self.lead && args.wait > 0).then(|| TickMark::start(&self.board));
-        let (mut text, mut value) = self.run(
-            Command::Read {
-                channels: vec![self.inbox.clone()],
-                limit: args.limit,
-                wait: args.wait,
-                json: true,
-                ack: false,
-                agent: true,
-                offset: None,
-            },
-            None,
-        )?;
+        let deadline = Instant::now() + Duration::from_secs(args.wait);
+        let mut wait = args.wait;
+        let (mut text, mut value) = loop {
+            let (text, value, repeats) = self.read_new(&args, wait)?;
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let empty = value["messages"].as_array().is_none_or(Vec::is_empty);
+            // Messages already returned end a read's wait at once; look again until the deadline.
+            if !empty || repeats == 0 || remaining.is_zero() {
+                break (text, value);
+            }
+            std::thread::sleep(POLL.min(remaining));
+            wait = deadline.saturating_duration_since(Instant::now()).as_secs();
+        };
+        self.remember(&value);
         if args.ack {
             let through = acknowledgeable(&value);
             let mut session = self.session.lock().unwrap_or_else(|held| held.into_inner());
@@ -206,6 +326,9 @@ struct InboxArgs {
     limit: Option<u64>,
     #[serde(default)]
     ack: bool,
+    /// Also return messages this server already returned.
+    #[serde(default)]
+    all: bool,
 }
 
 #[derive(Deserialize)]

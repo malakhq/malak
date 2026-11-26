@@ -32,6 +32,8 @@ from worker_queue import (
 
 RECIPES = Path(__file__).resolve().parent
 REPORT_RETRY_SECONDS = 60
+# How long a failed launch waits for the board to see its session end.
+CLAIM_END_WAIT = 5
 # Private status from the CLI's launcher-report send path.
 REPORT_CONNECTION_EXIT = 75
 SELECT_BOARD = "[--config PATH | --board NAME]"
@@ -412,6 +414,7 @@ class Worker:
         # The demo supervisor verifies retained reports before revoking its workers.
         if self.demo_handover:
             return
+        self.end_claim()
         try:
             board.malak("--config", self.config, "revoke", self.record.id)
             out.details(f"Revoked worker {self.args.name} after launch failure.",
@@ -423,6 +426,26 @@ class Worker:
                         stream=sys.stderr)
         finally:
             self.handover.unlink(missing_ok=True)
+
+    def end_claim(self):
+        """Let the board see the launch's session end before the worker is revoked.
+
+        The board records the end of a claim only for an enrolment that is not
+        revoked, so revoking first leaves the claim bound to a process that is gone.
+        """
+        if not self.bound:
+            return
+        self.close_gate()
+        deadline = time.monotonic() + CLAIM_END_WAIT
+        while time.monotonic() < deadline:
+            try:
+                people = self.connection.status()["participants"]
+            except (board.RecipeError, OSError, KeyError, ValueError):
+                return
+            claim = next((person.get("claim") for person in people if person["id"] == self.record.id), None)
+            if (claim or {}).get("state") != "bound":
+                return
+            time.sleep(0.05)
 
     def environment(self, cursor):
         creation, position, trace = cursor.split(":", 2)

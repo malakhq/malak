@@ -264,6 +264,25 @@ impl Command {
         output.tool_result(header)
     }
 
+    /// Like `execute_reply` for a read, with only the messages `keep` accepts. `keep`
+    /// may label a message.
+    /// The second value is how many messages `keep` left out.
+    pub(super) fn execute_reply_keeping(
+        self,
+        session: &mut Session,
+        mut keep: impl FnMut(&mut presentation::Message) -> bool,
+    ) -> Result<(String, Value, usize), Error> {
+        let (mut output, header) = self.exchange(session, None)?;
+        let mut left_out = 0;
+        if let Output::Agent { messages, .. } = &mut output {
+            let before = messages.len();
+            messages.retain_mut(&mut keep);
+            left_out = before - messages.len();
+        }
+        let (text, value) = output.tool_result(header)?;
+        Ok((text, value, left_out))
+    }
+
     fn exchange(
         self,
         session: &mut Session,

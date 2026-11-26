@@ -4185,3 +4185,27 @@ mod unread_at_exit {
         assert!(!run(workers).contains("Unread"));
     }
 }
+
+#[test]
+fn a_failed_launch_leaves_no_bound_claim_and_a_revoked_enrolment() {
+    let board = Fixture::new();
+    board.start();
+    let brief = board.home.path().join("brief");
+    // A brief over the body limit fails the launch after the claim is issued.
+    fs::write(&brief, vec![b'x'; 40 << 20]).unwrap();
+    let mut launch = board.recipe("worker-start");
+    launch
+        .args(["alice", "--board", BOARD, "--no-watcher", "--brief"])
+        .arg(&brief)
+        .args(["--", "sleep", "600"]);
+    let failed = output(launch);
+    assert!(!failed.status.success());
+
+    let mut workers = board.recipe("workers");
+    workers.args(["alice", "--board", BOARD, "--json"]);
+    let listing: Value = serde_json::from_str(&run(workers)).unwrap();
+
+    let worker = &listing["workers"][0];
+    assert_eq!(worker["enrolment"], "revoked");
+    assert_eq!(worker["claim"]["state"], "ended");
+}

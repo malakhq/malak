@@ -60,6 +60,10 @@ enum Presentation {
 pub(super) struct Message {
     label: Label,
     body: Vec<u8>,
+    /// The channel the message replies to, from its `reply_to` header.
+    reply_channel: Option<String>,
+    /// Set by `mark_owner_answer` for the owner's answer to a question.
+    owner_answer: bool,
 }
 
 /// The command that re-issues the handover of the session an ended-session notice
@@ -80,6 +84,8 @@ struct View<'a> {
     #[serde(flatten)]
     label: &'a Label,
     presentation: Presentation,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    owner_answer: bool,
     body: String,
     body_encoding: &'static str,
     body_bytes: usize,
@@ -100,6 +106,10 @@ struct Fetch<'a> {
 impl Message {
     pub(super) fn from_frame(header: Map<String, Value>, body: Vec<u8>) -> Result<Self, Error> {
         let trace = super::participant::trace_header(&header);
+        let reply_channel = header
+            .get("headers")
+            .and_then(|headers| headers.get("reply_to")?.get(0)?.as_str())
+            .map(str::to_owned);
         let mut label: Label =
             serde_json::from_value(Value::Object(header)).map_err(|_| bad_label())?;
         label.trace = trace;
@@ -107,7 +117,34 @@ impl Message {
         let _: ChannelName = label.channel.parse().map_err(|_| bad_label())?;
         let _: Position = label.position.try_into().map_err(|_| bad_label())?;
         let _: CreationId = label.creation.parse().map_err(|_| bad_label())?;
-        Ok(Self { label, body })
+        Ok(Self {
+            label,
+            body,
+            reply_channel,
+            owner_answer: false,
+        })
+    }
+
+    /// Whether the message is a reply on `questions` to a message there. The
+    /// sender can be anyone who may send on `questions`.
+    pub(super) fn answers_a_question(&self) -> bool {
+        self.label.channel == "questions" && self.reply_channel.as_deref() == Some("questions")
+    }
+
+    /// Label the message as the owner's answer when it is one: a reply to a
+    /// question, proven to come from the lead, which is how `recipe answer`
+    /// sends the owner's answer. A reply from any other sender stays a note
+    /// from that sender.
+    pub(super) fn mark_owner_answer(&mut self) {
+        self.owner_answer = self.reply_channel.as_deref() == Some("questions")
+            && self.label.sender == "lead"
+            && matches!(self.label.grade, Grade::Proven);
+    }
+
+    /// The text of a notice that a session ended and its handover can be re-issued.
+    pub(super) fn ended_session_notice(&self) -> Option<&str> {
+        let text = std::str::from_utf8(&self.body).ok()?;
+        reissue_command(text).map(|_| text)
     }
 
     pub(super) fn address(&self) -> (&str, &str, u64) {
@@ -149,6 +186,7 @@ impl Message {
                 ("lead", Grade::Proven, Kind::Task, None) => Presentation::Task,
                 _ => Presentation::Information,
             },
+            owner_answer: self.owner_answer,
             body,
             body_encoding,
             body_bytes: self.body.len(),
@@ -223,6 +261,9 @@ pub(super) fn text(
                 Presentation::Information => "information",
             },
         );
+        if view.owner_answer {
+            rendered.push_str("Owner answer yes\n");
+        }
         if let Some(board) = &view.label.guest_board {
             writeln!(
                 rendered,
