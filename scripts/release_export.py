@@ -11,7 +11,7 @@ import sys
 import tarfile
 import tempfile
 
-from process_cleanup import cleanup_on_interrupt, command_process
+from process_cleanup import cleanup_on_interrupt, command_process, private_check_run
 from release_identity import identity_environment, release_identity
 
 
@@ -84,7 +84,8 @@ def run_check(checkout, description, env, log=None):
     try:
         command = [checkout / "scripts/check"]
         capture = {} if log is None else {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT}
-        with command_process(command, cwd=checkout, env=env, **capture) as check:
+        with private_check_run(env) as check_env, \
+                command_process(command, cwd=checkout, env=check_env, **capture) as check:
             if log is not None:
                 for line in check.stdout:
                     log.write(line)

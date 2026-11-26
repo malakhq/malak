@@ -175,13 +175,17 @@ impl LocalEntrances {
         file.take(self.board.limits.body_bytes as u64 + 1)
             .read_to_end(&mut captured)
             .map_err(|error| Error::refused(format!("cannot read worker result: {error}")))?;
+        let unread = self.board.unread(id).describe();
         let summary = if captured.is_empty() {
-            format!("Worker exited without a result (exit status {status}).")
+            format!("Worker exited without a result (exit status {status}){unread}.")
         } else {
-            format!("Worker exit status: {status}")
+            format!("Worker exit status: {status}{unread}")
         };
-        let mut body =
-            format!("{summary}\n\n{}\n\n", ended_notice(id, &participant.name)).into_bytes();
+        let mut body = format!(
+            "{summary}\n\n{}\n\n",
+            crate::claim_notice::ended(&participant.name)
+        )
+        .into_bytes();
         body.extend(captured);
         let message = notice_id(id, &claim, false);
         let mut request = SendRequest::note("lead", &message, &body);
@@ -226,7 +230,7 @@ impl LocalEntrances {
                 session.folder.as_deref().unwrap_or("folder unavailable")
             )
         } else {
-            ended_notice(id, name)
+            crate::claim_notice::ended(name)
         };
         let channel = claim.issuer.inbox();
         let send_id = notice_id(id, claim, accepted);
@@ -338,15 +342,4 @@ impl<T: Transport> LocalOpening<T> {
 fn notice_id(id: &ParticipantId, claim: &Claim, accepted: bool) -> String {
     let suffix = if accepted { "accepted" } else { "ended" };
     format!("claim-{id}-{}-{suffix}", claim.issued_at_ms)
-}
-
-fn ended_notice(id: &ParticipantId, name: &crate::ParticipantName) -> String {
-    let reissue = if id.is_lead() {
-        "malak recipe lead-up".to_owned()
-    } else {
-        format!("malak recipe worker-start {name} --again or malak enrol {name} --session PID")
-    };
-    format!(
-        "{name}'s session ended. Its handover is unclaimed. See malak recipe workers {name} for claim history. Re-issue with {reissue}."
-    )
 }

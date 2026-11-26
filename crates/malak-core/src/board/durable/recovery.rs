@@ -35,6 +35,7 @@ impl Owner {
     /// The work factor bounds checked candidate bytes per channel relative to
     /// its size. The resulting plan is bound to that factor and to the store
     /// ID and its host-attested or saved local place, if available.
+    #[doc(hidden)]
     pub fn look_recovery(
         store: impl Store + 'static,
         limits: Limits,

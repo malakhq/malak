@@ -1,0 +1,25 @@
+#!/bin/sh
+# Run a command with no Python on PATH: PATH becomes a folder of links to every
+# other program, and the command fails if python is still found.
+set -eu
+
+bin=$(mktemp -d)
+trap 'rm -rf "$bin"' EXIT
+IFS=:
+for folder in $PATH; do
+    for program in "$folder"/*; do
+        name=${program##*/}
+        case $name in python*|pypy*) continue ;; esac
+        if [ -f "$program" ] && [ -x "$program" ] && [ ! -e "$bin/$name" ]; then
+            ln -s "$program" "$bin/$name"
+        fi
+    done
+done
+unset IFS
+PATH=$bin
+export PATH
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+    echo "scripts/without-python: python is still on PATH" >&2
+    exit 1
+fi
+"$@"

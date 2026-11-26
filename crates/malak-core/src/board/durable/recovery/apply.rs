@@ -9,6 +9,7 @@ impl Owner {
     ///
     /// An accepted plan records progress before each destructive store change.
     /// Retry with the same number to continue after interruption.
+    #[doc(hidden)]
     pub fn apply_recovery(
         store: impl Store + 'static,
         limits: Limits,
@@ -25,6 +26,7 @@ impl Owner {
     /// or copied. The board still verifies its saved filesystem and directory
     /// identities. A store configured for host attestation needs valid host
     /// evidence.
+    #[doc(hidden)]
     pub fn apply_recovery_with_owner_confirmation(
         store: impl Store + 'static,
         limits: Limits,
@@ -39,6 +41,7 @@ impl Owner {
     ///
     /// This operation only opens the private journal. Any begun channels keep
     /// their raised attempts and every unfinished channel remains stopped.
+    #[doc(hidden)]
     pub fn withdraw_recovery(
         limits: Limits,
         state: impl AsRef<Path>,

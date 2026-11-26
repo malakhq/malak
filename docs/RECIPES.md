@@ -388,6 +388,11 @@ choose the new session once the previous claim is ended or released. Paste
 the new instructions. The worker keeps its inbox and its grants unless you
 provide new `--grant` rules. `malak recipe workers researcher` and the
 mailbox label the worker `adopted (no launcher)` and show its claim history.
+When a session has ended, `recipe workers` adds a `Re-issue` line with the
+command for that worker (`recipe adopt NAME` for an adopted one,
+`recipe worker-start NAME --again` for a launched one). The board's own notice
+names no command, so the hook and `read --agent` views of that notice add a
+`Re-issue` line with both forms, and `recipe lead-up` for the lead.
 
 ## Enrol and launch a worker
 
@@ -442,7 +447,11 @@ before the first standalone run. The demo handles its own permission prompt.
 The recipe sends each run's final stdout to `lead` under the worker's identity
 through [report.sh](../crates/malak/recipes/report.sh). With stdout, the body
 starts with `Worker exit status: N` and a blank line, followed by the output.
-If stdout is empty, the report gives the exit status. The recipe keeps stderr in
+If stdout is empty, the report gives the exit status. When a bound worker
+leaves messages in its `to/ID` inbox unread or unacknowledged, the first line
+also says how many, with their senders and positions, for example
+`Worker exit status: 0, 1 unread (lead #3)`; `recipe workers NAME` shows the
+same after exit. An `--unbound` worker's report is unchanged. The recipe keeps stderr in
 the worker's private results directory under the board state folder and
 prints its path if the command exits with an error. If the board connection
 drops or the board is restarting, the launcher retries with backoff for up to
@@ -899,6 +908,30 @@ with the channel and position in the hook header and compare the creation
 ID. `get` retrieves retained messages without advancing the reader or
 making a message eligible for acknowledgement. After a board restart,
 `read` a still-due message again before manually acknowledging it.
+
+## Agent tools are adapters
+
+A recipe is a documented pattern of the four board verbs. It names no agent
+tool and no model. Everything that belongs to one tool lives in that tool's
+adapter, a file `adapter_<tool>.py` beside the recipes that defines `ADAPTER`:
+
+- the payload fields that identify the tool and its session,
+- the reply format for each hook event,
+- how its hooks are registered (settings file, config folder, instruction file),
+- how `worker-start` wires hooks into a worker it launches,
+- its question tools and how their questions and answers are read,
+- its delegation tools, and the command that starts a delegate,
+- the lines of text that name the tool (the lead's loop, its background task).
+
+`adapters.py` finds every `adapter_*.py` and the recipes read the tables, so a
+new tool is a new adapter file and no recipe changes. `adapter_claude.py`,
+`adapter_codex.py` and `adapter_generic.py` are the built-in tables. A test
+fails when any recipe file outside the adapters names a tool or a model, and
+another adds a third tool as one table and shows registration, reminder,
+question recording and the delegation line working for it.
+
+Examples and hints use a generic agent command, `-- <your agent command>`, and
+name a tool or model only as an "e.g." taken from its adapter.
 
 ## Install the Malak skill and reminders
 

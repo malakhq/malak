@@ -2,8 +2,13 @@
 
 from contextlib import contextmanager
 import os
+from pathlib import Path
+import pwd
+import secrets
+import shutil
 import signal
 import subprocess
+import sys
 
 
 class Interrupted(SystemExit):
@@ -45,3 +50,35 @@ def command_process(command, **kwargs):
                     pass
                 process.wait()
             raise
+
+
+def account_home():
+    return Path(pwd.getpwuid(os.geteuid()).pw_dir).resolve()
+
+
+@contextmanager
+def private_check_run(env=None):
+    """Give one check run a private temp folder and a run id for its test homes.
+
+    The folder is mode 700 under the account home, because the SQLite store
+    refuses a folder inside a world-writable parent such as /tmp. The
+    environment it yields sets TMPDIR to the folder and MALAK_CHECK_RUN to the
+    run id, which tags the run's short test homes as ~/.m/<run id>. Both are
+    removed afterwards.
+    """
+    home = account_home()
+    cache = home / ("Library/Caches" if sys.platform == "darwin" else ".cache")
+    run = secrets.token_hex(3)
+    temporary = cache / f"malak-check-{run}"
+    temporary.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary.mkdir(mode=0o700)
+    try:
+        yield {**(os.environ if env is None else env), "TMPDIR": str(temporary), "MALAK_CHECK_RUN": run}
+    finally:
+        shutil.rmtree(temporary, ignore_errors=True)
+        shutil.rmtree(home / ".m" / run, ignore_errors=True)
+        try:
+            (home / ".m").rmdir()
+        except OSError:
+            # Other runs or fixtures are still using the shared short directory.
+            pass

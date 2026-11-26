@@ -136,20 +136,23 @@ fn the_lead_is_shown_the_worker_start_form_before_delegating_outside_the_board()
                 "Agent",
                 json!({"prompt": "Survey", "subagent_type": "Explore"}),
             ),
-            "-- claude --model claude-sonnet-5-5 ...",
+            "-- <your agent command>` (e.g. claude --model claude-sonnet-5-5 ...)",
         ),
         (
             delegation("Task", json!({"prompt": "Survey"})),
-            "-- claude --model claude-sonnet-5-5 ...",
+            "-- <your agent command>` (e.g. claude --model claude-sonnet-5-5 ...)",
         ),
-        (bash("codex exec 'Survey the tests'"), "-- codex exec ..."),
+        (
+            bash("codex exec 'Survey the tests'"),
+            "-- <your agent command>` (e.g. codex exec ...)",
+        ),
         (
             bash("cd work && codex exec -m gpt-5.4 'Survey'"),
-            "-- codex exec ...",
+            "-- <your agent command>` (e.g. codex exec ...)",
         ),
         (
             bash("durative exec abc -- codex exec 'Survey'"),
-            "-- durative exec ID -- codex exec ...",
+            "-- <your agent command>` (e.g. durative exec ID -- codex exec ...)",
         ),
     ] {
         let line =

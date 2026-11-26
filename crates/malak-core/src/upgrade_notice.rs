@@ -1,7 +1,5 @@
 //! Build the fixed upgrade note for the owner door and the CLI preview.
 
-/// The lead-facing changelog shipped in this build.
-pub const CHANGELOG: &str = include_str!("../lead-changes.md");
 const FALLBACK_ENTRIES: usize = 5;
 /// The reserved record sender ID for notices sent by the owner door.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -12,9 +10,9 @@ pub(crate) fn sent_by_owner(sender: &crate::ParticipantId, channel: &crate::Chan
     sender.as_str() == SENDER_ID && channel.as_str() == "lead"
 }
 
-/// Return the newest entry in this build, to mark what the older build knew.
-pub fn latest_change() -> Option<&'static str> {
-    entries(CHANGELOG).next()
+/// Return the newest entry of a changelog, to mark what an older build knew.
+pub fn latest_change(changelog: &str) -> Option<&str> {
+    entries(changelog).next()
 }
 
 /// Render a notice using the changes listed ahead of a known previous entry.

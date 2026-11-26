@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Add a public client. The new `malak::client::Client` attaches to a served
+  board from a handover file over any `Transport` and offers `send`, `read`,
+  `get` and `ack` with the types `Handle` uses. `tests/layers.rs` now serves a
+  board and talks to it with only the public API, and
+  `examples/socket_client.rs` connects to `examples/socket_board.rs`. The wire
+  protocol is unchanged. Fixes #43.
+- Serve a board from the library. The new `malak::server` module (the `unix`
+  feature) has `Server`, `StopHandle`, `Entrance` and `LocalStartup`:
+  `Server::create` provisions a durable board, `listen` accepts links at an
+  entrance over any `Transport`, and `run` blocks until the board stops. The
+  accept loop, the places that cap each entrance and the ready gate moved out of
+  the command line; `malak board start` now calls them. Behaviour, the wire
+  protocol, on-disk formats and command output are unchanged. `tests/layers.rs`
+  serves a board over a transport and a mechanism written outside the core, and
+  `examples/socket_board.rs` serves one over Unix sockets. Fixes #41.
+- Make the `malak` crate embeddable. A build without the default `cli` feature
+  is the board alone, and `markdown`, `sqlite`, `unix` and `key` add the
+  built-in layers. `scripts/board-size` keeps that build under a size budget in
+  CI. The default build is unchanged.
+- Move every Claude Code, Codex and generic detail of the recipes into one
+  adapter table per tool (`adapter_<tool>.py`). Recipes name no tool or model,
+  a new tool is a new adapter file, and the lead's worker-start hint now reads
+  `-- <your agent command>` with the tool's own command as an "e.g.". The
+  installed skill is filled from the adapters; its text is otherwise unchanged.
+- Add `docs/EMBEDDING.md` and an in-process example, `examples/team.rs`: a lead
+  and two helpers that send, read, ack, ask, answer and stop, run by CI.
+- Choose the public API of the `malak` crate, add the `layers`, `stores`,
+  `transport` and `mechanism` modules, and pin the API in
+  `docs/public-api.txt`. CI fails on a change that does not update it. There is
+  no stability promise until 1.0. Recovery and local-entrance setup are now
+  `#[doc(hidden)]`.
 - Register one fixed set of hook entries for Claude Code and Codex, with no
   matchers, and decide every behaviour from the payload inside
   `malak recipe observe --reminder`. The command answers events it does not use

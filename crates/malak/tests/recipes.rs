@@ -2,7 +2,6 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use malak_testkit::unix_socket::SocketDir;
 use serde_json::{Value, json};
 use std::env;
 use std::fs;
@@ -21,6 +20,10 @@ mod retained;
 #[path = "recipes/worker_await.rs"]
 mod worker_await;
 
+#[path = "fixtures/board_home.rs"]
+mod board_home;
+use board_home::BoardHome;
+
 const MALAK: &str = env!("CARGO_BIN_EXE_malak");
 const BOARD: &str = "malak";
 const TEST_WATCHDOG: Duration = Duration::from_secs(180);
@@ -30,19 +33,14 @@ const MALAK_BLOCK_START: &str =
 const MALAK_BLOCK_END: &str = "<!-- malak:end -->";
 
 struct Fixture {
-    home: Rc<SocketDir>,
+    home: Rc<BoardHome>,
     config: PathBuf,
     state: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Self {
-        let board = Self::in_home(
-            Rc::new(SocketDir::new().unwrap()),
-            BOARD,
-            "st ' quoted",
-            "d",
-        );
+        let board = Self::in_home(Rc::new(BoardHome::new()), BOARD, "st ' quoted", "d");
         // This config also occupies the fixture's default XDG path.
         board.configure(&format!("name = {BOARD:?}"));
         board
@@ -57,7 +55,7 @@ impl Fixture {
         )
     }
 
-    fn in_home(home: Rc<SocketDir>, name: &str, state: &str, sockets: &str) -> Self {
+    fn in_home(home: Rc<BoardHome>, name: &str, state: &str, sockets: &str) -> Self {
         let state = home.path().join(state);
         let config = Self::write_config(home.path(), name, &state, sockets);
         Self {
@@ -182,17 +180,6 @@ impl Fixture {
             .as_str()
             .unwrap()
             .into()
-    }
-}
-
-impl Drop for Fixture {
-    fn drop(&mut self) {
-        if Rc::strong_count(&self.home) == 1 {
-            for folder in demo_folders(self) {
-                let _ = demo_owner(self, &folder, &["board", "stop"]).output();
-            }
-        }
-        let _ = self.owner(&["board", "stop"]).output();
     }
 }
 
@@ -489,7 +476,7 @@ fn agents_md_does_not_rewrite_an_identical_block() {
 
 #[test]
 fn agents_md_updates_a_managed_block_and_preserves_existing_bytes() {
-    let board = Fixture::in_home(Rc::new(SocketDir::new().unwrap()), BOARD, "state", "d");
+    let board = Fixture::in_home(Rc::new(BoardHome::new()), BOARD, "state", "d");
     board.configure("name = \"research\"");
     let project = board.home.path().join("separate project");
     fs::create_dir(&project).unwrap();
@@ -3993,4 +3980,131 @@ fn a_bound_worker_gets_one_claim_notice_and_one_combined_exit_report() {
     );
     assert!(bodies.contains(&"from bound child"));
     assert!(bodies.contains(&"second command"));
+}
+
+mod unread_at_exit {
+    use super::*;
+
+    const PRINT_DONE: [&str; 3] = ["sh", "-c", "printf done"];
+
+    fn report_body(board: &Fixture) -> String {
+        let reports = messages(&board.lead(&["read", "lead", "--json"]));
+        let report = reports.iter().find(|row| row["kind"] == "report").unwrap();
+        String::from_utf8(body(report)).unwrap()
+    }
+
+    fn bound_worker(board: &Fixture, brief: bool) {
+        let mut launcher = board.recipe("worker-start");
+        launcher.args(["alice", "--board", BOARD, "--no-watcher"]);
+        if brief {
+            fs::write(board.home.path().join("brief"), "Do the work.\n").unwrap();
+            launcher.args(["--brief", "brief"]);
+        }
+        launcher.arg("--").args(PRINT_DONE);
+        run(launcher);
+    }
+
+    #[test]
+    fn a_bound_workers_exit_report_counts_the_brief_it_never_acknowledged() {
+        let board = Fixture::new();
+        board.start();
+
+        bound_worker(&board, true);
+
+        let report = report_body(&board);
+        assert!(
+            report.starts_with("Worker exit status: 0, 1 unread (lead #1)\n\n"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn a_bound_workers_exit_report_is_unchanged_with_an_empty_inbox() {
+        let board = Fixture::new();
+        board.start();
+
+        bound_worker(&board, false);
+
+        let report = report_body(&board);
+        assert!(!report.contains("unread"), "{report}");
+    }
+
+    #[test]
+    fn an_unbound_workers_exit_report_is_unchanged_by_an_unread_brief() {
+        let board = Fixture::new();
+        board.start();
+        fs::write(board.home.path().join("brief"), "Do the work.\n").unwrap();
+
+        run(board.worker_start(&["--brief", "brief"], &PRINT_DONE));
+
+        assert_eq!(report_body(&board), "Worker exit status: 0\n\ndone");
+    }
+
+    #[test]
+    fn workers_shows_the_unread_count_after_the_worker_exits() {
+        let board = Fixture::new();
+        board.start();
+        bound_worker(&board, true);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD]);
+        let text = run(workers);
+
+        assert!(text.contains("Unread"), "{text}");
+        assert!(text.contains("1 unread (lead #1)"), "{text}");
+    }
+
+    #[test]
+    fn workers_json_carries_the_unread_words_of_an_exited_worker() {
+        let board = Fixture::new();
+        board.start();
+        bound_worker(&board, true);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD, "--json"]);
+        let rows: Value = serde_json::from_str(&run(workers)).unwrap();
+
+        assert_eq!(rows["workers"][0]["unread"], "1 unread (lead #1)");
+    }
+
+    #[test]
+    fn workers_names_the_worker_start_command_once_a_bound_session_ends() {
+        let board = Fixture::new();
+        board.start();
+        bound_worker(&board, false);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD]);
+        let text = run(workers);
+
+        let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            words.contains("Re-issue malak recipe worker-start alice --again"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn workers_names_no_command_for_a_session_that_never_ended() {
+        let board = Fixture::new();
+        board.start();
+        run(board.worker_start(&[], &PRINT_DONE));
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD]);
+
+        assert!(!run(workers).contains("Re-issue"));
+    }
+
+    #[test]
+    fn workers_shows_no_unread_line_for_an_empty_inbox() {
+        let board = Fixture::new();
+        board.start();
+        run(board.worker_start(&[], &PRINT_DONE));
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD]);
+
+        assert!(!run(workers).contains("Unread"));
+    }
 }

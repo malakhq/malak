@@ -186,11 +186,16 @@ const RECIPES: &[(&str, &str, Script)] = &[
 ];
 
 const SUPPORT: &[Script] = &[
+    script!("adapter_claude.py"),
+    script!("adapter_codex.py"),
+    script!("adapter_codex_notice.py"),
+    script!("adapter_durative.py"),
+    script!("adapter_generic.py"),
+    script!("adapters.py"),
     script!("agent_settings.py"),
     script!("agent_launch.py"),
     script!("board.sh"),
     script!("board_data.py"),
-    script!("codex_notice.py"),
     script!("delegation.py"),
     script!("demo.py"),
     script!("demo_board.py"),

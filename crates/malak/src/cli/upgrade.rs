@@ -15,6 +15,8 @@ mod source;
 mod workers;
 use workers::Worker;
 
+pub(super) use notice::CHANGELOG;
+
 pub(super) const FINISH: &str = "__upgrade-finish";
 const HANDOFF: &str = "malak upgrade continuation 1";
 const NOTICE_HANDOFF: &str = "malak upgrade continuation 2";

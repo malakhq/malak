@@ -169,6 +169,22 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("does not exist", result.stderr)
         self.assertFalse(self.destination.exists())
 
+    def test_the_check_runs_in_a_private_temp_folder_that_is_removed_afterwards(self):
+        record = self.build.parent / "check-env"
+        self.env["CHECK_RECORD"] = str(record)
+        self.write_check('printf "%s\\n%s\\n" "$TMPDIR" "$MALAK_CHECK_RUN" > "$CHECK_RECORD"\n'
+                         'stat -c %a "$TMPDIR" >> "$CHECK_RECORD" 2>/dev/null '
+                         '|| stat -f %Lp "$TMPDIR" >> "$CHECK_RECORD"')
+        self.tag()
+
+        self.release()
+
+        temporary, run, mode = record.read_text().split()
+        self.assertNotEqual(Path(temporary).parent, self.build.parent)
+        self.assertEqual(Path(temporary).name, f"malak-check-{run}")
+        self.assertEqual(mode, "700")
+        self.assertFalse(Path(temporary).exists())
+
     def test_failed_tag_check_leaves_the_destination_absent(self):
         self.write_check("exit 42")
         self.tag()

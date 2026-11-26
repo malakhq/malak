@@ -38,6 +38,25 @@ impl FromStr for Kind {
     }
 }
 
+/// The wire spelling of a durability.
+pub(crate) const fn durability_name(value: Durability) -> &'static str {
+    match value {
+        Durability::Memory => "memory",
+        Durability::Restart => "restart",
+        Durability::Synced => "synced",
+    }
+}
+
+/// Read a durability from its wire spelling.
+pub(crate) fn parse_durability(value: &str) -> Option<Durability> {
+    match value {
+        "memory" => Some(Durability::Memory),
+        "restart" => Some(Durability::Restart),
+        "synced" => Some(Durability::Synced),
+        _ => None,
+    }
+}
+
 /// A header value supplied with a send.
 #[derive(Clone, Copy, Debug)]
 pub enum HeaderValue<'a> {
@@ -182,6 +201,7 @@ impl<'a> SendRequest<'a> {
     ///
     /// The grade must come from the board's identity check. Returns `refused` if
     /// the shape or kind is invalid for that grade.
+    #[doc(hidden)]
     pub fn validate(self, limits: &Limits, grade: Grade) -> Result<SendContent<'a>, Error> {
         if self.body.len() > limits.body_bytes || self.headers.len() > limits.header_entries {
             return Err(Error::refused("message exceeds size limits").at_limit());
