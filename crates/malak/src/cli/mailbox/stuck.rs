@@ -11,6 +11,8 @@ const MARKER: &str = "stuck";
 
 pub(super) struct Watch {
     pending: BTreeMap<Address, Work>,
+    // The last send, read or ack each participant made on any channel.
+    active: HashMap<String, u64>,
     closed: HashMap<String, Option<Revocation>>,
     after: Option<u64>,
 }
@@ -37,6 +39,7 @@ impl Watch {
     pub fn starting_after(initial: &Status, after: Option<u64>) -> Self {
         Self {
             pending: BTreeMap::new(),
+            active: HashMap::new(),
             after,
             closed: initial
                 .participants
@@ -74,6 +77,12 @@ impl Watch {
     }
 
     pub fn event(&mut self, model: &Model, event: &Event) {
+        if matches!(event.event.as_str(), "stored" | "read" | "acked")
+            && let (Some(id), Some(at)) = (&event.id, event.at_ms)
+        {
+            let last = self.active.entry(id.clone()).or_default();
+            *last = (*last).max(at);
+        }
         if let (Some(address), Some(sender), Some(kind), Some(at)) =
             (event.address(), &event.id, &event.kind, event.at_ms)
         {
@@ -146,12 +155,23 @@ impl Watch {
                 // can still advance the cursor before it is used for closure.
                 return true;
             }
-            if now >= work.next_due {
+            // A worker that is doing things is not stuck: wait until it has been
+            // quiet for the whole window.
+            let quiet_from = self
+                .active
+                .get(id)
+                .copied()
+                .into_iter()
+                .chain(model.last_message(id))
+                .max()
+                .map_or(0, |at| at.saturating_add(STUCK_AFTER_MS));
+            if now >= work.next_due && now >= quiet_from {
                 block(&mut blocks, now, person, address, work, "running");
                 let elapsed = now - work.first_due;
                 work.next_due = now.saturating_add(REPEAT_MS - elapsed % REPEAT_MS);
             }
-            next = Some(next.map_or(work.next_due, |at: u64| at.min(work.next_due)));
+            let due = work.next_due.max(quiet_from);
+            next = Some(next.map_or(due, |at: u64| at.min(due)));
             true
         });
         (blocks, next)
@@ -324,5 +344,72 @@ mod tests {
 
         model.apply(event("acked", ID, INBOX, "second", 1));
         assert_eq!(watch.report(&model, DUE + REPEAT_MS), (String::new(), None));
+    }
+
+    fn activity(kind: &str, channel: &str, at: u64) -> Event {
+        let mut activity = event(kind, ID, channel, "other", 1);
+        activity.at_ms = Some(at);
+        activity
+    }
+
+    #[test]
+    fn a_worker_that_sent_within_the_window_is_not_stuck() {
+        let (model, mut watch) = setup(false);
+        store(&mut watch, 1, SENT);
+        watch.event(&model, &activity("stored", "questions", DUE - 100));
+
+        let (block, next) = watch.report(&model, DUE);
+
+        assert!(block.is_empty());
+        assert_eq!(next, Some(DUE - 100 + STUCK_AFTER_MS));
+    }
+
+    #[test]
+    fn a_worker_is_stuck_once_quiet_for_the_whole_window() {
+        let (model, mut watch) = setup(false);
+        store(&mut watch, 1, SENT);
+        let quiet = DUE - 100 + STUCK_AFTER_MS;
+        watch.event(&model, &activity("stored", "questions", DUE - 100));
+
+        assert!(watch.report(&model, quiet - 1).0.is_empty());
+        check_block(&watch.report(&model, quiet).0, &format!("{BLOCK} running"));
+    }
+
+    #[test]
+    fn a_read_on_another_channel_counts_as_activity() {
+        let (model, mut watch) = setup(false);
+        store(&mut watch, 1, SENT);
+        watch.event(&model, &activity("read", "questions", DUE - 100));
+
+        assert!(watch.report(&model, DUE).0.is_empty());
+    }
+
+    #[test]
+    fn an_ack_on_another_channel_counts_as_activity() {
+        let (model, mut watch) = setup(false);
+        store(&mut watch, 1, SENT);
+        watch.event(&model, &activity("acked", "orders", DUE - 100));
+
+        assert!(watch.report(&model, DUE).0.is_empty());
+    }
+
+    #[test]
+    fn a_send_the_model_already_knows_counts_as_activity() {
+        let (mut model, mut watch) = setup(false);
+        store(&mut watch, 1, SENT);
+        model.observe(&activity("stored", "questions", DUE - 100));
+
+        assert!(watch.report(&model, DUE).0.is_empty());
+    }
+
+    #[test]
+    fn another_participants_activity_does_not_delay_the_reminder() {
+        let (model, mut watch) = setup(false);
+        store(&mut watch, 1, SENT);
+        let mut lead = event("stored", "lead", "questions", "other", 1);
+        lead.at_ms = Some(DUE - 100);
+        watch.event(&model, &lead);
+
+        assert!(!watch.report(&model, DUE).0.is_empty());
     }
 }

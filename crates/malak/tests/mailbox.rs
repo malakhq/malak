@@ -1519,7 +1519,7 @@ fn the_leads_plain_monitor_names_a_worker_enrolled_after_startup() {
 }
 
 #[test]
-fn the_leads_plain_monitor_uses_an_id_for_a_reused_name() {
+fn the_leads_plain_monitor_names_a_relaunched_worker_not_its_inbox() {
     let board = Board::start();
     let (old, handover) = board.enrol("reviewer");
     board.run(&["revoke", &old]);
@@ -1530,10 +1530,7 @@ fn the_leads_plain_monitor_uses_an_id_for_a_reused_name() {
     board.send(&inbox, "task", "Distinguish the new reviewer.");
 
     let task = block_with(&lines, "Distinguish the new reviewer.");
-    assert!(
-        task.contains(&format!("lead sent a task to {inbox} #1")),
-        "{task}"
-    );
+    assert!(task.contains("lead sent a task to reviewer #1"), "{task}");
 }
 
 #[test]

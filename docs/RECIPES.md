@@ -200,7 +200,12 @@ and read orders in force with `malak --board NAME mailbox --orders`.
 Add `--timeout SECONDS` to end a quiet wait with `No events.`
 The watcher flags unacknowledged lead messages in worker inboxes after
 15 minutes and every hour thereafter until the worker acknowledges them or
-is revoked. The first word after the timestamp is `stuck`.
+is revoked, but only while the worker has been quiet: any send, read or
+acknowledgement by the worker on any channel within the last 15 minutes holds
+the reminder back until the worker has been quiet for 15 minutes. The first
+word after the timestamp is `stuck`. A watcher sees the worker's reads and
+acknowledgements from the moment it starts, and its sends from the retained
+messages.
 
 To stay awake inside the host's own loop, run
 `malak --board NAME mailbox --plain --for lead --next --timeout 60` once per
@@ -224,10 +229,23 @@ names, create channels with these names, or send messages to them.
 Existing channels with these names can still be read. To read a legacy
 channel named `help`, use `malak read -- help`.
 
+`lead-up` refuses while another session still holds the lead: the claim is bound
+to a running session, or an unbound lead has an open connection. The refusal
+names the holding session (pid, program, folder) and when it was claimed. Add
+`--takeover` to take over on purpose; the claim history then shows a new
+`issued` event for your session. A claim whose session has ended, or a re-run
+from the holding session, goes ahead as before.
+
 To take over, run the same setup, then run `malak read lead` to see unacknowledged
 messages first. Review `questions`, orders in force, `malak mailbox --waiting`,
 and active work with `malak mailbox --trace ID`. Acknowledge each lead message
 after handling it. Keep one lead chat at a time.
+
+An acknowledgement means handled. For notices and reports, which need no work,
+`malak read --ack CHANNEL` reads and acknowledges exactly the messages it
+printed in one command. For tasks, run plain `malak read CHANNEL`, do the work,
+then acknowledge with `malak ack --creation CREATION CHANNEL POSITION`. A task
+acknowledged on reading is not shown again if the agent crashes mid-work.
 
 ## Run boards in layers
 
@@ -393,6 +411,11 @@ command for that worker (`recipe adopt NAME` for an adopted one,
 `recipe worker-start NAME --again` for a launched one). The board's own notice
 names no command, so the hook and `read --agent` views of that notice add a
 `Re-issue` line with both forms, and `recipe lead-up` for the lead.
+
+`recipe workers` shows each name's active enrolment: its newest one that is not
+revoked. After a relaunch the older enrolments stay hidden unless you add
+`--all`, which lists them after the active one. The JSON output lists every
+enrolment, active first, and each record has an `active` flag.
 
 ## Enrol and launch a worker
 
@@ -939,7 +962,10 @@ Run `malak recipe agents` and confirm the prompt. Use `--yes` without a
 terminal or `--dry-run` to preview. The recipe uses the existing
 `~/.claude` and `~/.codex` directories. It respects `CLAUDE_CONFIG_DIR`
 and `CODEX_HOME` when set. It writes `skills/malak/SKILL.md` and adds
-reminders to Claude Code's `settings.json` and Codex's `hooks.json`.
+reminders to Claude Code's `settings.json` and Codex's `hooks.json`. It also
+adds the [`malak mcp`](MCP.md) server to Claude Code's `.claude.json` and Codex's
+`config.toml` when those files exist, and never creates them. `--remove` takes
+out only the server entry it added.
 
 The reminder appears once per chat, on the first submitted prompt or
 first eligible agent or background tool event. A starting subagent can

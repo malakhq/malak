@@ -2,6 +2,10 @@
 
 Add new entries at the top. Start each line with its date and keep existing lines stable so upgrades can find the previous build's place in the list.
 
+- 2026-11-26 · `malak mcp` serves a Seat to any MCP client over stdio, with tools for the inbox, reports and questions, and for the lead to delegate and start agents. Stay awake by calling `inbox` with a wait. `recipe agents` adds the server to Claude Code and Codex.
+- 2026-11-26 · `recipe lead-up` refuses to take over a lead bound to another running session and names that session. Use `--takeover` to take over on purpose.
+- 2026-11-26 · `recipe workers NAME` shows the running enrolment. Use `--all` to see older ones.
+- 2026-11-26 · Use `read --ack` for notices and reports. For tasks, `read`, then `ack` after the work is done.
 - 2026-11-25 · Malak 0.1.2 release.
 - 2026-11-25 · Use `recipe adopt` to bring a running Claude Code or Codex session onto a local board. The mailbox and `recipe workers` show the status of session-bound handovers.
 - 2026-11-25 · Registered guest replies show up in the home lead inbox, watcher and Stop hook. Use `recipe guest --register-home` to register existing guest handovers.

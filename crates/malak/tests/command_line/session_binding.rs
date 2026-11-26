@@ -247,3 +247,112 @@ fn an_ended_claim_stays_ended_until_explicit_reissue() {
     assert_eq!(claim["history"][2]["event"], "issued");
     assert_ne!(std::fs::read(&handover).unwrap(), old_key);
 }
+
+fn lead_claim(board: &Fixture) -> serde_json::Value {
+    claim(board, "lead")
+}
+
+/// Bind the lead to `pid`, as a second chat's lead-up would.
+fn bind_lead_to(board: &Fixture, pid: u32) {
+    let status = board.status();
+    let lead = status["participants"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|record| record["id"] == "lead")
+        .unwrap();
+    let fingerprint = lead["fingerprint"].as_str().unwrap();
+    run(board
+        .without_handover(&[
+            "rekey",
+            "lead",
+            "--session",
+            &pid.to_string(),
+            "--fingerprint",
+            fingerprint,
+            "--out",
+        ])
+        .arg(board.lead()));
+}
+
+fn issued_events(claim: &serde_json::Value) -> usize {
+    claim["history"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|event| event["event"] == "issued")
+        .count()
+}
+
+#[test]
+fn lead_up_refuses_a_lead_held_by_another_live_session() {
+    let board = Fixture::new();
+    run(&mut board.without_handover(&["recipe", "lead-up"]));
+    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    bind_lead_to(&board, other.id());
+
+    let refused = board
+        .without_handover(&["recipe", "lead-up"])
+        .output()
+        .unwrap();
+    other.kill().unwrap();
+    other.wait().unwrap();
+
+    assert!(!refused.status.success());
+    let message = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        message.contains(&format!("pid {}", other.id())),
+        "{message}"
+    );
+    assert!(message.contains("program sleep"), "{message}");
+    assert!(message.contains("--takeover"), "{message}");
+    assert_eq!(lead_claim(&board)["session"]["pid"], other.id());
+}
+
+#[test]
+fn lead_up_takeover_rebinds_a_live_lead_and_records_it() {
+    let board = Fixture::new();
+    run(&mut board.without_handover(&["recipe", "lead-up"]));
+    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    bind_lead_to(&board, other.id());
+    let before = issued_events(&lead_claim(&board));
+
+    run(&mut board.without_handover(&["recipe", "lead-up", "--takeover"]));
+    other.kill().unwrap();
+    other.wait().unwrap();
+
+    let claim = lead_claim(&board);
+    assert_eq!(claim["state"], "bound");
+    assert_ne!(claim["session"]["pid"], other.id());
+    assert_eq!(issued_events(&claim), before + 1);
+}
+
+#[test]
+fn lead_up_proceeds_when_the_claimed_session_has_ended() {
+    let mut board = Fixture::new();
+    run(&mut board.without_handover(&["recipe", "lead-up"]));
+    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    bind_lead_to(&board, other.id());
+    other.kill().unwrap();
+    other.wait().unwrap();
+    board.restart();
+    assert_eq!(lead_claim(&board)["state"], "ended");
+
+    run(&mut board.without_handover(&["recipe", "lead-up"]));
+
+    assert_eq!(lead_claim(&board)["state"], "bound");
+    assert_ne!(lead_claim(&board)["session"]["pid"], other.id());
+}
+
+#[test]
+fn lead_up_from_the_holding_session_changes_nothing() {
+    let board = Fixture::new();
+    run(&mut board.without_handover(&["recipe", "lead-up"]));
+    let before = issued_events(&lead_claim(&board));
+    let key = std::fs::read(board.lead()).unwrap();
+
+    run(&mut board.without_handover(&["recipe", "lead-up"]));
+
+    assert_eq!(issued_events(&lead_claim(&board)), before);
+    assert_eq!(std::fs::read(board.lead()).unwrap(), key);
+}

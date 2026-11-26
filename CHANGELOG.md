@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- `malak mcp` serves a Seat to any MCP client over stdio, built on the official
+  Rust MCP SDK (`rmcp`) behind the new `mcp` feature, which is on by default for
+  the command line and absent from the board-only library build. Every Seat has
+  `inbox`, `ack`, `get`, `report` and `ask_owner`. The lead's Seat also has
+  `delegate`, `start_agent` and `agents`. No Seat has an `answer` tool. A
+  lead's `inbox` call with a wait counts as a lead watch tick. `recipe agents`
+  adds the server to Claude Code's and Codex's MCP files when they exist, and
+  `--remove` takes out only that entry. The release binary grows from 9.2 MB
+  to 12.0 MB. See `docs/MCP.md`. Fixes #50.
+- Document when to use `read --ack` and when to read, work and then `ack`: `--ack`
+  for notices and reports, plain `read` then `ack` for tasks, because an
+  acknowledged task is not shown again after a crash. The flag itself is not
+  new. The installed skill carries the same guidance. Fixes #49.
+- A worker is flagged `stuck` only when a lead message to it is still
+  unacknowledged and the worker has had no activity of its own (a send, a read
+  or an acknowledgement on any channel) in the last 15 minutes. The 15 minute
+  window and the hourly repeat are unchanged. Fixes #48.
+- `mailbox --plain` and `--next` show a relaunched worker by its name. A revoked
+  enrolment no longer counts as another worker with that name, so the inbox ID
+  is not shown in its place. If two live enrolments ever shared a name, they
+  would be numbered `NAME#1` and `NAME#2`, as the live view numbers them.
+  Fixes #47.
+- `malak recipe workers` shows a name's active enrolment (its newest one that
+  is not revoked) first and hides older enrolments unless `--all` is given. The
+  JSON output keeps every record and field, lists the active one first and adds
+  an `active` flag. Fixes #46.
+- `malak recipe lead-up` no longer takes over a live lead silently. It refuses
+  when the lead's claim is bound to another running session, or an unbound lead
+  has an open connection, names the holding session (pid, program, folder) and
+  says to use `--takeover` or end that session. `--takeover` keeps the old
+  behaviour and shows in the claim history. An ended claim and a re-run from
+  the same session proceed as before. Fixes #45.
 - Add a public client. The new `malak::client::Client` attaches to a served
   board from a handover file over any `Transport` and offers `send`, `read`,
   `get` and `ack` with the types `Handle` uses. `tests/layers.rs` now serves a

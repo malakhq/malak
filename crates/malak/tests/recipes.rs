@@ -4096,6 +4096,83 @@ mod unread_at_exit {
         assert!(!run(workers).contains("Re-issue"));
     }
 
+    /// Enrol alice bound to this test, revoke her, and enrol her again.
+    /// Returns the old and the new inbox.
+    fn relaunched_alice(board: &Fixture) -> (String, String) {
+        let enrol = |handover: &str| {
+            let session = std::process::id().to_string();
+            let mut command = board.owner(&["enrol", "alice", "--json", "--session", &session]);
+            command.arg("--out").arg(board.home.path().join(handover));
+            let receipt: Value = serde_json::from_str(&run(command)).unwrap();
+            format!("to/{}", receipt["id"].as_str().unwrap())
+        };
+        let old = enrol("alice-old");
+        run(board.owner(&["revoke", "alice"]));
+        (old, enrol("alice-new"))
+    }
+
+    #[test]
+    fn workers_name_shows_only_the_active_enrolment_by_default() {
+        let board = Fixture::new();
+        board.start();
+        let (old, new) = relaunched_alice(&board);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD]);
+        let text = run(workers);
+
+        assert!(text.contains(&new), "{text}");
+        assert!(!text.contains(&old), "{text}");
+    }
+
+    #[test]
+    fn workers_name_all_lists_the_active_enrolment_first() {
+        let board = Fixture::new();
+        board.start();
+        let (old, new) = relaunched_alice(&board);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--all", "--board", BOARD]);
+        let text = run(workers);
+
+        assert!(
+            text.find(&new).unwrap() < text.find(&old).unwrap(),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn workers_without_a_name_shows_each_names_active_enrolment() {
+        let board = Fixture::new();
+        board.start();
+        let (old, new) = relaunched_alice(&board);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["--board", BOARD]);
+        let text = run(workers);
+
+        assert!(text.contains(&new) && !text.contains(&old), "{text}");
+    }
+
+    #[test]
+    fn workers_json_lists_the_active_enrolment_first_and_flags_it() {
+        let board = Fixture::new();
+        board.start();
+        let (old, new) = relaunched_alice(&board);
+
+        let mut workers = board.recipe("workers");
+        workers.args(["alice", "--board", BOARD, "--json"]);
+        let rows: Value = serde_json::from_str(&run(workers)).unwrap();
+
+        let rows = rows["workers"].as_array().unwrap();
+        assert_eq!(
+            rows.iter()
+                .map(|row| (row["inbox"].as_str().unwrap(), row["active"].as_bool()))
+                .collect::<Vec<_>>(),
+            [(new.as_str(), Some(true)), (old.as_str(), Some(false))]
+        );
+    }
+
     #[test]
     fn workers_shows_no_unread_line_for_an_empty_inbox() {
         let board = Fixture::new();

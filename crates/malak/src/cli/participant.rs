@@ -251,6 +251,15 @@ impl Command {
         session: &mut Session,
         body: Option<Vec<u8>>,
     ) -> Result<Value, Error> {
+        self.execute_reply(session, body).map(|(_, value)| value)
+    }
+
+    /// Run the command for a tool: the text a model reads, and the same facts as JSON.
+    pub(super) fn execute_reply(
+        self,
+        session: &mut Session,
+        body: Option<Vec<u8>>,
+    ) -> Result<(String, Value), Error> {
         let (output, header) = self.exchange(session, body)?;
         output.tool_result(header)
     }

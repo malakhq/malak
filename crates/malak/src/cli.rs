@@ -1,8 +1,5 @@
 use board_version::BoardVersion;
-use clap::{
-    CommandFactory, FromArgMatches, Parser, Subcommand,
-    error::{ContextKind, ContextValue, ErrorKind},
-};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand, error::ErrorKind};
 use client_transport::ClientTransport;
 use malak::{
     Action, ChannelName, ChannelPattern, CreationId, Error, Grant, Outcome, ParticipantId,
@@ -25,7 +22,7 @@ mod guest_inbox;
 mod help;
 mod hook;
 mod mailbox;
-#[allow(dead_code, reason = "the stdio tool server ships in v0.2")]
+#[cfg(feature = "mcp")]
 mod mcp;
 mod output;
 mod owner_commands;
@@ -206,6 +203,10 @@ enum Command {
     /// Deliver inbox messages to an agent tool over stdio.
     #[command(after_help = examples::help(&["hook"]))]
     Hook(hook::Args),
+    /// Serve the participant's Seat to an MCP client over stdio.
+    #[cfg(feature = "mcp")]
+    #[command(after_help = examples::help(&["mcp"]))]
+    Mcp,
     /// List or run recipes shipped with Malak.
     #[command(
         after_help = examples::help(&["recipe"]),
@@ -313,16 +314,17 @@ pub(super) fn run() -> ExitCode {
         .and_then(|mut matches| Args::from_arg_matches_mut(&mut matches));
     let args = match args {
         Ok(args) => args,
+        #[cfg(not(feature = "mcp"))]
         Err(error)
             if matches!(
-                error.get(ContextKind::InvalidSubcommand),
-                Some(ContextValue::String(name)) if name == "mcp"
+                error.get(clap::error::ContextKind::InvalidSubcommand),
+                Some(clap::error::ContextValue::String(name)) if name == "mcp"
             ) =>
         {
             output::error(
                 "serve the Malak tools",
-                "malak mcp ships in v0.2",
-                "Use the Malak CLI or malak hook for local agents in v0.1.",
+                "this build of malak has no MCP server",
+                "Install a build with the mcp feature, or use the Malak CLI or malak hook.",
             );
             return ExitCode::from(4);
         }
@@ -683,6 +685,8 @@ impl Args {
                 output::write(&result)
             }
             Command::Hook(args) => return hook::run(args, self.config),
+            #[cfg(feature = "mcp")]
+            Command::Mcp => mcp::serve(self.config),
             Command::Recipe(args) => return recipe::run(args, self.config),
             Command::Participant(command) => command.execute(self.config),
         };
@@ -932,6 +936,11 @@ impl Args {
                     "For a Markdown board, stop the board before using malak recover.",
                 )
             }
+            #[cfg(feature = "mcp")]
+            Command::Mcp => (
+                "serve the Malak tools".into(),
+                "Check the handover. An MCP client starts this command with MALAK_HANDOVER set.",
+            ),
             Command::Hook(_) => (
                 "run the Malak hook".into(),
                 "Run malak hook --describe to check the hook setup.",

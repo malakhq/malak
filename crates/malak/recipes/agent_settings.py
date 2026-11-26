@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import tomllib
 
 
 def read_file(path, *, private=False):
@@ -168,3 +169,98 @@ def plan_settings_removal(change):
         del doc["hooks"]
     updated = render_settings(doc, original) if doc or before is not None else None
     return path, original, updated, removed
+
+
+# The MCP server Malak registers, next to the hooks. A tool's adapter names the
+# file and picks the codec for its format. A codec never creates the user's file
+# and removes only the entry it wrote.
+MCP_NAME = "malak"
+
+
+class JsonServers:
+    """MCP servers kept as an object of entries under one key of a JSON file."""
+
+    def __init__(self, key):
+        self.key = key
+
+    def entry(self, executable):
+        return {"type": "stdio", "command": executable, "args": ["mcp"], "env": {}}
+
+    def plan(self, path, executable):
+        original = read_file(path)
+        if original is None:
+            return None
+        doc = parse_object(path, original)
+        servers = doc.setdefault(self.key, {})
+        if not isinstance(servers, dict):
+            raise ValueError(f"{path}: {self.key} must be an object")
+        if MCP_NAME in servers:
+            return {"path": str(path), "kept": True}
+        created = self.key not in parse_object(path, original)
+        entry = self.entry(executable)
+        servers[MCP_NAME] = entry
+        return {
+            "path": str(path), "before": encode(original), "after": encode(render_settings(doc, original)),
+            "entry": entry, "created": created,
+        }
+
+    def removal(self, change):
+        path = Path(change["path"])
+        original = read_file(path)
+        if original is None:
+            return None
+        doc = parse_object(path, original)
+        servers = doc.get(self.key)
+        if not isinstance(servers, dict) or servers.get(MCP_NAME) != change["entry"]:
+            return None
+        del servers[MCP_NAME]
+        if not servers and change["created"]:
+            del doc[self.key]
+        return path, original, render_settings(doc, original)
+
+
+class TomlServers:
+    """MCP servers kept as `[table.NAME]` sections of a TOML file, in a marked block."""
+
+    BEGIN = "# BEGIN malak mcp (added by malak recipe agents)"
+    END = "# END malak mcp"
+
+    def __init__(self, table):
+        self.table = table
+
+    def block(self, executable):
+        return "\n".join([
+            self.BEGIN, f"[{self.table}.{MCP_NAME}]", f"command = {json.dumps(executable)}",
+            'args = ["mcp"]', self.END,
+        ]) + "\n"
+
+    def plan(self, path, executable):
+        original = read_file(path)
+        if original is None:
+            return None
+        text = original.decode()
+        if MCP_NAME in tomllib.loads(text).get(self.table, {}):
+            return {"path": str(path), "kept": True}
+        separator = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
+        added = separator + self.block(executable)
+        return {
+            "path": str(path), "before": encode(original), "after": encode((text + added).encode()),
+            "added": added,
+        }
+
+    def removal(self, change):
+        path = Path(change["path"])
+        original = read_file(path)
+        if original is None:
+            return None
+        text = original.decode()
+        if text.count(change["added"]) != 1:
+            return None
+        return path, original, text.replace(change["added"], "", 1).encode()
+
+
+def parse_object(path, original):
+    doc = json.loads(original) if original and original.strip() else {}
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return doc

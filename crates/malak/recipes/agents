@@ -10,7 +10,7 @@ import shlex
 import sys
 
 from agent_settings import (
-    decode, directory_exists, encode, plan_settings, plan_settings_removal,
+    MCP_NAME, decode, directory_exists, encode, plan_settings, plan_settings_removal,
     read_file, replace_file, settings_additions,
 )
 import adapters
@@ -80,7 +80,53 @@ def plan_install(home):
         change = plan_settings(root / settings, installed_registrations(tool_of(settings)))
         if change is not None:
             plan["settings"].append(change)
+    plan["mcp"] = plan_mcp(home)
     return plan
+
+
+def plan_mcp(home):
+    """The MCP server entries to add: one per tool whose MCP file exists and lacks Malak."""
+    executable = os.environ["MALAK_RECIPE_EXE"]
+    changes = []
+    for adapter in adapters.agents():
+        if adapter.mcp_file is None:
+            continue
+        path = adapter.mcp_file(home)
+        change = adapter.mcp_codec.plan(path, executable)
+        if change is None:
+            continue
+        if change.get("kept"):
+            print(f"Keeping existing MCP server {MCP_NAME} in {out.display(path)}.")
+        else:
+            changes.append({**change, "tool": adapter.key})
+    return changes
+
+
+def codec_of(change):
+    return next(a for a in adapters.agents() if a.key == change["tool"]).mcp_codec
+
+
+def install_mcp(plan, dry_run):
+    for change in plan.get("mcp", []):
+        path = Path(change["path"])
+        if not dry_run:
+            before, after = decode(change["before"]), decode(change["after"])
+            if read_file(path) != after:
+                replace_file(path, before, after)
+        print(f"{'Would add' if dry_run else 'Added'} MCP server {MCP_NAME} in {out.display(path)}.")
+
+
+def remove_mcp(plan, dry_run):
+    for change in plan.get("mcp", []):
+        path = Path(change["path"])
+        removal = codec_of(change).removal(change)
+        if removal is None:
+            print(f"Keeping edited or removed MCP server {MCP_NAME} in {out.display(path)}.")
+            continue
+        _, previous, updated = removal
+        if not dry_run:
+            replace_file(path, previous, updated)
+        print(f"{'Would remove' if dry_run else 'Removed'} MCP server {MCP_NAME} in {out.display(path)}.")
 
 
 def install(plan, dry_run):
@@ -107,6 +153,7 @@ def install(plan, dry_run):
                 replace_file(path, before, after)
                 hooks_changed = True
         print(f"{'Would add' if dry_run else 'Added'} {events} in {out.display(path)}.")
+    install_mcp(plan, dry_run)
     return hooks_changed
 
 
@@ -153,6 +200,7 @@ def remove(plan, dry_run):
             remove_folder(path.parent)
             if skill["create_parent"]:
                 remove_folder(path.parent.parent)
+    remove_mcp(plan, dry_run)
 
 
 def refresh_settings(change, hooks, say):
@@ -302,14 +350,20 @@ def run(args, home):
         return
     if plan is None:
         plan = plan_install(home)
-        if plan["skills"] or plan["settings"]:
+        if plan["skills"] or plan["settings"] or plan["mcp"]:
             if not args.dry_run:
                 save()
         else:
             print(f"No new {adapters.names()} skill or hooks to install.")
             plan["complete"] = True
     elif plan["complete"]:
-        print("Malak agent integration is already installed.")
+        # An install from before the MCP server gets it on the next confirmed run.
+        added = plan["mcp"] = plan.get("mcp") or plan_mcp(home)
+        install_mcp(plan, args.dry_run)
+        if added and not args.dry_run:
+            save()
+        if not added:
+            print("Malak agent integration is already installed.")
     if not plan["complete"]:
         install(plan, args.dry_run)
         if not args.dry_run:
@@ -351,7 +405,7 @@ def main():
         if not sys.stdin.isatty():
             parser.error("use --yes when running without a terminal")
         action = "Remove" if args.remove else "Install"
-        question = f"{action} Malak's skill and reminders for {adapters.names('and')}"
+        question = f"{action} Malak's skill, reminders and MCP server for {adapters.names('and')}"
         if args.notify_open:
             question += "".join(a.notice.QUESTION for a in adapters.agents() if a.notice)
         try:

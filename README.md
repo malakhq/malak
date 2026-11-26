@@ -27,6 +27,7 @@ Copyright 2026 Olaoluwa Oluro. Licensed under the Apache License 2.0; see LICENS
 - [Quickstart](docs/QUICKSTART.md)
 - [Command examples](docs/EXAMPLES.md)
 - [Agent recipes](docs/RECIPES.md)
+- [MCP server](docs/MCP.md)
 - [Rust API](#rust-library)
 - [Embedding guide](docs/EMBEDDING.md)
 - [Architecture](ARCHITECTURE.md)
@@ -112,8 +113,9 @@ Use `malak mailbox --waiting` to find unacknowledged lead messages in
 worker inboxes. Add `--for NAME` to review one worker or `--json` for
 scripts. The lead's `malak mailbox --plain --for lead` watcher follows `lead`,
 `questions`, and `orders`, and emits `stuck` blocks after 15 minutes and hourly
-thereafter. Agents use `--next` to wait for the next event from another
-participant or a due reminder. It remembers shown messages across runs and
+thereafter, only while the worker itself has been quiet for 15 minutes. Agents
+use `--next` to wait for the next event from another participant or a due
+reminder. It remembers shown messages across runs and
 repeats unacknowledged lead mail at most once an hour.
 Participant names `lead` and `stuck` are reserved.
 
