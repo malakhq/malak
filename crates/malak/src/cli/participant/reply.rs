@@ -155,23 +155,45 @@ impl Output {
         }
     }
 
-    pub(super) fn tool_result(self, header: Map<String, Value>) -> Result<Value, Error> {
+    /// The tool reply: the text a model reads, and the same facts as JSON.
+    pub(super) fn tool_result(self, header: Map<String, Value>) -> Result<(String, Value), Error> {
         let mut header = json_reply(header);
         match self {
-            Self::Quiet | Self::Ack { .. } => Ok(serde_json::json!({ "done": true })),
-            Self::Receipt { id, .. } => {
+            Self::Quiet => Ok(("Done.".to_owned(), serde_json::json!({ "done": true }))),
+            Self::Ack {
+                channel, position, ..
+            } => Ok((
+                format!("Acknowledged {channel} through #{position}."),
+                serde_json::json!({ "done": true }),
+            )),
+            Self::Receipt {
+                id, channel, kind, ..
+            } => {
+                let position = number_field(&header, "position")?;
+                let text = format!("{} sent to {channel} #{position}.", kind_label(kind));
                 header.insert("id".into(), Value::String(id));
-                Ok(Value::Object(header))
+                Ok((text, Value::Object(header)))
             }
             Self::Agent {
                 offset, messages, ..
             } => {
-                // MCP sends the structured fields and a JSON text fallback.
+                // The text is what `read --agent` prints. The JSON carries the same
+                // messages, cut to the ones the text also shows.
+                let text = agent_text(&messages, offset)?.values;
                 let shown =
                     presentation::structured(&messages, offset, presentation::BUDGET / 2 - 512)?;
+                let count = text.len().min(shown.values.len());
                 header.remove("channels");
-                header.insert("messages".into(), Value::Array(shown.values));
-                Ok(Value::Object(header))
+                header.insert(
+                    "messages".into(),
+                    Value::Array(shown.values.into_iter().take(count).collect()),
+                );
+                let text = if count == 0 {
+                    "No messages.".to_owned()
+                } else {
+                    text[..count].concat()
+                };
+                Ok((text, Value::Object(header)))
             }
             Self::Messages { .. } | Self::Collected(_) => Err(invalid_reply()),
         }

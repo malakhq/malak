@@ -2,11 +2,13 @@
 
 import json
 import os
+from pathlib import Path
 import select
 import subprocess
 import time
 
 from adapters import Adapter
+from agent_settings import TomlServers
 import adapter_codex_notice as notice
 
 CONTEXT_EVENTS = ("SessionStart", "UserPromptSubmit", "SubagentStart", "PreToolUse", "PostToolUse")
@@ -35,6 +37,11 @@ def trust_steps(events):
         "to trust it. Press Esc and repeat for the other events. "
         "In Codex desktop, open Settings > Hooks to review and trust the Malak commands."
     )
+
+
+def mcp_file(home):
+    configured = os.environ.get("CODEX_HOME")
+    return (Path(configured).expanduser().absolute() if configured else home / ".codex") / "config.toml"
 
 
 def hook_arguments(events, env):
@@ -206,6 +213,8 @@ ADAPTER = Adapter(
     settings_file="hooks.json",
     instruction_file="AGENTS.md",
     trust_steps=trust_steps,
+    mcp_file=mcp_file,
+    mcp_codec=TomlServers("mcp_servers"),
     hook_arguments=hook_arguments,
     session_trust=session_trust,
     notice=notice,

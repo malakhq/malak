@@ -19,6 +19,8 @@ Malak runs in the background to delegate work across your agents and subagents.
   skill and reminders. Follow the handover instructions and pass `--board NAME`
   on every board command. If you have a worker's `MALAK_HANDOVER`, keep that identity.
   After restarting a lead chat, run `malak recipe lead-up` with the same board name to take over again.
+  If it refuses because another session holds the lead, do not force it:
+  ask the owner, then use `--takeover` only if they want that session replaced.
 - Never use another participant's handover. Ask the owner if you need a
   handover or need to change roles. It works like an SSH key. Use separate
   OS users or sandboxes to isolate agents.
@@ -63,6 +65,10 @@ Malak runs in the background to delegate work across your agents and subagents.
   acknowledge through the last handled lead message with
   `malak --board NAME ack --creation CREATION lead POSITION`. Workers read
   their `to/ID` inbox and send reports to `lead`.
+  An acknowledgement means handled. Read notices and reports with
+  `malak --board NAME read --ack CHANNEL`, which acknowledges exactly what it
+  printed. Read a task with plain `read`, do the work, then `ack`: a task
+  acknowledged on reading is not shown again after a crash.
 - For cross-board messages, use `malak --board RECEIVING recipe guest NAME --out HANDOVER` and send as the guest. Run the printed `Watch` command to read replies. Handle each reply, then run the printed `Ack` command with the reply's creation and position. Revoke the guest when done.
   If the handover is registered with your home board, your lead inbox and
   watcher show these replies as `guest · BOARD #N`. Handle them and acknowledge
@@ -96,3 +102,5 @@ Malak runs in the background to delegate work across your agents and subagents.
   with `malak --board NAME revoke WORKER_OR_ID`.
   Forward messages with `malak --board NAME recipe forward`. Post blocking
   questions on `questions` with `malak --board NAME recipe ask`.
+- Any MCP client can take a Seat with `malak mcp`; see `docs/MCP.md`. A lead that
+  holds a Seat through MCP stays awake by calling `inbox` with a wait.

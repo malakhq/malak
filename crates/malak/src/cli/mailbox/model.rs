@@ -4,6 +4,7 @@ use super::{activity, questions, sender::Sender, summary::Review};
 use crate::cli::output::sender_name_or_id;
 use malak::{ChannelName, ChannelPattern, ParticipantId};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ops::Range;
 
@@ -635,27 +636,28 @@ impl Model {
             .map_or_else(|| sender_name_or_id(id), |person| person.name.as_str())
     }
 
-    pub fn plain_name<'a>(&'a self, id: &'a str) -> &'a str {
+    pub fn plain_name<'a>(&'a self, id: &'a str) -> Cow<'a, str> {
         self.participant(id).map_or_else(
-            || sender_name_or_id(id),
-            |person| self.plain_label(person, id),
+            || Cow::Borrowed(sender_name_or_id(id)),
+            |person| self.plain_label(person),
         )
     }
 
-    pub fn plain_recipient<'a>(&'a self, channel: &'a str) -> &'a str {
+    pub fn plain_recipient<'a>(&'a self, channel: &'a str) -> Cow<'a, str> {
         self.inbox_recipient(channel)
-            .map_or(channel, |person| self.plain_label(person, channel))
+            .map_or(Cow::Borrowed(channel), |person| self.plain_label(person))
     }
 
-    fn plain_label<'a>(&'a self, person: &'a Participant, fallback: &'a str) -> &'a str {
-        if self
+    /// The name, numbered like the live view only when another live
+    /// enrolment shares it. A revoked enrolment never causes a clash.
+    fn plain_label<'a>(&'a self, person: &'a Participant) -> Cow<'a, str> {
+        let clash = self
             .participants
             .iter()
-            .any(|other| other.name == person.name && other.id != person.id)
-        {
-            fallback
-        } else {
-            &person.name
+            .any(|other| other.name == person.name && other.id != person.id && !other.revoked);
+        match self.name_number(person).filter(|_| clash) {
+            Some(number) => Cow::Owned(format!("{}#{number}", person.name)),
+            None => Cow::Borrowed(&person.name),
         }
     }
 

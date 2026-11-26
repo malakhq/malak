@@ -1,8 +1,11 @@
 """The Claude Code adapter."""
 
 import json
+import os
+from pathlib import Path
 
 from adapters import Adapter
+from agent_settings import JsonServers
 
 CONTEXT_EVENTS = ("SessionStart", "UserPromptSubmit", "SubagentStart", "PreToolUse", "PostToolUse")
 
@@ -36,6 +39,12 @@ class AskUserQuestion:
         return text
 
 
+def mcp_file(home):
+    """Claude Code keeps its user-level MCP servers in .claude.json, beside its config folder."""
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    return (Path(configured).expanduser().absolute() if configured else home) / ".claude.json"
+
+
 def demo_command(sockets, sandbox, lead, trust):
     if sandbox == "off":
         return ["claude", "-p", "--no-session-persistence", "--dangerously-skip-permissions", "--"]
@@ -58,6 +67,8 @@ ADAPTER = Adapter(
     settings_file="settings.json",
     instruction_file="CLAUDE.md",
     hook_arguments=hook_arguments,
+    mcp_file=mcp_file,
+    mcp_codec=JsonServers("mcpServers"),
     shell_tools=frozenset({"Bash"}),
     activity_tools=frozenset({"Agent", "Task", "Monitor"}),
     plan_tools=frozenset({"TaskCreate", "TaskUpdate", "TodoWrite"}),

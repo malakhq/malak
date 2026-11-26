@@ -47,6 +47,10 @@ class Adapter:
     instruction_file: Optional[str] = None
     # Text for the person after the hooks are registered, given the event names.
     trust_steps: Optional[Callable] = None
+    # Where the tool keeps its MCP servers: `mcp_file(home)` is the file, and
+    # `mcp_codec` reads and writes its format (see agent_settings).
+    mcp_file: Optional[Callable] = None
+    mcp_codec: object = None
 
     # The `malak hook --tool` format that delivers messages to this tool. Unset
     # means the tool's own key; a tool with no format of its own uses "generic".

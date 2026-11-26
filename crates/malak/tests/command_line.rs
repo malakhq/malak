@@ -327,38 +327,10 @@ fn recipe_long_help_includes_the_agent_setup_guide() {
 }
 
 #[test]
-fn the_tool_server_is_absent_from_release_help() {
+fn release_help_lists_the_tool_server() {
     let help = run(Command::new(MALAK).arg("--help"));
 
-    assert!(!help.contains("mcp"), "{help}");
-}
-
-#[test]
-fn the_tool_server_refuses_invocation_until_v02() {
-    let board = Fixture::new();
-    let result = Command::new(MALAK)
-        .arg("mcp")
-        .env("MALAK_HANDOVER", board.lead())
-        .stdin(Stdio::null())
-        .output()
-        .unwrap();
-    let diagnostic = String::from_utf8_lossy(&result.stderr);
-
-    assert_eq!(result.status.code(), Some(4), "{diagnostic}");
-    assert!(diagnostic.contains("ships in v0.2"), "{diagnostic}");
-    assert!(result.stdout.is_empty());
-}
-
-#[test]
-fn help_for_the_deferred_tool_server_reports_its_release() {
-    for args in [["mcp", "--help"], ["help", "mcp"]] {
-        let result = Command::new(MALAK).args(args).output().unwrap();
-        let diagnostic = String::from_utf8_lossy(&result.stderr);
-
-        assert_eq!(result.status.code(), Some(4), "{args:?}: {result:?}");
-        assert!(diagnostic.contains("ships in v0.2"), "{diagnostic}");
-        assert!(result.stdout.is_empty());
-    }
+    assert!(help.contains("mcp"), "{help}");
 }
 
 #[test]
@@ -1568,157 +1540,9 @@ fn an_agent_read_labels_exactly_the_unread_positions_lost_before_delivery() {
     assert!(shown["messages"][1].get("lost_before").is_none());
 }
 
-mod mcp {
-    use super::*;
-    use serde_json::json;
-    use std::io::Write;
-    use std::process::{ChildStdin, ChildStdout};
-
-    pub(super) struct Server {
-        child: Child,
-        input: ChildStdin,
-        output: BufReader<ChildStdout>,
-        next: u64,
-    }
-
-    impl Server {
-        pub(super) fn start(handover: &Path) -> Self {
-            Self::start_command(
-                Command::new(MALAK)
-                    .arg("mcp")
-                    .env("MALAK_HANDOVER", handover),
-            )
-        }
-
-        fn start_command(command: &mut Command) -> Self {
-            let mut child = command
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
-            let mut server = Self {
-                input: child.stdin.take().unwrap(),
-                output: BufReader::new(child.stdout.take().unwrap()),
-                child,
-                next: 0,
-            };
-            assert_eq!(
-                server.request(
-                    "initialize",
-                    json!({
-                        "protocolVersion": "2025-11-25",
-                        "capabilities": {},
-                        "clientInfo": { "name": "tests", "version": "1" },
-                    })
-                )["protocolVersion"],
-                "2025-11-25"
-            );
-            server.write(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
-            server
-        }
-
-        fn write(&mut self, frame: Value) {
-            writeln!(self.input, "{frame}").unwrap();
-            self.input.flush().unwrap();
-        }
-
-        pub(super) fn request(&mut self, method: &str, params: Value) -> Value {
-            self.next += 1;
-            self.write(json!({
-                "jsonrpc": "2.0",
-                "id": self.next,
-                "method": method,
-                "params": params,
-            }));
-            let mut line = String::new();
-            self.output.read_line(&mut line).unwrap();
-            let reply: Value = serde_json::from_str(&line).unwrap();
-            assert_eq!(reply["id"], self.next);
-            assert!(reply.get("error").is_none(), "{reply}");
-            reply["result"].clone()
-        }
-
-        fn call(&mut self, name: &str, arguments: Value) -> Value {
-            let reply = self.request(
-                "tools/call",
-                json!({ "name": name, "arguments": arguments }),
-            );
-            assert_ne!(reply["isError"], true, "{reply}");
-            reply["structuredContent"].clone()
-        }
-    }
-
-    #[test]
-    #[ignore = "stdio tool server ships in v0.2"]
-    fn mcp_can_attach_using_the_state_handover() {
-        let board = Fixture::new();
-        let mut server = Server::start_command(&mut board.without_handover(&["mcp"]));
-
-        let result = server.call("send", json!({"channel": "lead", "body": "from MCP"}));
-
-        let read = call(&board.lead(), &["read", "lead", "--json"]);
-        assert_eq!(messages(&read)[0]["id"], result["id"]);
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-
-    #[test]
-    #[ignore = "stdio tool server ships in v0.2"]
-    fn stdio_mcp_exposes_exactly_four_participant_tools() {
-        let board = Fixture::new();
-        let mut server = Server::start(&board.lead());
-
-        let methods = server.request("tools/list", json!({}));
-        let names: Vec<_> = methods["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|tool| tool["name"].as_str().unwrap())
-            .collect();
-
-        assert_eq!(names, ["send", "read", "get", "ack"]);
-    }
-
-    #[test]
-    #[ignore = "stdio tool server ships in v0.2"]
-    fn all_four_mcp_verbs_reuse_one_participant_connection() {
-        let board = Fixture::new();
-        let (inbox, worker) = board.enrol("worker");
-        call(&board.lead(), &["send", &inbox, "--kind", "task", "reply"]);
-        let mut server = Server::start(&worker);
-        // Removing the file leaves the open connection usable. Reopening
-        // the board connection for each tool would now fail to attach.
-        std::fs::remove_file(&worker).unwrap();
-
-        let read = server.call("read", json!({ "channels": [&inbox] }));
-        let shown = &read["messages"][0];
-        assert_eq!(shown["presentation"], "task");
-        let address = json!({
-            "channel": inbox, "position": shown["position"], "creation": shown["creation"],
-        });
-        let fetched = server.call(
-            "get",
-            json!({
-                "channel": address["channel"], "position": address["position"],
-            }),
-        );
-        assert_eq!(fetched["messages"][0]["body"], "reply");
-        assert_eq!(server.call("ack", address)["done"], true);
-        let sent = server.call(
-            "send",
-            json!({ "channel": "lead", "kind": "report", "body": "-" }),
-        );
-
-        let delivered = call(&board.lead(), &["read", "lead", "--json"]);
-        assert_eq!(messages(&delivered)[0]["id"], sent["id"]);
-        assert_eq!(messages(&delivered)[0]["body"], json!([45]));
-    }
-}
+#[cfg(feature = "mcp")]
+#[path = "command_line/mcp.rs"]
+mod mcp;
 
 #[test]
 fn owner_status_recovers_the_reader_acknowledgement() {
@@ -2027,7 +1851,6 @@ mod recipes {
 
 mod inbox_limits {
     use super::*;
-    use serde_json::json;
     use std::io::Write;
     use std::process::Output;
 
@@ -2351,33 +2174,29 @@ pattern = "relay/*"
         );
     }
 
+    #[cfg(feature = "mcp")]
     #[test]
-    #[ignore = "stdio tool server ships in v0.2"]
     fn the_mcp_tool_shows_the_sender_share_reason() {
-        let (_board, worker) = filled_share();
-        assert_mcp_reason(&worker, "share_full");
+        let (board, worker) = filled_share();
+        assert_mcp_reason(&board, &worker, "share_full");
     }
 
+    #[cfg(feature = "mcp")]
     #[test]
-    #[ignore = "stdio tool server ships in v0.2"]
     fn the_mcp_tool_shows_the_full_inbox_reason() {
-        let (_board, _, worker) = filled_inbox();
-        assert_mcp_reason(&worker, "inbox_full");
+        let (board, _, worker) = filled_inbox();
+        assert_mcp_reason(&board, &worker, "inbox_full");
     }
 
-    fn assert_mcp_reason(worker: &Path, expected: &str) {
-        let mut mcp = super::mcp::Server::start(worker);
-        let result = mcp.request(
-            "tools/call",
-            json!({
-                "name": "send", "arguments": { "channel": "lead", "id": "three", "body": "report" },
-            }),
-        );
+    #[cfg(feature = "mcp")]
+    fn assert_mcp_reason(board: &Fixture, worker: &Path, expected: &str) {
+        let reason = super::mcp::report_refusal(board, worker);
 
-        assert_eq!(result["isError"], true);
-        let reason = result["content"][0]["text"].as_str().unwrap();
-        assert!(reason.starts_with(expected));
-        assert!(reason.contains("retry with the same message ID"));
+        assert!(reason.starts_with(expected), "{reason}");
+        assert!(
+            reason.contains("retry with the same message ID"),
+            "{reason}"
+        );
     }
 
     #[test]

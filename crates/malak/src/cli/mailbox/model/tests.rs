@@ -238,3 +238,30 @@ fn participants_without_activity_stay_listed_after_those_with_activity() {
     let names = lanes.iter().map(|lane| lane.participant.name.as_str());
     assert_eq!(names.collect::<Vec<_>>(), ["lead", "worker", "alpha"]);
 }
+
+/// Two enrolments named worker: the former a0000000 and the current a0123456.
+fn relaunched(former_revoked: bool) -> Model {
+    let mut status = status();
+    let mut former = status.participants[1].clone();
+    former.id = "a0000000".into();
+    former.revoked = former_revoked;
+    status.participants.insert(0, former);
+    Model::new(status, None)
+}
+
+#[test]
+fn a_relaunched_worker_shows_its_name_not_its_inbox_id() {
+    let model = relaunched(true);
+
+    assert_eq!(model.plain_name("a0123456"), "worker");
+    assert_eq!(model.plain_recipient("to/a0123456"), "worker");
+}
+
+#[test]
+fn two_live_enrolments_with_one_name_are_numbered() {
+    let model = relaunched(false);
+
+    assert_eq!(model.plain_name("a0000000"), "worker#1");
+    assert_eq!(model.plain_name("a0123456"), "worker#2");
+    assert_eq!(model.plain_recipient("to/a0123456"), "worker#2");
+}

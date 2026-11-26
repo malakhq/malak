@@ -11,7 +11,7 @@ keywords.workspace = true
 repository.workspace = true
 
 [features]
-default = ["cli"]
+default = ["cli", "mcp"]
 # The command line, mailbox screen, recipes and every built-in layer.
 cli = [
     "markdown", "sqlite", "unix", "key",
@@ -19,6 +19,8 @@ cli = [
     "dep:malak-proto", "dep:minicbor", "dep:nix", "dep:rustix",
     "dep:serde", "dep:serde_json", "dep:signal-hook", "dep:sha2", "dep:time", "dep:toml",
 ]
+# Local MCP server over stdio (`malak mcp`), built on the official Rust SDK.
+mcp = ["cli", "dep:rmcp", "dep:tokio"]
 # Markdown message store and the durable board constructors.
 markdown = ["dep:malak-store-markdown"]
 # SQLite message store.
@@ -44,12 +46,14 @@ malak-proto = { path = "../malak-proto", version = "0.1.2", optional = true }
 malak-transport-unix = { path = "../malak-transport-unix", version = "0.1.2", optional = true }
 minicbor = { version = "2", optional = true }
 nix = { version = "0.31", features = ["fs", "poll", "resource", "signal", "socket", "user"], optional = true }
+rmcp = { version = "3.11", default-features = false, features = ["server", "transport-io"], optional = true }
 rustix = { version = "1.1", features = ["termios"], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 signal-hook = { version = "0.3", default-features = false, optional = true }
 sha2 = { version = "0.11", default-features = false, optional = true }
 time = { version = "0.3", default-features = false, features = ["local-offset"], optional = true }
+tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"], optional = true }
 malak-store-markdown = { path = "../malak-store-markdown", version = "0.1.2", optional = true }
 malak-store-sqlite = { path = "../malak-store-sqlite", version = "0.1.2", optional = true }
@@ -59,6 +63,8 @@ criterion = { version = "0.8", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
 malak-testkit = { path = "../malak-testkit", version = "0.1.2" }
+rmcp = { version = "3.11", default-features = false, features = ["client", "transport-child-process"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt"] }
 
 [lints]
 workspace = true

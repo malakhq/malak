@@ -6,6 +6,7 @@ use crate::cli::{
     output::{self, clock, display},
     presentation,
 };
+use std::borrow::Cow;
 use std::fmt::Write as _;
 
 pub(super) const HISTORY_LABEL: &str =
@@ -28,7 +29,7 @@ fn event_label(model: &Model, event: &Event, live: bool) -> String {
         if live {
             participant(model.name(id))
         } else {
-            model.plain_name(id).to_owned()
+            model.plain_name(id).into_owned()
         }
     });
     let actor = sender.as_deref().unwrap_or("board");
@@ -38,7 +39,7 @@ fn event_label(model: &Model, event: &Event, live: bool) -> String {
                 .inbox_recipient(channel)
                 .map_or_else(|| channel.to_owned(), |person| participant(&person.name))
         } else {
-            model.plain_recipient(channel).to_owned()
+            model.plain_recipient(channel).into_owned()
         }
     });
     let target = channel.as_deref().unwrap_or("the board");
@@ -120,8 +121,8 @@ pub(super) fn plain_event(model: &Model, event: &Event) -> String {
         let actor = event
             .id
             .as_deref()
-            .map_or("unknown sender", |id| model.plain_name(id));
-        write!(block, "\n  {}", sender.line(actor, usize::MAX)).unwrap();
+            .map_or(Cow::Borrowed("unknown sender"), |id| model.plain_name(id));
+        write!(block, "\n  {}", sender.line(&actor, usize::MAX)).unwrap();
     }
     writeln!(block, "\n  {}", reply_address(&address, usize::MAX)).unwrap();
     if let Some(inbox) = event
@@ -175,12 +176,12 @@ pub(super) fn header_details(
         write!(details, "  Reply to #{}", reply.position).unwrap();
         if reply.channel != address.channel {
             let channel = if live {
-                &reply.channel
+                Cow::Borrowed(reply.channel.as_str())
             } else {
                 model.plain_recipient(&reply.channel)
             };
             details.push(' ');
-            details.push_str(&display(channel));
+            details.push_str(&display(&channel));
         }
     }
     if let Some(reply) = model.answered_by(address) {

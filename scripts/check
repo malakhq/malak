@@ -22,6 +22,7 @@ FEATURE_SETS = (
     ["--features", "sqlite"],
     ["--features", "unix"],
     ["--features", "key"],
+    ["--features", "mcp"],
     ["--features", "markdown,sqlite,unix,key"],
 )
 

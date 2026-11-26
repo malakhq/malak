@@ -15,9 +15,19 @@ import recipe_output as out
 from worker_queue import LaunchRecord, QueueBoard, QueueError
 
 
+def enrolled(person):
+    return (person.get("enrolled_at_ms") or 0, person["id"])
+
+
 def workers(connection, name):
-    participants = sorted(connection.status()["participants"], key=lambda person: (
-        person["name"], person.get("enrolled_at_ms") or 0, person["id"],
+    people = connection.status()["participants"]
+    # The active enrolment of a name is its newest one that is not revoked.
+    active = {}
+    for person in sorted((person for person in people if not person["revoked"]), key=enrolled):
+        active[person["name"]] = person["id"]
+    participants = sorted(people, key=lambda person: (
+        person["name"], active.get(person["name"]) != person["id"],
+        -(person.get("enrolled_at_ms") or 0), person["id"],
     ))
     for person in participants:
         if (name is not None and person["name"] != name
@@ -48,6 +58,7 @@ def workers(connection, name):
             "exit_code": None if live else exit_code,
             "inbox": record.id if record.id == "lead" else f"to/{record.id}",
             "enrolment": "revoked" if person["revoked"] else "active",
+            "active": active.get(person["name"]) == person["id"],
             **({"unread": unread} if unread is not None else {}),
             **({"reissue": reissue(person["name"], state)} if claim and claim["state"] == "ended" else {}),
             **({"claim": claim} if claim is not None else {}),
@@ -86,10 +97,12 @@ def process_text(details):
 def main():
     parser = out.ArgumentParser(
         prog="malak recipe workers",
-        usage="%(prog)s [NAME] [--json] [--config PATH | --board NAME]",
+        usage="%(prog)s [NAME] [--all] [--json] [--config PATH | --board NAME]",
         allow_abbrev=False,
     )
     parser.add_argument("name", nargs="?", metavar="NAME", help="Show only this worker name")
+    parser.add_argument("--all", action="store_true",
+                        help="Also show each name's older enrolments (default: the active one)")
     parser.add_argument("--json", action="store_true", help="Print worker records as JSON")
     selectors = parser.add_mutually_exclusive_group()
     selectors.add_argument("--board", metavar="NAME", help="Select a named board")
@@ -109,6 +122,12 @@ def main():
     elif not rows:
         out.details("No stock workers.")
     else:
+        if not args.all:
+            # Rows are ordered active first, so the first of each name is the one to show.
+            first = {}
+            for row in rows:
+                first.setdefault(row["name"], row)
+            rows = list(first.values())
         for row in rows:
             started = row["started_at_ms"]
             time = (datetime.fromtimestamp(started / 1000, timezone.utc).isoformat()

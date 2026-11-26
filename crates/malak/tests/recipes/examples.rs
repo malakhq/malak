@@ -301,6 +301,11 @@ examples! {
         assert!(reply["context"].as_str().unwrap().contains("Check the build."), "{reply}");
     }
 
+    mcp_serves_the_lead_seat_and_stops_when_input_closes: "mcp" [running] |example| {
+        let output = example.run();
+        assert!(output.is_empty(), "{output}");
+    }
+
     mailbox_opens_a_live_board_and_activity_view: "mailbox" [running] |example| {
         let (child, mut screen) = example.terminal();
         screen.wait_for("BOARDS");

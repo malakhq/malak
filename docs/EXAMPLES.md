@@ -45,6 +45,10 @@ malak send lead "Ready for review."
 malak read --ack lead
 ```
 
+Use `--ack` for notices and reports. For a task, run plain `malak read` and
+`malak ack` once the work is done: an acknowledged task is not shown again
+after a crash.
+
 ## `malak get`
 
 ```sh
@@ -255,6 +259,17 @@ note the hook will deliver.
 setup=$(malak recipe lead-up) && eval "$setup"
 malak read --ack --wait 60 lead && malak send lead "Check the build."
 printf '%s\n' '{"event":"session_start","session":"example"}' | MALAK_HOOK_INBOX=lead MALAK_HOOK_STATE="$PWD/hook-state" malak hook --tool generic
+```
+
+## `malak mcp`
+
+An MCP client starts this command and talks to it over stdio. Here standard
+input is closed, so the server starts as the lead and stops at once.
+
+```sh
+# Serve the lead's Seat over stdio; set MALAK_HANDOVER to serve a worker's Seat.
+setup=$(malak recipe lead-up) && eval "$setup"
+malak mcp </dev/null
 ```
 
 ## `malak mailbox`

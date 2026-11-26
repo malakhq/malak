@@ -35,10 +35,10 @@ pub(in crate::cli) const LEAD_TICK: &str = "lead-next";
 
 /// Stamps the owner folder when a one-shot watcher starts and when it ends, so
 /// a lead that runs the watcher once per host-loop tick counts as watching.
-pub(super) struct TickMark(Option<Directory>);
+pub(in crate::cli) struct TickMark(Option<Directory>);
 
 impl TickMark {
-    pub(super) fn start(board: &config::Board) -> Self {
+    pub(in crate::cli) fn start(board: &config::Board) -> Self {
         let door = config::open_owned_directory(&board.socket_folder.join(OWNER_FOLDER), true)
             .ok()
             .flatten();
