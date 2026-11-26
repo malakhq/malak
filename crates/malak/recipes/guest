@@ -9,6 +9,7 @@ import sys
 
 sys.dont_write_bytecode = True
 
+import adapters
 import board_data as board
 from recipe_board import (
     board_config, board_entries, board_name, board_settings, config_for_socket, handover_identity,
@@ -66,7 +67,7 @@ def home_for_session(receiving, process):
             pass
         return None
     session = next((os.environ[key] for key in
-                    ("CODEX_SESSION_ID", "CODEX_THREAD_ID", "CLAUDE_CODE_SESSION_ID")
+                    adapters.session_env_names()
                     if os.environ.get(key)), None)
     homes = []
     for _, config in board_entries():

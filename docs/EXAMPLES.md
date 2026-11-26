@@ -45,6 +45,10 @@ malak send lead "Ready for review."
 malak read --ack lead
 ```
 
+Use `--ack` for notices and reports. For a task, run plain `malak read` and
+`malak ack` once the work is done: an acknowledged task is not shown again
+after a crash.
+
 ## `malak get`
 
 ```sh

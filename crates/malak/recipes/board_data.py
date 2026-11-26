@@ -18,6 +18,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
+import adapters
 import recipe_output as out
 from recipe_board import (
     LEAD_WATCHER_CONSEQUENCE, board_config, board_entries, board_identity, board_name,
@@ -71,7 +72,7 @@ def malak(*args, handover=None, check=True, body=None, timeout=None, session=Non
             env["MALAK_HANDOVER"] = str(handover)
         if session is not None:
             # The CLI records this value as the agent session on a lead send.
-            env["CODEX_SESSION_ID"] = session
+            env[adapters.session_env_names()[0]] = session
     result = subprocess.run(
         malak_command(*args), env=env, stdin=subprocess.DEVNULL if body is None else None,
         input=body, capture_output=True, text=not isinstance(body, bytes), timeout=timeout,
@@ -232,7 +233,40 @@ def current_session():
     return json.loads(process)
 
 
-def bind_lead(config, handover):
+def session_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
+def claimed_at(claim):
+    issued = [event["at_ms"] for event in claim["history"] if event["event"] == "issued"]
+    return datetime.fromtimestamp(max(issued) / 1000).astimezone().strftime("%Y-%m-%d %H:%M %Z")
+
+
+def lead_in_use(lead):
+    """Why the lead must not be taken over silently, or None when nobody holds it."""
+    claim = lead.get("claim")
+    if claim is None:
+        # An unbound lead has no session to name. The board only shows open connections.
+        if lead.get("connections"):
+            return "it has an open connection (checked: connections and the claim)"
+        return None
+    holder = claim["session"]
+    if claim["state"] == "bound" and holder.get("pid") and session_alive(holder["pid"]):
+        where = ", ".join(
+            f"{label} {holder[key]}" for label, key in
+            (("pid", "pid"), ("program", "program"), ("folder", "folder")) if holder.get(key)
+        )
+        return f"it is held by a running session ({where}), claimed {claimed_at(claim)}"
+    return None
+
+
+def bind_lead(config, handover, takeover=False):
     session = current_session()
     lead = next(person for person in board_status(config)["participants"] if person["id"] == "lead")
     claim = lead.get("claim", {})
@@ -240,11 +274,18 @@ def bind_lead(config, handover):
         claim["session"].get(field) == session[field] for field in ("pid", "start_time")
     ):
         return
+    if not takeover and (reason := lead_in_use(lead)):
+        name = board_name(config)
+        raise RecipeError(
+            f"lead of board {name} is in use: {reason}. To take over on purpose, run "
+            f"`malak recipe lead-up {name} --takeover`. Otherwise end the other session first.",
+            3,
+        )
     malak("--config", config, "rekey", "lead", "--session", str(session["pid"]),
           "--fingerprint", lead["fingerprint"], "--out", handover)
 
 
-def prepare_board(config, parent):
+def prepare_board(config, parent, takeover=False):
     # Lock the directory so replacing the config keeps starts serialized.
     directory = os.open(config.parent, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -264,7 +305,7 @@ def prepare_board(config, parent):
                 start_board(config)
             except (RecipeError, OSError, ValueError) as error:
                 raise RecipeError(f"board startup failed: {error}") from error
-            bind_lead(config, handover)
+            bind_lead(config, handover, takeover)
             check_board(config, handover)
             probe(config, handover)
             if updated is not None:
@@ -274,7 +315,7 @@ def prepare_board(config, parent):
         os.close(directory)
 
 
-def lead_up(config, parent_config=None):
+def lead_up(config, parent_config=None, takeover=False):
     config = Path(config).absolute()
     parent_config = Path(parent_config).absolute() if parent_config else None
     name = board_name(config)
@@ -285,7 +326,7 @@ def lead_up(config, parent_config=None):
             default_handover = board_state(source) / "lead.handover"
         if Path(selected).resolve() != default_handover.resolve():
             check_board(config, selected)
-    handover = prepare_board(config, parent)
+    handover = prepare_board(config, parent, takeover)
     if manager is not None:
         report_to_parent(config, name, parent_config, parent, *manager)
     fields = (("Parent", parent), ("Parent report", "Sent")) if parent_config else ()
@@ -293,7 +334,7 @@ def lead_up(config, parent_config=None):
     fields += (
         ("Board commands", f"Pass {selector} on every board command."),
         ("Lead watcher", f"Run `{lead_watcher_command(config, name)}` in the background. "
-                         "Use background Bash in Claude Code or a background command in Codex. "
+                         f"Use {adapters.join_words(a.background_use for a in adapters.agents() if a.background_use)}. "
                          "Handle the output, acknowledge lead messages, and run it again."),
         ("Acknowledgements", "Acknowledge each lead message once handled with "
                              f"`malak {selector} ack --creation CREATION lead POSITION`."),
@@ -722,7 +763,8 @@ def main(action, *args):
         with open(args[0], "rb") as source:
             print(board_state(source))
     elif action == "lead-up":
-        lead_up(*args)
+        flags = [arg for arg in args if arg == "--takeover"]
+        lead_up(*(arg for arg in args if arg != "--takeover"), takeover=bool(flags))
     elif action == "list":
         list_boards(*args)
     elif action == "tree":

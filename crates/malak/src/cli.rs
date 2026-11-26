@@ -444,16 +444,19 @@ impl Args {
                         wait,
                         verbose,
                     },
-            } if detach => board::detach(
-                self.config.as_deref(),
-                board_for_start(self.config.clone())?,
-                lead_handover,
-                lead_account,
-                board::Wait {
-                    limit: std::time::Duration::from_secs(wait),
-                    verbose,
-                },
-            ),
+            } if detach => {
+                let (config, path) = board_for_start(self.config)?;
+                board::detach(
+                    &path,
+                    config,
+                    lead_handover,
+                    lead_account,
+                    board::Wait {
+                        limit: std::time::Duration::from_secs(wait),
+                        verbose,
+                    },
+                )
+            }
             Command::Board {
                 command:
                     Board::Start {
@@ -461,7 +464,10 @@ impl Args {
                         lead_account,
                         ..
                     },
-            } => board::start(board_for_start(self.config)?, lead_handover, lead_account),
+            } => {
+                let (config, _) = board_for_start(self.config)?;
+                board::start(config, lead_handover, lead_account)
+            }
             Command::Board {
                 command: Board::Status { target, json },
             } => {
@@ -684,7 +690,7 @@ impl Args {
     }
 }
 
-fn board_for_start(config_path: Option<PathBuf>) -> Result<config::Board, Error> {
+fn board_for_start(config_path: Option<PathBuf>) -> Result<(config::Board, PathBuf), Error> {
     let (config, path, created) = config::read_for_start(config_path)?;
     if let Some(text) = created {
         output::diagnostic(&text, &[]);
@@ -693,7 +699,7 @@ fn board_for_start(config_path: Option<PathBuf>) -> Result<config::Board, Error>
         board::check_owner_address(&config.board, &credential)?;
     }
     board_list::record(&path);
-    Ok(config.board)
+    Ok((config.board, path))
 }
 
 fn owner(config_path: Option<PathBuf>) -> Result<LocalClient<ClientTransport>, Error> {

@@ -28,6 +28,7 @@ Copyright 2026 Olaoluwa Oluro. Licensed under the Apache License 2.0; see LICENS
 - [Command examples](docs/EXAMPLES.md)
 - [Agent recipes](docs/RECIPES.md)
 - [Rust API](#rust-library)
+- [Embedding guide](docs/EMBEDDING.md)
 - [Architecture](ARCHITECTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
@@ -111,8 +112,9 @@ Use `malak mailbox --waiting` to find unacknowledged lead messages in
 worker inboxes. Add `--for NAME` to review one worker or `--json` for
 scripts. The lead's `malak mailbox --plain --for lead` watcher follows `lead`,
 `questions`, and `orders`, and emits `stuck` blocks after 15 minutes and hourly
-thereafter. Agents use `--next` to wait for the next event from another
-participant or a due reminder. It remembers shown messages across runs and
+thereafter, only while the worker itself has been quiet for 15 minutes. Agents
+use `--next` to wait for the next event from another participant or a due
+reminder. It remembers shown messages across runs and
 repeats unacknowledged lead mail at most once an hour.
 Participant names `lead` and `stuck` are reserved.
 
@@ -138,12 +140,23 @@ Add this to your `Cargo.toml` to embed a board in a Rust program.
 
 ```toml
 [dependencies]
-malak = "0.1.2"
+malak = { version = "0.1.2", default-features = false }
 ```
 
-The [Rust API example](crates/malak/src/lib.rs) shows how to send, read, and
-acknowledge a message on an in-memory board. To open the full API documentation,
-run `cargo doc -p malak --no-deps --open` from the checkout.
+Without its default `cli` feature the crate is only the board: the router and
+the memory store, about 0.5 MB in a size-optimised build. Add `markdown`,
+`sqlite`, `unix` or `key` for the other built-in layers. The
+[embedding guide](docs/EMBEDDING.md) runs a lead and two helpers in one
+process, and the [Rust API example](crates/malak/src/lib.rs) shows how to send,
+read, and acknowledge a message. To open the full API documentation, run
+`cargo doc -p malak --no-deps --open` from the checkout.
+
+**Stability.** There is no stability promise until 1.0. The public API of the
+`malak` crate may change in any 0.x release. Every change is listed in
+[CHANGELOG.md](CHANGELOG.md) and visible in [docs/public-api.txt](docs/public-api.txt),
+the exact listing of the public API. CI fails when the crate stops matching
+that file, so a change is always deliberate and recorded. Items marked
+`#[doc(hidden)]` and the other `malak-*` crates are internal.
 
 ### CLI
 

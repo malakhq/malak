@@ -10,6 +10,7 @@ from pathlib import Path
 import stat
 import subprocess
 
+import adapters
 from agent_settings import read_file, replace_file
 from board_data import (
     QUESTIONS_CHANNEL, RecipeError, channel_status, get_message, malak, may_retry_send, reply_command,
@@ -17,26 +18,23 @@ from board_data import (
 from recipe_board import board_settings
 
 
-ASYNC_TOOL = "request_user_input_async"
-TOOLS = {"AskUserQuestion", "request_user_input", ASYNC_TOOL, "generic"}
-EVENTS = {"question_start": "PreToolUse", "question_end": "PostToolUse"}
+QUESTION_TOOLS = adapters.merged("question_tools")
+TOOLS = set(QUESTION_TOOLS)
+ASYNC_TOOLS = adapters.union_of(lambda adapter: [adapter.async_tool] if adapter.async_tool else [])
+EVENTS = {"PreToolUse", "PostToolUse"}
 RECOMMENDED = " (Recommended)"
-ASYNC_REPLY_TAG = "send_user_message_question_reply"
 
 
 def translate(payload):
-    if (event := EVENTS.get(payload.get("event"))) is not None:
-        return {
-            **payload, "hook_event_name": event, "session_id": payload.get("session"),
-            "tool_name": "generic",
-        }
+    """Put a payload in the tool's own event vocabulary into hook-event form."""
+    for adapter in adapters.all_adapters():
+        if adapter.translate is not None:
+            payload = adapter.translate(payload)
     return payload
 
 
 def is_question(payload):
-    return payload.get("tool_name") in TOOLS and payload.get(
-        "hook_event_name",
-    ) in EVENTS.values()
+    return payload.get("tool_name") in TOOLS and payload.get("hook_event_name") in EVENTS
 
 
 def identifier(*parts):
@@ -82,21 +80,13 @@ def question_inputs(payload):
     questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
     if not isinstance(questions, list):
         return
+    tool = QUESTION_TOOLS[payload["tool_name"]]
     for index, question in enumerate(questions):
-        if not isinstance(question, dict):
+        if not isinstance(question, dict) or (question := tool.normalize(question)) is None:
             continue
-        if payload["tool_name"] == ASYNC_TOOL:
-            labels = question.get("options") or []
-            if not isinstance(labels, list) or not all(isinstance(label, str) for label in labels):
-                continue
-            question = {
-                "question": question.get("title"),
-                "options": [{"label": label} for label in labels],
-                "recommendation": labels[0].removesuffix(RECOMMENDED) if labels else "",
-            }
         if not isinstance(text := question.get("question"), str):
             continue
-        key = text if payload["tool_name"] == "AskUserQuestion" else question.get("id", text)
+        key = tool.key(question, text)
         if text.strip() and isinstance(key, str) and key:
             yield str(index), key, question
 
@@ -186,31 +176,9 @@ def open_owner_questions(config, handover):
 
 
 def async_replies(prompt):
-    if not isinstance(prompt, str):
-        return []
-    wrapped = prompt.strip()
-    opening, closing = f"<{ASYNC_REPLY_TAG}>", f"</{ASYNC_REPLY_TAG}>"
-    if not wrapped.startswith(opening) or not wrapped.endswith(closing):
-        return []
-    try:
-        replies = json.loads(wrapped[len(opening):-len(closing)])
-    except ValueError:
-        return []
-    if isinstance(replies, dict):
-        replies = [replies]
-    if not isinstance(replies, list):
-        return []
-    matched = []
-    for reply in replies:
-        if not isinstance(reply, dict) or not isinstance(answer := reply.get("answer"), str) or not answer.strip():
-            continue
-        try:
-            tool, call, index = json.loads(reply["questionItemId"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if tool == ASYNC_TOOL and isinstance(call, str) and type(index) is int and index >= 0:
-            matched.append((call, str(index)))
-    return matched
+    """The (tool, call, index) of each asynchronous question the prompt answers."""
+    return [reply for adapter in adapters.all_adapters() if adapter.async_replies
+            for reply in adapter.async_replies(prompt)]
 
 
 def note_async_replies(replied, config, status, session):
@@ -221,8 +189,8 @@ def note_async_replies(replied, config, status, session):
     with records(config, session, create=False) as saved:
         if saved is None:
             return False
-        for call, index in replied:
-            entry = saved.calls.get(identifier(ASYNC_TOOL, call), {}).get(index)
+        for tool, call, index in replied:
+            entry = saved.calls.get(identifier(tool, call), {}).get(index)
             if entry and entry.get("creation") == channel["creation"] and not entry.get("answer_seen"):
                 entry["answer_seen"] = True
                 marked = True
@@ -295,7 +263,7 @@ def record(payload, config, handover, status):
         if pre:
             call = saved.calls.setdefault(key, {})
             post_questions(payload, saved, call, config, handover, status, channel)
-        elif payload["tool_name"] != ASYNC_TOOL and (call := saved.calls.get(key)):
+        elif payload["tool_name"] not in ASYNC_TOOLS and (call := saved.calls.get(key)):
             return record_answers(payload, saved, call, config, handover, status, channel)
 
 

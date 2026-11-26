@@ -9,7 +9,7 @@ struct NamedBoard {
 
 impl NamedBoard {
     fn pair() -> [Self; 2] {
-        let home = Rc::new(SocketDir::new().unwrap());
+        let home = Rc::new(BoardHome::new());
         let first = Fixture::in_home(Rc::clone(&home), "alpha", "sa", "a");
         let second = Fixture::in_home(home, "folder-beta", "sb", "b");
         second.configure(r#"name = "beta""#);

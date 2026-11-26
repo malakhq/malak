@@ -922,6 +922,56 @@ fn retrying_the_same_owner_upgrade_notice_keeps_one_message() {
     assert_eq!(status.channels[0].head, 2);
 }
 
+const NEW_BUILD: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const NOTICE_HEADER: &str = "Malak upgraded (build unknown -> aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa). Re-read the malak skill.";
+
+/// Post the upgrade notice through the owner door and return what the lead reads.
+fn posted_upgrade_notice(changelog: Option<&'static str>) -> String {
+    let mut fixture = Fixture::new(uid());
+    if let Some(changelog) = changelog {
+        fixture.board.set_upgrade_changelog(changelog);
+    }
+    let (opening, mut caller) = fixture.protected(Entrance::Owner);
+    let mut owner = opening.owner_requests().unwrap();
+    let run = crate::CreationId::from_bytes(fixture.board.board.run).to_string();
+    let request = encode_frame(
+        1,
+        "UPGRADE_NOTICE",
+        3,
+        |out| {
+            out.str("run").unwrap().str(&run).unwrap();
+            out.str("previous_build").unwrap().str("unknown").unwrap();
+            out.str("installed_build").unwrap().str(NEW_BUILD).unwrap();
+        },
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        fixture.owner_request(&mut owner, &mut caller, request).op(),
+        "OK"
+    );
+    match fixture.board.lead().get("lead", 1).unwrap() {
+        crate::GetReply::Message(message) => String::from_utf8(message.body.to_vec()).unwrap(),
+        other => panic!("expected the notice, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_upgrade_notice_quotes_the_changelog_the_starting_program_set() {
+    let notice =
+        posted_upgrade_notice(Some("# Changes\n\n- 2026-11-25 first\n- 2026-11-24 second"));
+
+    assert_eq!(
+        notice,
+        format!("{NOTICE_HEADER}\n- 2026-11-25 first\n- 2026-11-24 second")
+    );
+}
+
+#[test]
+fn an_upgrade_notice_without_a_changelog_lists_no_changes() {
+    assert_eq!(posted_upgrade_notice(None), NOTICE_HEADER);
+}
+
 #[test]
 fn a_lead_link_cannot_open_the_owner_request_stream() {
     let mut fixture = Fixture::new(uid());

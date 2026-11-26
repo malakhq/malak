@@ -155,6 +155,28 @@ fn adopting_again_reissues_the_existing_worker_handover() {
     assert_ne!(export(&reissued), export(&original));
 }
 
+#[test]
+fn workers_status_names_the_adopt_command_once_the_adopted_session_ends() {
+    let board = Fixture::new();
+    board.start();
+    let agent = Agent::start(&board);
+    run(adopt(&board, Some(agent.pid())));
+    drop(agent);
+    wait_for_event("the adopted session's ended claim", || {
+        (participant(&board.status(), "researcher")["claim"]["state"] == "ended").then_some(())
+    });
+
+    let mut workers = board.recipe("workers");
+    workers.args(["researcher", "--board", BOARD]);
+    let text = run(workers);
+
+    let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("Re-issue malak recipe adopt researcher"),
+        "{text}"
+    );
+}
+
 fn export(output: &str) -> &str {
     output
         .lines()

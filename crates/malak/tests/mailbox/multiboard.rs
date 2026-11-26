@@ -2,11 +2,11 @@ use super::*;
 use std::fs::{self, OpenOptions};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
-struct Home(SocketDir);
+struct Home(BoardHome);
 
 impl Home {
     fn new() -> Self {
-        let home = Self(SocketDir::new().unwrap());
+        let home = Self(BoardHome::new());
         fs::create_dir(home.0.path().join(".malak")).unwrap();
         home
     }
@@ -106,7 +106,7 @@ fn board(name: &str) -> Board {
 
 fn stop(board: &mut Board) {
     board.run(&["board", "stop"]);
-    assert!(board.process.0.wait().unwrap().success());
+    assert!(board.process.wait().unwrap().success());
 }
 
 #[test]
@@ -207,7 +207,7 @@ fn a_running_board_on_another_build_shows_the_restart_note() {
     home.register(&older);
     fs::write(
         older.root.path().join("d/o/version"),
-        format!("{} 0.0.1\n", older.process.0.id()),
+        format!("{} 0.0.1\n", older.process.id()),
     )
     .unwrap();
 

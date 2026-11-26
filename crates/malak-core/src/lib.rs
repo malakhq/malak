@@ -12,6 +12,8 @@ fn epoch_millis(time: std::time::SystemTime) -> u64 {
 mod board;
 mod changes;
 mod channel;
+/// The fixed Malak upgrade notice and its lead-facing changelog.
+pub mod claim_notice;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod client;
 mod entrance_slots;
@@ -23,6 +25,8 @@ mod journal_entry;
 mod limits;
 mod link;
 mod message;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod participant_client;
 mod quota;
 mod readers;
 mod record_fields;
@@ -31,7 +35,6 @@ mod reserved_names;
 mod retention;
 mod sender;
 mod storage;
-/// The fixed Malak upgrade notice and its lead-facing changelog.
 pub mod upgrade_notice;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod witness;
@@ -62,6 +65,8 @@ pub use board::{LocalStartup, RecoveryReport};
 pub use client::LocalClient;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use handover::{HandoverFile, HandoverTarget, HandoverWrite, OwnerCredential};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub use participant_client::ParticipantClient;
 
 pub(crate) fn random<const N: usize>() -> Result<[u8; N], Error> {
     let mut bytes = [0; N];

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Show Malak's session nudge from a Claude Code or Codex command hook."""
+"""Show Malak's session nudge from an agent tool's command hook."""
 
 from contextlib import suppress
 import fcntl
@@ -15,6 +15,7 @@ import stat
 import sys
 import time
 
+import adapters
 import hook_format
 import recipe_output as out
 from board_data import (
@@ -36,8 +37,9 @@ NO_BOARD = (
     "Malak is installed. If this chat already leads a board, keep leading it with its --board name. "
     "Otherwise ask the owner before leading or joining a board."
 )
-TASK_TOOLS = {"TaskCreate", "TaskUpdate", "TodoWrite", "update_plan"}
-AGENT_TOOLS = {"Agent", "Task", "spawn_agent"}
+TASK_TOOLS = adapters.union("plan_tools")
+AGENT_TOOLS = adapters.union("activity_tools")
+SHELL_TOOLS = adapters.union("shell_tools")
 START_SOURCES = {"startup", "resume", "fork"}
 
 
@@ -260,10 +262,10 @@ def marker_for(payload, on_board):
     if event == "PostToolUse" and tool in TASK_TOOLS:
         return "activity"
     if event == "PreToolUse":
-        if tool in AGENT_TOOLS or tool == "Monitor":
+        if tool in AGENT_TOOLS:
             return "activity"
         tool_input = payload.get("tool_input")
-        if tool == "Bash" and isinstance(tool_input, dict) and detached(tool_input):
+        if tool in SHELL_TOOLS and isinstance(tool_input, dict) and detached(tool_input):
             return "activity"
     return None
 
@@ -438,11 +440,6 @@ def main(installed, config, named_tool=None):
         if not isinstance(payload, dict):
             return
         tool = hook_format.tool_for(payload, named_tool)
-        generic_stop = payload.get("event") == "turn_end"
-        if generic_stop:
-            # The generic hook format: {"event": "turn_end", "session": ID}.
-            payload = {"hook_event_name": "Stop", "session_id": payload.get("session"),
-                       "stop_hook_active": payload.get("stop_hook_active")}
         payload = translate(payload)
         session_id = payload.get("session_id")
         if not isinstance(session_id, str) or not session_id:
@@ -499,7 +496,7 @@ def timed_out(_signal, _frame):
 
 if __name__ == "__main__":
     if sys.argv[1:2] == ["--reminder"]:
-        # The installed hook command: `--reminder [--tool claude|codex]`. It never
+        # The installed hook command: `--reminder [--tool NAME]`. It never
         # reports a usage error, because a failing hook can block the agent's call.
         named = sys.argv[3] if sys.argv[2:3] == ["--tool"] and sys.argv[3:4] else None
         # Leave time for the hook runner to collect the response after the

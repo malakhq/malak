@@ -14,6 +14,8 @@ import recipe_output as out
 from recipe_board import handover_identity
 
 DEFAULT_WAIT = 30 * 60
+# Unread messages named in a report before the rest are only counted.
+UNREAD_LISTED = 5
 TICK = 0.2
 NANOSECONDS = 1_000_000_000
 
@@ -40,6 +42,30 @@ def message_ref(record):
         "fingerprint": fingerprint,
         "trace": (fields["headers"] or {}).get("trace"),
     }
+
+
+def unread_words(status, participant, get_sender):
+    """Say what a worker left unacknowledged in its inbox, such as "2 unread (lead #3, lead #4)".
+
+    A message counts as unread until its reader acknowledges it, whether or not
+    a read already delivered it. Returns None when nothing is left.
+    """
+    inbox = f"to/{participant}"
+    channel = next((row for row in (status or {}).get("channels", []) if row["name"] == inbox), None)
+    if channel is None:
+        return None
+    acknowledged = channel["readers"].get(participant)
+    first = channel["floor"] if acknowledged is None else max(channel["floor"], acknowledged + 1)
+    count = channel["head"] - first
+    if count <= 0:
+        return None
+    listed = []
+    for position in range(first, min(channel["head"], first + UNREAD_LISTED)):
+        sender = get_sender(inbox, position)
+        listed.append(f"{sender} #{position}" if sender else f"#{position}")
+    if count > len(listed):
+        listed.append(f"and {count - len(listed)} more")
+    return f"{count} unread ({', '.join(listed)})"
 
 
 def accepted_at(reference):
@@ -160,6 +186,13 @@ class QueueBoard:
     def get(self, channel, position, handover=None):
         return board.get_message(channel, str(position), config=self.config,
                                  handover=handover or self.lead, allow_missing=True)
+
+    def unread(self, participant):
+        """Describe the worker's unacknowledged inbox messages, or return None."""
+        def sender(inbox, position):
+            record = self.get(inbox, position)
+            return record and record.get("sender_name")
+        return unread_words(self.status(), participant, sender)
 
     def exact(self, reference, handover=None):
         record = self.get(reference["channel"], reference["position"], handover)

@@ -55,6 +55,18 @@ Changes to the release script can be checked in isolated Git repositories.
 python3 -B -m unittest discover -s scripts/tests -v
 ```
 
+## Public API and the board-only size
+
+The public API of the `malak` crate is listed in `docs/public-api.txt`, and a
+test in `scripts/tests` fails when the crate stops matching it. If a change is
+deliberate, run `scripts/public_api.py --bless`, commit the new listing and
+describe the change in `CHANGELOG.md`. The listing comes from rustdoc JSON, so
+it is tied to the toolchain CI pins: a toolchain bump regenerates it in the same
+change.
+
+`scripts/board-size` builds the board without the default features and fails if
+it grows past its budget or contains any command-line, recipe or SQLite code.
+
 ## Propose a behavior change
 
 Open a discussion or issue before changing documented behavior. Name the

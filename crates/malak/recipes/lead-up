@@ -6,24 +6,31 @@ recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 
 usage() {
     mode=${1:-help}
-    set -- 'Usage: malak recipe lead-up [[--] NAME | --board NAME | --config PATH] | --list | --tree' \
-        '       malak recipe lead-up NAME --parent PARENT [--id ID] [--handover PATH]'
+    set -- 'Usage: malak recipe lead-up [[--] NAME | --board NAME | --config PATH] [--takeover] | --list | --tree' \
+        '       malak recipe lead-up NAME --parent PARENT [--id ID] [--handover PATH] [--takeover]'
     if [ "$mode" = help ]; then
         set -- "$@" '' \
             'Run this in your agent shell to become or take over as the lead.' \
             'Use your project folder name unless the owner gave you another board name.' \
             'A new name creates a board. A takeover uses the same name as the previous lead.' \
+            'It refuses while another session still holds the lead. Add --takeover to take' \
+            'over on purpose, or end the other session first.' \
             'Unset any inherited MALAK_HANDOVER before setting up as lead.' \
             'Apply the printed export in your shell. If each command starts a fresh shell,' \
             'set MALAK_HANDOVER to the printed path for each command.' \
             'Pass --board NAME on every board command, including the lead watcher.' \
             'Stay awake in your host loop: once per tick, run' \
             'malak --board NAME mailbox --plain --for lead --next --timeout 60,' \
-            'handle what it prints, acknowledge lead messages, and go idle.' \
-            'In Claude Code use /loop (dynamic) with a tick of 2 to 5 minutes.' \
-            'In the Codex App use an automation that runs the same command.' \
+            'handle what it prints, acknowledge lead messages, and go idle.'
+        # The host-loop lines come from the agent tools' adapters, one argument each.
+        while IFS= read -r line; do
+            set -- "$@" "$line"
+        done <<EOF_LOOP
+$(python3 "$recipes/adapters.py" lead-loop)
+EOF_LOOP
+        set -- "$@" \
             'Without a host loop, run malak --board NAME mailbox --plain --for lead --next' \
-            'in background Bash (Claude Code) or a background command (Codex), and run it again after each output.' \
+            "$(python3 "$recipes/adapters.py" lead-background)" \
             'A person can keep malak --board NAME mailbox --plain --for lead running in a terminal.' \
             'Poll with malak --board NAME read --wait 60 lead questions if needed.' \
             'Read orders in force with malak --board NAME mailbox --orders before acting.' \
@@ -37,6 +44,13 @@ fail_usage() {
     usage error >&2
     exit 2
 }
+
+# Pull --takeover out of the arguments so it can come in any position.
+takeover=
+for arg in "$@"; do
+    shift
+    if [ "$arg" = --takeover ]; then takeover=--takeover; else set -- "$@" "$arg"; fi
+done
 
 config=
 name=
@@ -63,7 +77,7 @@ if [ -n "$name" ]; then recipe_config "$name" >/dev/null; fi
 if [ "$#" -eq 0 ]; then
     if [ -n "$name" ]; then config=$(board_config "$name" --create); fi
     config=${config:-$(board_config)}
-    exec python3 "$recipes/board_data.py" lead-up "$config"
+    exec python3 "$recipes/board_data.py" lead-up "$config" ${takeover:+"$takeover"}
 fi
 
 [ "$#" -ge 2 ] && [ "$1" = --parent ] && [ -n "$2" ] || fail_usage
@@ -83,4 +97,4 @@ while [ "$#" -gt 0 ]; do
 done
 if [ -n "$name" ]; then config=$(board_config "$name" --create); fi
 MALAK_PARTICIPANT_ID=$id MALAK_HANDOVER=$handover \
-    exec python3 "$recipes/board_data.py" lead-up "$config" "$parent"
+    exec python3 "$recipes/board_data.py" lead-up "$config" "$parent" ${takeover:+"$takeover"}

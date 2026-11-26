@@ -4,12 +4,12 @@ import errno
 import json
 import os
 from pathlib import Path
-import select
 import shlex
 import shutil
 import subprocess
 import sys
-import time
+
+import adapters
 
 MALAK_EXE = os.environ.get("MALAK_RECIPE_EXE", "malak")
 
@@ -25,100 +25,17 @@ def hook_definitions(tool, env=None):
             if event["input"].get("hook_event_name") != "Stop"}
 
 
-def hook_arguments(tool, env):
-    events = hook_definitions(tool, env)
-    if tool == "codex":
-        return codex_hook_arguments(events)
-    settings = {"hooks": {
-        event: [{"hooks": [{"type": "command", "command": command}]}]
-        for event, command in events.items()
-    }}
-    return ["--settings", json.dumps(settings)]
-
-
-def codex_hook_arguments(events):
-    flags = []
-    for event, command in events.items():
-        settings = "timeout=3" if event == "SessionEnd" else "additionalContextLimit=0"
-        flags.extend((
-            "-c", f"hooks.{event}=[{{hooks=[{{type=\"command\","
-                  f"command={json.dumps(command)},{settings}}}]}}]",
-        ))
-    return flags
-
-
-def send_request(server, request):
-    server.stdin.write((json.dumps(request) + "\n").encode())
-
-
-def receive_response(server, identifier, pending, stopping):
-    deadline = time.monotonic() + 20
-    while not stopping() and (left := deadline - time.monotonic()) > 0:
-        end = pending.find(b"\n")
-        if end < 0:
-            if select.select([server.stdout], [], [], min(left, 0.05))[0]:
-                chunk = os.read(server.stdout.fileno(), 65536)
-                if not chunk:
-                    break
-                pending.extend(chunk)
-            continue
-        reply = json.loads(pending[:end])
-        del pending[:end + 1]
-        if reply.get("id") == identifier and "result" in reply:
-            return reply["result"]
-        if reply.get("id") == identifier:
-            message = reply.get("error", {}).get("message", "unknown error")
-            raise OSError(f"Codex could not list the session hooks: {message}")
-    raise OSError("Codex did not return the session hook definitions")
-
-
-def codex_session_trust(workspace, definitions, *, env, stopping):
-    # Inspect the session definitions through Codex. The resulting overrides
-    # approve only these hashes for this process and leave user hooks alone.
-    with subprocess.Popen(
-        ["codex", "app-server", "--stdio", *codex_hook_arguments(definitions)],
-        cwd=workspace, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
-    ) as server:
-        pending = bytearray()
-        try:
-            send_request(server, {"id": 0, "method": "initialize", "params": {
-                "clientInfo": {"name": "malak", "version": "0.1.2"},
-                "capabilities": {"experimentalApi": True},
-            }})
-            receive_response(server, 0, pending, stopping)
-            send_request(server, {"method": "initialized"})
-            send_request(server, {"id": 1, "method": "hooks/list",
-                                  "params": {"cwds": [str(workspace)]}})
-            result = receive_response(server, 1, pending, stopping)
-        finally:
-            if server.poll() is None:
-                server.terminate()
-                try:
-                    server.wait(timeout=1)
-                except subprocess.TimeoutExpired:
-                    server.kill()
-
-    expected = {event[0].lower() + event[1:]: command for event, command in definitions.items()}
-    settings = []
-    hooks = result["data"][0]["hooks"]
-    for hook in hooks:
-        event = hook["eventName"]
-        if (hook["source"] == "sessionFlags" and hook["handlerType"] == "command"
-                and hook["enabled"] and expected.get(event) == hook["command"]):
-            key, value = json.dumps(hook["key"]), json.dumps(hook["currentHash"])
-            settings.append(f"{key}={{trusted_hash={value}}}")
-            del expected[event]
-    if expected:
-        raise OSError("Codex did not expose all four enabled Malak hooks for session approval")
-    return ["-c", f"hooks.state={{{','.join(settings)}}}"]
+def hook_arguments(adapter, env):
+    events = hook_definitions(adapter.delivery_tool or adapter.key, env)
+    return adapter.hook_arguments(events, env)
 
 
 def worker_command(command, env):
-    tool = Path(command[0]).name
-    if tool in {"claude", "codex"}:
+    adapter = adapters.native_adapter(Path(command[0]).name)
+    if adapter is not None:
         env = env | {"MALAK_RECIPE_NATIVE_ONLY": "1"}
         env.pop("MALAK_RECIPE_NATIVE_HOOK", None)
-        command = [command[0], *hook_arguments(tool, env), *command[1:]]
+        command = [command[0], *hook_arguments(adapter, env), *command[1:]]
     return command, env
 
 
@@ -158,7 +75,7 @@ with os.fdopen(int(sys.argv[1]), "rb") as gate:
 if not payload:
     sys.exit(3)
 command, env, malak, tool = json.loads(payload)
-if tool in {"claude", "codex"}:
+if tool:
     probe = subprocess.run(
         [malak, "hook", "--check", "--tool", tool],
         env=env, stdin=subprocess.DEVNULL, stdout=sys.stderr, stderr=subprocess.STDOUT,

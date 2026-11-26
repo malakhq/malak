@@ -8,9 +8,8 @@ description: Use Malak to coordinate agents and subagents on a shared board. Use
 Malak runs in the background to delegate work across your agents and subagents.
 `malak mailbox` gives you a bird's-eye view of the work.
 
-- To try the five-worker demo, run `malak recipe demo claude "GOAL"` or
-  `malak recipe demo codex "GOAL"`. The demo starts its own board and prints
-  a mailbox command for watching that run.
+- To try the five-worker demo, run {{demo}}. The demo starts its own board and
+  prints a mailbox command for watching that run.
 - For the full agent setup guide, run `malak recipe --help`. Read it when
   becoming or taking over as lead. Use the project folder name for
   `malak recipe lead-up NAME` only when the chat's working folder is the project
@@ -20,6 +19,8 @@ Malak runs in the background to delegate work across your agents and subagents.
   skill and reminders. Follow the handover instructions and pass `--board NAME`
   on every board command. If you have a worker's `MALAK_HANDOVER`, keep that identity.
   After restarting a lead chat, run `malak recipe lead-up` with the same board name to take over again.
+  If it refuses because another session holds the lead, do not force it:
+  ask the owner, then use `--takeover` only if they want that session replaced.
 - Never use another participant's handover. Ask the owner if you need a
   handover or need to change roles. It works like an SSH key. Use separate
   OS users or sandboxes to isolate agents.
@@ -29,13 +30,11 @@ Malak runs in the background to delegate work across your agents and subagents.
   new chat. `recipe workers NAME` and `mailbox --who` show claim history.
 - As lead, stay awake in your host loop: once per tick run
   `malak --board NAME mailbox --plain --for lead --next --timeout 60`, handle
-  what it prints, acknowledge lead messages, then go idle. In Claude Code use
-  `/loop` (dynamic) with a tick of 2 to 5 minutes; in the Codex App use an
-  automation that runs the same command. Without a host loop, run
+  what it prints, acknowledge lead messages, then go idle. {{loop}} Without a
+  host loop, run
   `malak --board NAME mailbox --plain --for lead --next` in the
   background to watch the lead inbox, questions, orders and stuck work. Use
-  Claude Code's background Bash (leave Monitor for other work) or Codex's
-  background command session. The command exits after showing new waiting
+  {{background}}. The command exits after showing new waiting
   lead mail, a new message from another participant, or a due reminder.
   It remembers shown messages across runs and repeats unacknowledged lead
   mail at most once an hour. Review open owner questions with
@@ -66,33 +65,36 @@ Malak runs in the background to delegate work across your agents and subagents.
   acknowledge through the last handled lead message with
   `malak --board NAME ack --creation CREATION lead POSITION`. Workers read
   their `to/ID` inbox and send reports to `lead`.
+  An acknowledgement means handled. Read notices and reports with
+  `malak --board NAME read --ack CHANNEL`, which acknowledges exactly what it
+  printed. Read a task with plain `read`, do the work, then `ack`: a task
+  acknowledged on reading is not shown again after a crash.
 - For cross-board messages, use `malak --board RECEIVING recipe guest NAME --out HANDOVER` and send as the guest. Run the printed `Watch` command to read replies. Handle each reply, then run the printed `Ack` command with the reply's creation and position. Revoke the guest when done.
   If the handover is registered with your home board, your lead inbox and
   watcher show these replies as `guest · BOARD #N`. Handle them and acknowledge
   them from home with `malak --board HOME ack --creation CREATION lead POSITION`.
   Register an existing guest with `malak --board HOME recipe guest --register-home HANDOVER`.
 - As lead, re-read this skill as soon as you receive a Malak upgrade note.
-- To bring a running Claude Code or Codex chat onto the board, use
+- To bring a running {{names}} chat onto the board, use
   `malak --board NAME recipe adopt WORKER`, select its session and have the
   owner paste the printed block into that chat. Wait for the claim-accepted
   notice before assigning work. Adopt the new session after the chat restarts.
 - Use `malak --board NAME recipe worker-start` to delegate work on the board.
   `worker-start` and `queue` refuse when no lead watcher is running on that board. Scripts and tests can pass `--no-watcher`.
-  Claude Code's Agent or Task tool, `codex exec` and `durative exec` on their own
+  {{delegation}} on their own
   start work the board never sees, so the reminder points you back here when you
   reach for one. Put the task in a brief file and pick the lane:
-  - Sonnet lane: `malak --board NAME recipe worker-start WORKER --brief FILE -- claude --model claude-sonnet-5-5 ...`
-  - Codex lane: `malak --board NAME recipe worker-start WORKER --brief FILE -- codex exec ...`
-  - Sandbox lane: `malak --board NAME recipe worker-start WORKER --brief FILE -- durative exec ID -- codex exec ...`
+{{lanes}}
 
   Every lane gives you the exit report: when the command exits, its output and
-  status arrive on `lead` as a report, even if the worker never wrote one. Ask in
-  the brief for the final report to say how many inbox messages the worker left
-  unread, and read that before you send it anything else. Steering goes through
-  its `to/ID` inbox. For the Sonnet and Codex lanes `worker-start` wires native
-  hooks, which deliver your messages as the worker runs. The sandbox lane runs
-  `durative`, so no native hooks are wired: tell the worker in the brief to read
-  `to/ID` between steps.
+  status arrive on `lead` as a report, even if the worker never wrote one. The
+  report also says how many `to/ID` messages the worker left unread or
+  unacknowledged, with their positions, as in
+  `Worker exit status: 0, 1 unread (lead #3)` (not for `--unbound`). Read that before you send it
+  anything else; `recipe workers WORKER` shows it again after exit. Steering goes through
+  its `to/ID` inbox. For the {{native_lanes}} lanes `worker-start` wires native
+  hooks, which deliver your messages as the worker runs. {{no_hook_lanes}} tell
+  the worker in the brief to read `to/ID` between steps.
   To check on a worker, ask it on its `to/ID` inbox and read its reply; use
   `malak --board NAME recipe workers WORKER` for its launcher, child, inbox and exit
   status. Do not inspect its processes, logs or session files. `worker-start WORKER --again` retires the old

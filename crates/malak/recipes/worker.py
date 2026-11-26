@@ -15,6 +15,7 @@ import sys
 import tempfile
 import time
 
+import adapters
 import board_data as board
 from agent_launch import prepare_gate, start_worker, worker_command
 from lead_status import watcher_running
@@ -126,7 +127,7 @@ def arguments(mode, words):
         else:
             lines.extend([
                 "",
-                "--brief FILE posts a task to the worker's inbox. Claude Code and Codex",
+                f"--brief FILE posts a task to the worker's inbox. {adapters.names('and')}",
                 "hooks deliver it at session start. The command's prompt need not repeat it.",
                 "--again retires the previous enrolment once its launcher has exited.",
                 "--detach returns once the command starts and prints how to follow or stop it.",
@@ -544,8 +545,8 @@ class Worker:
         self.started = False
         status = 3
         try:
-            tool = Path(command[0]).name
-            if tool not in {"claude", "codex"}:
+            tool = adapters.hook_tool(Path(command[0]).name)
+            if tool is None:
                 out.details(f"No native Malak hooks configured for worker {self.args.name}.",
                             stream=sys.stderr)
             if shutil.which(command[0], path=env.get("PATH")) is None:
@@ -569,7 +570,7 @@ class Worker:
                 out.error("start the worker command", error, "Check the executable and its launch settings.", stream=errors)
         finally:
             self.close_gate()
-        if status and not self.started and tool in {"claude", "codex"}:
+        if status and not self.started and tool is not None:
             sys.stderr.buffer.write((run / "err").read_bytes())
             out.details(f"Worker {self.args.name} failed malak hook --check --tool {tool}.",
                         (("Inbox", self.inbox), ("Worker stderr", run / "err"),
@@ -589,14 +590,14 @@ class Worker:
             return self.run_bound(command, cursor)
         run = Path(tempfile.mkdtemp(prefix="result.", dir=self.private))
         env = self.environment(cursor)
-        tool = Path(command[0]).name
+        tool = adapters.hook_tool(Path(command[0]).name)
         self.started = False
         if not initial:
             self.phase(self.evidence["phase"], agent_pid=None, last_exit_status=None)
         status = 0
         try:
             with (run / "err").open("wb") as errors:
-                if tool in {"claude", "codex"}:
+                if tool is not None:
                     checked = subprocess.run([board.MALAK_EXE, "hook", "--check", "--tool", tool],
                                              env=env, stdin=subprocess.DEVNULL, stdout=errors,
                                              stderr=subprocess.STDOUT)

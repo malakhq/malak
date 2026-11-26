@@ -2,7 +2,6 @@
 
 #![cfg(any(target_os = "linux", target_os = "macos"))]
 
-use malak_testkit::unix_socket::SocketDir;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
@@ -16,14 +15,22 @@ mod retained;
 mod terminal;
 use terminal::{TerminalOutput, terminal_pair, terminal_text};
 
+#[path = "fixtures/board_home.rs"]
+mod board_home;
+use board_home::BoardHome;
+
+#[path = "fixtures/board_child.rs"]
+mod board_child;
+use board_child::BoardChild;
+
 const MALAK: &str = env!("CARGO_BIN_EXE_malak");
 const QUESTION_INBOX_HINT: &str = "Answers arrive in your inbox";
 // An upper bound for a missing event, independent of when the board is expected to respond.
 const WATCHDOG: Duration = Duration::from_secs(60);
 
 struct Board {
-    process: Running,
-    root: SocketDir,
+    process: BoardChild,
+    root: BoardHome,
 }
 
 impl Board {
@@ -32,7 +39,7 @@ impl Board {
     }
 
     fn start_with(settings: &str) -> Self {
-        let root = SocketDir::new().unwrap();
+        let root = BoardHome::new();
         std::fs::write(
             root.path().join("board.toml"),
             format!(
@@ -51,7 +58,7 @@ impl Board {
 
     fn restart(&mut self) {
         self.run(&["board", "stop"]);
-        let _ = self.process.0.wait();
+        let _ = self.process.wait();
         self.process = launch_board(self.root.path());
     }
 
@@ -330,21 +337,9 @@ fn render_screen(bytes: &[u8], columns: u16, rows: u16) -> String {
         .join("\n")
 }
 
-fn launch_board(root: &Path) -> Running {
-    let mut board = Running(
-        command(root, &["board", "start"])
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap(),
-    );
-    let mut stdout = BufReader::new(board.0.stdout.take().unwrap());
-    let (send, ready) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        stdout.read_line(&mut line).unwrap();
-        let _ = send.send(line);
-    });
-    assert_eq!(ready.recv_timeout(WATCHDOG).unwrap().trim(), "ready");
+fn launch_board(root: &Path) -> BoardChild {
+    let mut board = BoardChild::spawn(&mut command(root, &["board", "start"]));
+    board.wait_ready();
     board
 }
 
@@ -1524,7 +1519,7 @@ fn the_leads_plain_monitor_names_a_worker_enrolled_after_startup() {
 }
 
 #[test]
-fn the_leads_plain_monitor_uses_an_id_for_a_reused_name() {
+fn the_leads_plain_monitor_names_a_relaunched_worker_not_its_inbox() {
     let board = Board::start();
     let (old, handover) = board.enrol("reviewer");
     board.run(&["revoke", &old]);
@@ -1535,10 +1530,7 @@ fn the_leads_plain_monitor_uses_an_id_for_a_reused_name() {
     board.send(&inbox, "task", "Distinguish the new reviewer.");
 
     let task = block_with(&lines, "Distinguish the new reviewer.");
-    assert!(
-        task.contains(&format!("lead sent a task to {inbox} #1")),
-        "{task}"
-    );
+    assert!(task.contains("lead sent a task to reviewer #1"), "{task}");
 }
 
 #[test]

@@ -200,7 +200,12 @@ and read orders in force with `malak --board NAME mailbox --orders`.
 Add `--timeout SECONDS` to end a quiet wait with `No events.`
 The watcher flags unacknowledged lead messages in worker inboxes after
 15 minutes and every hour thereafter until the worker acknowledges them or
-is revoked. The first word after the timestamp is `stuck`.
+is revoked, but only while the worker has been quiet: any send, read or
+acknowledgement by the worker on any channel within the last 15 minutes holds
+the reminder back until the worker has been quiet for 15 minutes. The first
+word after the timestamp is `stuck`. A watcher sees the worker's reads and
+acknowledgements from the moment it starts, and its sends from the retained
+messages.
 
 To stay awake inside the host's own loop, run
 `malak --board NAME mailbox --plain --for lead --next --timeout 60` once per
@@ -224,10 +229,23 @@ names, create channels with these names, or send messages to them.
 Existing channels with these names can still be read. To read a legacy
 channel named `help`, use `malak read -- help`.
 
+`lead-up` refuses while another session still holds the lead: the claim is bound
+to a running session, or an unbound lead has an open connection. The refusal
+names the holding session (pid, program, folder) and when it was claimed. Add
+`--takeover` to take over on purpose; the claim history then shows a new
+`issued` event for your session. A claim whose session has ended, or a re-run
+from the holding session, goes ahead as before.
+
 To take over, run the same setup, then run `malak read lead` to see unacknowledged
 messages first. Review `questions`, orders in force, `malak mailbox --waiting`,
 and active work with `malak mailbox --trace ID`. Acknowledge each lead message
 after handling it. Keep one lead chat at a time.
+
+An acknowledgement means handled. For notices and reports, which need no work,
+`malak read --ack CHANNEL` reads and acknowledges exactly the messages it
+printed in one command. For tasks, run plain `malak read CHANNEL`, do the work,
+then acknowledge with `malak ack --creation CREATION CHANNEL POSITION`. A task
+acknowledged on reading is not shown again if the agent crashes mid-work.
 
 ## Run boards in layers
 
@@ -388,6 +406,16 @@ choose the new session once the previous claim is ended or released. Paste
 the new instructions. The worker keeps its inbox and its grants unless you
 provide new `--grant` rules. `malak recipe workers researcher` and the
 mailbox label the worker `adopted (no launcher)` and show its claim history.
+When a session has ended, `recipe workers` adds a `Re-issue` line with the
+command for that worker (`recipe adopt NAME` for an adopted one,
+`recipe worker-start NAME --again` for a launched one). The board's own notice
+names no command, so the hook and `read --agent` views of that notice add a
+`Re-issue` line with both forms, and `recipe lead-up` for the lead.
+
+`recipe workers` shows each name's active enrolment: its newest one that is not
+revoked. After a relaunch the older enrolments stay hidden unless you add
+`--all`, which lists them after the active one. The JSON output lists every
+enrolment, active first, and each record has an `active` flag.
 
 ## Enrol and launch a worker
 
@@ -442,7 +470,11 @@ before the first standalone run. The demo handles its own permission prompt.
 The recipe sends each run's final stdout to `lead` under the worker's identity
 through [report.sh](../crates/malak/recipes/report.sh). With stdout, the body
 starts with `Worker exit status: N` and a blank line, followed by the output.
-If stdout is empty, the report gives the exit status. The recipe keeps stderr in
+If stdout is empty, the report gives the exit status. When a bound worker
+leaves messages in its `to/ID` inbox unread or unacknowledged, the first line
+also says how many, with their senders and positions, for example
+`Worker exit status: 0, 1 unread (lead #3)`; `recipe workers NAME` shows the
+same after exit. An `--unbound` worker's report is unchanged. The recipe keeps stderr in
 the worker's private results directory under the board state folder and
 prints its path if the command exits with an error. If the board connection
 drops or the board is restarting, the launcher retries with backoff for up to
@@ -899,6 +931,30 @@ with the channel and position in the hook header and compare the creation
 ID. `get` retrieves retained messages without advancing the reader or
 making a message eligible for acknowledgement. After a board restart,
 `read` a still-due message again before manually acknowledging it.
+
+## Agent tools are adapters
+
+A recipe is a documented pattern of the four board verbs. It names no agent
+tool and no model. Everything that belongs to one tool lives in that tool's
+adapter, a file `adapter_<tool>.py` beside the recipes that defines `ADAPTER`:
+
+- the payload fields that identify the tool and its session,
+- the reply format for each hook event,
+- how its hooks are registered (settings file, config folder, instruction file),
+- how `worker-start` wires hooks into a worker it launches,
+- its question tools and how their questions and answers are read,
+- its delegation tools, and the command that starts a delegate,
+- the lines of text that name the tool (the lead's loop, its background task).
+
+`adapters.py` finds every `adapter_*.py` and the recipes read the tables, so a
+new tool is a new adapter file and no recipe changes. `adapter_claude.py`,
+`adapter_codex.py` and `adapter_generic.py` are the built-in tables. A test
+fails when any recipe file outside the adapters names a tool or a model, and
+another adds a third tool as one table and shows registration, reminder,
+question recording and the delegation line working for it.
+
+Examples and hints use a generic agent command, `-- <your agent command>`, and
+name a tool or model only as an "e.g." taken from its adapter.
 
 ## Install the Malak skill and reminders
 
