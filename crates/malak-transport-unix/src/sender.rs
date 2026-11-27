@@ -21,8 +21,12 @@ struct Process {
 impl Process {
     fn is_wrapper(&self, runs_interpreter: impl FnOnce(u32) -> bool) -> bool {
         self.program.as_deref().is_some_and(|name| {
-            matches!(name, "env" | "timeout" | "nohup" | "malak")
-                || interpreter_name(name)
+            // Homebrew coreutils installs these as g-prefixed files behind plain symlinks,
+            // and the process is named for the file.
+            matches!(
+                name,
+                "env" | "timeout" | "nohup" | "gtimeout" | "genv" | "gnohup" | "malak"
+            ) || interpreter_name(name)
                 || runs_interpreter(self.identity.pid)
         })
     }
@@ -148,6 +152,25 @@ mod tests {
             |pid| match pid {
                 4 => Some(process(pid, 3, "malak")),
                 3 => Some(process(pid, 2, "zsh")),
+                2 => Some(process(pid, 1, "claude")),
+                _ => None,
+            },
+            |_| false,
+        );
+
+        assert_eq!(peer.trace.session.unwrap().identity.pid, 2);
+    }
+
+    #[test]
+    fn passes_over_the_homebrew_named_timeout_wrapper() {
+        let mut peer = SenderPeer::transport("unix");
+
+        walk(
+            &mut peer,
+            4,
+            |pid| match pid {
+                4 => Some(process(pid, 3, "malak")),
+                3 => Some(process(pid, 2, "gtimeout")),
                 2 => Some(process(pid, 1, "claude")),
                 _ => None,
             },

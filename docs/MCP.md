@@ -41,13 +41,42 @@ session. A handover bound to a session works from the agent that started the
 server and from nothing else, and the board refuses it from any other process.
 No tool returns a handover, a key or a token.
 
+## Leading over MCP
+
+An agent that can run shell commands, such as Claude Code or Codex, leads a
+local board over MCP by running `malak recipe lead-up BOARD` itself, then
+calling the Malak tools. The agent's host starts `malak mcp` when the agent
+starts, before the model can run `lead-up`, and that is fine: the server
+attaches on the first tool call, and when `lead-up` issues a new handover
+afterwards, the server reads it on the next call and attaches again. Nothing is
+claimed for you. `lead-up`, `adopt` and `worker-start` still issue the claim,
+and the board still refuses a session that does not hold it.
+
+A shell-less chat app cannot lead a local board, because it cannot run
+`lead-up`. It leads through Malak Cloud. It can still be a worker.
+
+The board decides which session a server belongs to by walking up from the
+server to the first program that is not a shell, an interpreter or a wrapper
+such as `env`, `nohup` or `timeout`, and that program must be the one holding
+the claim. A server that the agent starts through `timeout` therefore works.
+On macOS the Homebrew `timeout` runs as `gtimeout`, which the board recognises
+from this version on; a board that is still running an older build keeps
+refusing it until you stop and start the board.
+
 ## When the board refuses the Seat
 
-The board can refuse the handover at startup, for example when another session
-holds it. `malak mcp` still completes the client's handshake and offers its
-tools, and every tool then returns the board's reason as a tool error, so the
-model and you see why. Some clients show only that a server is "failed" when it
-exits, which is why the server stays up.
+The server attaches when a tool is first called. If the board does not exist
+yet, the handover has not been issued, or the board refuses the handover (for
+example another session holds it), the tool returns the board's reason as a
+tool error. The server stays up and the handshake succeeds, so the model and
+you see why, and some clients do not show a server that exits only as "failed".
+For a lead, the error also names the step: run `malak recipe lead-up BOARD`,
+then call the tool again. The next call tries again.
+
+If the board closes the attachment while the server runs, for instance because
+`lead-up` issued the handover again, the call that finds it reads the handover
+file again, attaches once and runs once more. If the board refuses that, the
+call returns the board's reason. It never retries a second time.
 
 To see the reason by hand, run the command the client runs, with the same
 `MALAK_HANDOVER` and board options and standard input closed:
@@ -56,9 +85,10 @@ To see the reason by hand, run the command the client runs, with the same
 MALAK_HANDOVER=/path/to/your/handover malak mcp --board work </dev/null
 ```
 
-It prints the board's reason and exits with a failure. To fix a handover held by
-another session, re-issue it with `malak enrol NAME --session PID`,
-`malak recipe worker-start NAME --again` or `malak recipe lead-up`.
+It attaches once, prints the board's reason and exits with a failure. To fix a
+handover held by another session, re-issue it with
+`malak enrol NAME --session PID`, `malak recipe worker-start NAME --again` or
+`malak recipe lead-up`.
 
 ## Tools
 

@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::HashSet,
+    mem,
     path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant},
@@ -62,6 +63,23 @@ impl Seat {
             config,
             handover: std::env::var("MALAK_HANDOVER").ok(),
         })
+    }
+
+    /// Attach again with the handover as the file is now, keeping what this
+    /// server already returned when the participant is the same.
+    pub(super) fn reattach(&self) -> Result<Self, Error> {
+        let fresh = Self::open(self.config.clone())?;
+        if fresh.inbox == self.inbox {
+            let mut held = self
+                .returned
+                .lock()
+                .unwrap_or_else(|held| held.into_inner());
+            *fresh
+                .returned
+                .lock()
+                .unwrap_or_else(|held| held.into_inner()) = mem::take(&mut held);
+        }
+        Ok(fresh)
     }
 
     pub(super) fn is_lead(&self) -> bool {
