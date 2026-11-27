@@ -253,7 +253,7 @@ fn lead_claim(board: &Fixture) -> serde_json::Value {
 }
 
 /// Bind the lead to `pid`, as a second chat's lead-up would.
-fn bind_lead_to(board: &Fixture, pid: u32) {
+pub(super) fn bind_lead_to(board: &Fixture, pid: u32) {
     let status = board.status();
     let lead = status["participants"]
         .as_array()

@@ -415,6 +415,13 @@ impl Args {
         )
     }
 
+    fn serves_mcp(&self) -> bool {
+        #[cfg(feature = "mcp")]
+        return matches!(self.command, Command::Mcp);
+        #[cfg(not(feature = "mcp"))]
+        false
+    }
+
     fn execute(mut self) -> Result<ExitCode, Error> {
         if matches!(&self.command, Command::Recipe(args) if args.is_demo() && !args.shows_help())
             && (self.board.is_some() || self.config.is_some())
@@ -422,7 +429,9 @@ impl Args {
             eprintln!("The demo runs on its own board. Omit --board and --config.");
             return Ok(ExitCode::from(2));
         }
-        if let Some(name) = self.board.take()
+        // The MCP server resolves the name when it attaches, so it can start before the board exists.
+        if !self.serves_mcp()
+            && let Some(name) = self.board.take()
             && !matches!(&self.command, Command::Recipe(args) if args.shows_help())
         {
             if self.config.is_some() {
@@ -686,7 +695,7 @@ impl Args {
             }
             Command::Hook(args) => return hook::run(args, self.config),
             #[cfg(feature = "mcp")]
-            Command::Mcp => mcp::serve(self.config),
+            Command::Mcp => mcp::serve(self.board, self.config),
             Command::Recipe(args) => return recipe::run(args, self.config),
             Command::Participant(command) => command.execute(self.config),
         };

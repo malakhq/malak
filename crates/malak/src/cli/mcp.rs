@@ -8,7 +8,7 @@ mod catalog;
 mod recipes;
 mod seat;
 
-use crate::cli::participant;
+use crate::cli::{board_names, board_version, client_transport, participant};
 use malak::Error;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler, ServiceExt,
@@ -31,29 +31,28 @@ inbox acknowledges nothing unless asked. Acknowledge a task with ack after the w
 
 /// Serve the participant's Seat until the client closes the connection.
 ///
-/// A board that refuses the attachment does not end the session: the client
-/// completes its handshake and every tool returns the board's reason, so the
-/// model and the person see why. Closing the connection before any session
-/// starts, as `malak mcp </dev/null` does, fails with that reason.
-pub(super) fn serve(config: Option<PathBuf>) -> Result<(), Error> {
-    let (server, refusal) = match Seat::open(config.clone()) {
-        Ok(seat) => (Server::Attached(Arc::new(seat)), None),
-        Err(error) => {
-            let refusal = Arc::new(Refusal::new(error, config));
-            (Server::Refused(Arc::clone(&refusal)), Some(refusal))
-        }
+/// The server attaches to the board on the first tool call, not at startup. A
+/// board or handover that is not there yet, or that the board refuses, is a
+/// tool error with the reason, so the client completes its handshake, the model
+/// sees why and the next call tries again. Closing the connection before any
+/// session starts, as `malak mcp </dev/null` does, attaches once so the
+/// reason is the failure.
+pub(super) fn serve(board: Option<String>, config: Option<PathBuf>) -> Result<(), Error> {
+    let server = Server {
+        target: Arc::new(Target { board, config }),
+        seat: Arc::default(),
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(super::config::io_error)?;
     runtime.block_on(async {
-        let service = match server.serve(rmcp::transport::stdio()).await {
+        let service = match server.clone().serve(rmcp::transport::stdio()).await {
             Ok(service) => service,
             // A client that closes the pipe before it starts a session is not a failure,
-            // unless the board refused the attachment: then the reason is the failure.
+            // unless the board refuses the attachment: then the reason is the failure.
             Err(ServerInitializeError::ConnectionClosed(_)) => {
-                return refusal.map_or(Ok(()), |refusal| Err(refusal.take_error()));
+                return server.seat().map(drop);
             }
             Err(error) => {
                 return Err(Error::unavailable(format!("MCP session failed: {error}")));
@@ -67,47 +66,126 @@ pub(super) fn serve(config: Option<PathBuf>) -> Result<(), Error> {
     })
 }
 
-/// Why the board refused the attachment at startup.
-struct Refusal {
-    /// The reason as a model reads it, with no handover path in it.
-    reason: String,
-    /// Whether the handover is the lead's, which decides the tools offered.
-    lead: bool,
-    error: Mutex<Option<Error>>,
+/// The board the server is configured for, as the command line named it.
+struct Target {
+    /// The name from `--board`, resolved when the server attaches, so a board
+    /// that does not exist yet does not stop the server from starting.
+    board: Option<String>,
+    config: Option<PathBuf>,
 }
 
-impl Refusal {
-    fn new(error: Error, config: Option<PathBuf>) -> Self {
-        let handover = std::env::var("MALAK_HANDOVER").ok();
-        Self {
-            reason: seat::scrub_handover(&error.to_string(), handover.as_deref()),
-            lead: participant::preview_handover(config)
-                .is_ok_and(|handover| handover.id().is_lead()),
-            error: Mutex::new(Some(error)),
+impl Target {
+    fn config(&self) -> Result<Option<PathBuf>, Error> {
+        match &self.board {
+            Some(name) => {
+                let path = board_names::resolve(name)?;
+                board_version::set_config_path(path.clone());
+                Ok(Some(path))
+            }
+            None => Ok(self.config.clone()),
         }
     }
 
-    fn take_error(&self) -> Error {
-        let taken = self
-            .error
-            .lock()
-            .unwrap_or_else(|held| held.into_inner())
-            .take();
-        taken.unwrap_or_else(|| Error::refused(self.reason.clone()))
+    /// Whether the handover is the lead's: the board's own, or one that says so.
+    /// Without `MALAK_HANDOVER` the handover is the lead's, issued by `lead-up`.
+    fn is_lead(&self) -> bool {
+        let handover = self.config().and_then(participant::preview_handover);
+        match handover {
+            Ok(handover) => handover.id().is_lead(),
+            Err(_) => std::env::var_os("MALAK_HANDOVER").is_none(),
+        }
+    }
+
+    /// What a lead does next when the board or its handover is not there.
+    fn lead_up_hint(&self) -> String {
+        let board = match (&self.board, &self.config) {
+            (Some(name), _) => format!(" {name}"),
+            (None, Some(path)) => format!(" --config {}", path.display()),
+            (None, None) => String::new(),
+        };
+        format!(
+            "If you lead this board, run `malak recipe lead-up{board}` in your shell, then call the tool again."
+        )
     }
 }
 
+/// Whether a failure means the board closed the attachment this Seat holds,
+/// as it does when `lead-up` or `adopt` issues the handover again.
+fn attachment_lost(error: &Error) -> bool {
+    client_transport::link_failed(error)
+        || error
+            .to_string()
+            .contains("the board closed the attachment")
+}
+
 #[derive(Clone)]
-enum Server {
-    Attached(Arc<Seat>),
-    Refused(Arc<Refusal>),
+struct Server {
+    target: Arc<Target>,
+    /// The attached Seat, once a tool call has attached it.
+    seat: Arc<Mutex<Option<Arc<Seat>>>>,
 }
 
 impl Server {
+    fn attached(&self) -> Option<Arc<Seat>> {
+        self.seat
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .clone()
+    }
+
+    /// The Seat, attached now if no call has attached it yet.
+    fn seat(&self) -> Result<Arc<Seat>, Error> {
+        let mut slot = self.seat.lock().unwrap_or_else(|held| held.into_inner());
+        if let Some(seat) = slot.as_ref() {
+            return Ok(Arc::clone(seat));
+        }
+        let seat = Arc::new(Seat::open(self.target.config()?)?);
+        *slot = Some(Arc::clone(&seat));
+        Ok(seat)
+    }
+
+    /// Attach again with the handover as the file is now. The board still checks
+    /// the session claim, so this succeeds only for the session that holds it.
+    fn reattach(&self, stale: &Arc<Seat>) -> Result<Arc<Seat>, Error> {
+        let mut slot = self.seat.lock().unwrap_or_else(|held| held.into_inner());
+        if let Some(current) = slot.as_ref()
+            && !Arc::ptr_eq(current, stale)
+        {
+            // Another call attached again first.
+            return Ok(Arc::clone(current));
+        }
+        let fresh = Arc::new(stale.reattach()?);
+        *slot = Some(Arc::clone(&fresh));
+        Ok(fresh)
+    }
+
     fn is_lead(&self) -> bool {
-        match self {
-            Self::Attached(seat) => seat.is_lead(),
-            Self::Refused(refusal) => refusal.lead,
+        self.attached()
+            .map_or_else(|| self.target.is_lead(), |seat| seat.is_lead())
+    }
+
+    /// Run one tool. A call that fails because the board closed the attachment
+    /// attaches again once and runs once more; a second failure is the answer.
+    fn dispatch(&self, name: &str, arguments: Value) -> Result<Reply, String> {
+        let handover = std::env::var("MALAK_HANDOVER").ok();
+        let scrub = |text: String| seat::scrub_handover(&text, handover.as_deref());
+        let seat = self.seat().map_err(|error| {
+            let reason = scrub(error.to_string());
+            if self.target.is_lead() && handover.is_none() {
+                format!("{reason}. {}", self.target.lead_up_hint())
+            } else {
+                reason
+            }
+        })?;
+        match seat.call(name, arguments.clone()) {
+            Err(error) if attachment_lost(&error) => {
+                let seat = self
+                    .reattach(&seat)
+                    .map_err(|error| scrub(error.to_string()))?;
+                seat.call(name, arguments)
+                    .map_err(|error| seat.scrub(&error.to_string()))
+            }
+            outcome => outcome.map_err(|error| seat.scrub(&error.to_string())),
         }
     }
 }
@@ -123,9 +201,11 @@ impl ServerHandler for Server {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
-        Ok(ListToolsResult::with_all_items(catalog::tools(
-            self.is_lead(),
-        )))
+        let server = self.clone();
+        let lead = tokio::task::spawn_blocking(move || server.is_lead())
+            .await
+            .map_err(|_| ErrorData::internal_error("tool listing was interrupted", None))?;
+        Ok(ListToolsResult::with_all_items(catalog::tools(lead)))
     }
 
     async fn call_tool(
@@ -134,23 +214,22 @@ impl ServerHandler for Server {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
-        if !catalog::offered(&name, self.is_lead()) {
-            return Err(ErrorData::invalid_params("unknown tool", None));
-        }
-        let seat = match self {
-            Self::Attached(seat) => Arc::clone(seat),
-            Self::Refused(refusal) => return Ok(tool_error(&refusal.reason).into()),
-        };
         let arguments = Value::Object(request.arguments.unwrap_or_default());
-        let outcome = tokio::task::spawn_blocking({
-            let seat = Arc::clone(&seat);
-            move || seat.call(&name, arguments)
+        let server = self.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            if !catalog::offered(&name, server.is_lead()) {
+                return None;
+            }
+            Some(server.dispatch(&name, arguments))
         })
         .await
         .map_err(|_| ErrorData::internal_error("tool call was interrupted", None))?;
+        let Some(outcome) = outcome else {
+            return Err(ErrorData::invalid_params("unknown tool", None));
+        };
         Ok(match outcome {
             Ok(reply) => reply.into_result(),
-            Err(failure) => tool_error(&seat.scrub(&failure.to_string())),
+            Err(reason) => tool_error(&reason),
         }
         .into())
     }

@@ -1,6 +1,7 @@
 //! `malak mcp`: every tool, driven through a real stdio MCP client.
 
-use super::{Fixture, MALAK, call, run};
+use super::session_binding::bind_lead_to;
+use super::{BoardHome, Fixture, MALAK, call, run};
 use malak_core::HandoverFile;
 use rmcp::{
     RoleClient, ServiceExt,
@@ -53,6 +54,10 @@ impl Seat {
         let mut command = board.without_handover(&["mcp"]);
         command.env("MALAK_HANDOVER", handover);
         adjust(&mut command);
+        Self::start(command).await
+    }
+
+    async fn start(command: Command) -> Self {
         let transport =
             TokioChildProcess::new(tokio::process::Command::from(command).configure(|command| {
                 command.kill_on_drop(true);
@@ -977,6 +982,121 @@ fn a_handover_bound_to_the_agent_works_for_its_child_server() {
     });
 
     assert_eq!(reply.value()["position"], 1);
+}
+
+impl Seat {
+    /// The lead's server as an agent host starts it: no `MALAK_HANDOVER`.
+    async fn take_lead(board: &Fixture) -> Self {
+        Self::take_with(board, &board.lead(), |command| {
+            command.env_remove("MALAK_HANDOVER");
+        })
+        .await
+    }
+}
+
+#[test]
+fn a_lead_server_started_before_lead_up_works_after_it() {
+    let board = Fixture::new();
+
+    let (before, after) = runtime().block_on(async {
+        let mut seat = Seat::take_lead(&board).await;
+        let before = seat.ok("inbox", json!({})).await;
+        // The agent's own lead-up: the claim lands on the agent, this process.
+        bind_lead_to(&board, std::process::id());
+        let after = seat.ok("inbox", json!({})).await;
+        (before.value().clone(), after.value().clone())
+    });
+
+    assert_eq!(before["messages"], json!([]));
+    assert_eq!(after["messages"], json!([]));
+}
+
+#[test]
+fn a_lead_server_started_before_lead_up_starts_an_agent_whose_report_comes_back() {
+    let board = Fixture::new();
+    let stubs = stub_tools(&board);
+
+    let senders = runtime().block_on(async {
+        let mut seat = Seat::take_with(&board, &board.lead(), |command| {
+            command
+                .env_remove("MALAK_HANDOVER")
+                .env("PATH", path_with(&stubs));
+        })
+        .await;
+        seat.ok("agents", json!({})).await;
+        bind_lead_to(&board, std::process::id());
+        seat.ok("inbox", json!({ "wait": 1 })).await;
+        seat.ok(
+            "start_agent",
+            json!({ "name": "helper", "brief": "Report back.", "tool": "claude" }),
+        )
+        .await;
+        let mut senders = Vec::new();
+        while !senders.iter().any(|name| name == "helper") {
+            let read = seat.ok("inbox", json!({ "wait": 30 })).await;
+            let messages = read.value()["messages"].as_array().unwrap().clone();
+            assert!(!messages.is_empty(), "no report arrived: {senders:?}");
+            senders.extend(
+                messages
+                    .iter()
+                    .map(|m| m["sender_name"].as_str().unwrap().to_owned()),
+            );
+        }
+        senders
+    });
+
+    assert!(senders.contains(&"helper".to_owned()));
+}
+
+#[test]
+fn a_lead_up_from_another_session_is_refused_with_the_boards_reason() {
+    let board = Fixture::new();
+    let mut other = Command::new("sleep").arg("600").spawn().unwrap();
+
+    let (failed, text) = runtime().block_on(async {
+        let mut seat = Seat::take_lead(&board).await;
+        seat.ok("inbox", json!({})).await;
+        bind_lead_to(&board, other.id());
+        let reply = seat.call("inbox", json!({})).await;
+        (reply.failed(), reply.text().to_owned())
+    });
+    other.kill().unwrap();
+    other.wait().unwrap();
+
+    assert!(failed);
+    assert!(text.contains("another session"), "{text}");
+}
+
+#[test]
+fn a_server_started_before_the_board_exists_returns_the_lead_up_step_then_works() {
+    let home = BoardHome::new();
+    let malak = |words: &[&str]| {
+        let mut command = Command::new(MALAK);
+        command
+            .env("HOME", home.path())
+            .env_remove("MALAK_HANDOVER")
+            .args(words);
+        command
+    };
+
+    let (names, early, late) = runtime().block_on(async {
+        let mut seat = Seat::start(malak(&["mcp", "--board", "later"])).await;
+        let names = seat.tool_names().await;
+        let early = seat.call("inbox", json!({})).await;
+        let early = (early.failed(), early.text().to_owned());
+        run(&mut malak(&["recipe", "lead-up", "later"]));
+        let late = seat.ok("inbox", json!({})).await.value().clone();
+        (names, early, late)
+    });
+
+    assert!(names.contains(&"start_agent".to_owned()), "{names:?}");
+    assert!(early.0);
+    assert!(
+        early.1.contains("malak recipe lead-up later"),
+        "{}",
+        early.1
+    );
+    assert_eq!(late["messages"], json!([]));
 }
 
 fn unacknowledged(board: &Fixture, inbox: &str) -> u64 {
