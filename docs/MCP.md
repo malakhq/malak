@@ -210,41 +210,34 @@ only new ones. Acknowledge with `ack` after the work, as the instructions say.
 
 `start_agent` runs `claude -p` or `codex exec` with a short prompt and the brief
 delivered through `worker-start --brief`. It adds no permission flags, and you
-cannot pass any: the launcher gives `claude` its own `--settings` (the hooks), and
-that replaces a `--settings` or permission setting that a wrapper adds for the
-process. The agent runs under its own tool's permission settings. An agent whose
-tool must ask before running a command waits. To start an agent with any other
-command, use `malak recipe worker-start` from a shell.
+cannot pass any. The agent runs under its own tool's permission settings, plus
+the one rule below for Claude. An agent whose tool must ask before running a
+command waits. To start an agent with any other command, use
+`malak recipe worker-start` from a shell.
 
-### A Claude agent needs permission to run `malak`
+### A Claude agent can run `malak` out of the box
 
-`claude -p` cannot show a permission prompt, and it ignores the permission
-rules of a project's `.claude/settings.json` until that folder is trusted
-(it prints `Ignoring ... permissions.allow entries ... this workspace has not
-been trusted`). A Claude agent started without permission to run `malak`
-has every `malak` call refused with "requires approval". It cannot ask the
-owner or report, and says so only in its final text, which the launcher sends to
-the lead in the exit report.
+`claude -p` cannot show a permission prompt, so a command it has no rule for is
+refused with "requires approval". The launcher therefore gives a Claude agent,
+in the same `--settings` that carries its hooks, a permission rule that allows
+the `malak` command (`Bash(malak:*)`, and the same rule for the absolute path
+of the `malak` that started it) and nothing else. It adds no other tool,
+command or permission. `worker-start` does the same, and Codex agents are
+unchanged.
 
-What a `start_agent` Claude agent needs today is user-level permission for the
-`malak` command, in `~/.claude/settings.json`, before the lead starts one:
+Anything else a Claude agent needs, such as editing files (`Write`, `Edit`) or
+other commands, still comes from the owner's own settings (for example
+`~/.claude/settings.json`). An agent without that permission cannot do that
+work and says so in its final text, which the launcher sends to the lead in the
+exit report. The agent cannot run an unrelated command, such as `curl`, through
+the added rule.
 
-```json
-{ "permissions": { "allow": ["Bash(malak:*)"] } }
-```
+The rule only allows. If the owner's own settings deny `malak`, the deny still
+wins and the agent's `malak` calls are refused; Malak does not override it.
+Rules from the owner's settings and Malak's rule are added together, so an
+owner who already allows `malak` sees no change.
 
-Per-process settings do not reach a `start_agent` agent, as above. Project-level
-rules in `.claude/settings.json` apply only once the folder is trusted: open
-`claude` once in it and accept the trust prompt. A trial applied the same rule
-per process in an untrusted folder and it worked, so the trust step may not be
-needed for the user-level file; it is harmless either way.
-
-`Bash(malak:*)` lets the agent run `malak` and nothing else. An agent that must
-also create or change files needs permission for those tools too (for example
-`Write` and `Edit`) in the same file, or it cannot do that work and says so in
-its final text.
-
-Malak does not detect a missing permission when it starts the agent, because
-the rules live in the tool's own settings in several scopes. Codex agents need
-nothing extra. A lead that finds a Claude agent exited with "requires
-approval" in its report should ask the owner with `ask_owner`.
+Malak does not detect a missing permission for other tools when it starts the
+agent, because the rules live in the tool's own settings in several scopes.
+Codex agents need nothing extra. A lead that finds a Claude agent exited with
+"requires approval" in its report should ask the owner with `ask_owner`.

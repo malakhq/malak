@@ -2796,6 +2796,19 @@ command = json.loads(sys.argv[2])['hooks']['SessionStart'][0]['hooks'][0]['comma
 }
 
 #[test]
+fn worker_start_allows_a_claude_worker_to_run_only_malak() {
+    assert_worker_start_hook(
+        "claude",
+        r#"import json
+settings = json.loads(sys.argv[2])
+command = settings['hooks']['SessionStart'][0]['hooks'][0]['command']
+assert settings['permissions'] == {'allow': ['Bash(malak:*)', 'Bash(' + os.environ['MALAK_RECIPE_EXE'] + ':*)']}, settings
+assert sorted(settings) == ['hooks', 'permissions'], settings
+"#,
+    );
+}
+
+#[test]
 fn worker_start_registers_the_codex_start_hook() {
     assert_worker_start_hook(
         "codex",
