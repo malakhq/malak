@@ -24,6 +24,11 @@ def hook_arguments(events, env):
         event: [{"hooks": [{"type": "command", "command": command}]}]
         for event, command in events.items()
     }}
+    malak = env.get("MALAK_RECIPE_EXE")
+    if malak:
+        # The only permission added: the worker may run the malak that launched it, as
+        # `malak` (the launcher puts its folder first on PATH) or by absolute path.
+        settings["permissions"] = {"allow": ["Bash(malak:*)", f"Bash({malak}:*)"]}
     return ["--settings", json.dumps(settings)]
 
 

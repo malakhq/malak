@@ -98,10 +98,10 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
             "start_agent",
             "Start a new agent on the board with a brief. It reports back to the lead. It runs under \
              its own tool's permission settings; if that tool must ask before using a command, it waits. \
-             A claude agent runs `claude -p`, which cannot ask: it needs user-level permission for the \
-             malak command (\"permissions\": {\"allow\": [\"Bash(malak:*)\"]} in ~/.claude/settings.json) \
-             and the folder trusted, or every malak call it makes is refused and it can only say so in \
-             its final text. A codex agent needs nothing extra. \
+             A claude agent can run the malak command out of the box: the launcher allows that command \
+             and nothing else for it. Anything else it needs (editing files, other commands) still comes \
+             from the owner's own claude settings, and a deny there still wins. A codex agent needs \
+             nothing extra. \
              If this is refused because no lead watcher is running, call inbox with a wait (for example \
              wait 60), then call start_agent again.",
             json!({

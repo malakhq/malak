@@ -860,7 +860,7 @@ fn the_watcher_refusal_tells_an_mcp_lead_to_wait_on_inbox_and_retry() {
 }
 
 #[test]
-fn the_start_agent_description_says_what_a_claude_agent_needs_to_run_malak() {
+fn the_start_agent_description_says_a_claude_agent_can_run_malak_out_of_the_box() {
     let board = Fixture::new();
 
     let tools = runtime().block_on(async {
@@ -873,12 +873,11 @@ fn the_start_agent_description_says_what_a_claude_agent_needs_to_run_malak() {
         .find(|tool| tool.name == "start_agent")
         .unwrap();
     let description = start.description.as_deref().unwrap();
-    assert!(description.contains("Bash(malak:*)"), "{description}");
+    assert!(description.contains("out of the box"), "{description}");
     assert!(
-        description.contains("~/.claude/settings.json"),
+        description.contains("owner's own claude settings"),
         "{description}"
     );
-    assert!(description.contains("trusted"), "{description}");
 }
 
 #[test]
