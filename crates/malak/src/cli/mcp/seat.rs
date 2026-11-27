@@ -91,14 +91,16 @@ impl Seat {
         scrub_handover(text, self.handover.as_deref())
     }
 
-    pub(super) fn call(&self, tool: &str, input: Value) -> Result<Reply, Error> {
+    /// Run one tool. `send_id` is the message ID a tool that sends uses unless
+    /// the caller gave one, so a retry of the same call stores its message once.
+    pub(super) fn call(&self, tool: &str, input: Value, send_id: &str) -> Result<Reply, Error> {
         match tool {
             "inbox" => self.inbox(arguments(input)?),
             "ack" => self.ack(arguments(input)?),
             "get" => self.get(arguments(input)?),
-            "report" => self.report(arguments(input)?),
+            "report" => self.report(arguments(input)?, send_id),
             "ask_owner" => recipes::ask_owner(self, arguments(input)?),
-            "delegate" => self.delegate(arguments(input)?),
+            "delegate" => self.delegate(arguments(input)?, send_id),
             "start_agent" => recipes::start_agent(self, arguments(input)?),
             "agents" => recipes::agents(self),
             _ => Err(Error::refused("unknown tool")),
@@ -271,29 +273,25 @@ impl Seat {
         Ok(Reply { text, value })
     }
 
-    fn report(&self, args: ReportArgs) -> Result<Reply, Error> {
-        self.send("lead", Kind::Report, args.id, args.body)
+    fn report(&self, args: ReportArgs, send_id: &str) -> Result<Reply, Error> {
+        let id = args.id.unwrap_or_else(|| send_id.to_owned());
+        self.send("lead", Kind::Report, id, args.body)
     }
 
-    fn delegate(&self, args: DelegateArgs) -> Result<Reply, Error> {
+    fn delegate(&self, args: DelegateArgs, send_id: &str) -> Result<Reply, Error> {
         let inbox = recipes::inbox_of(self, &args.agent)?;
-        self.send(&inbox, Kind::Task, None, args.task)
+        let id = args.id.unwrap_or_else(|| send_id.to_owned());
+        self.send(&inbox, Kind::Task, id, args.task)
     }
 
-    fn send(
-        &self,
-        channel: &str,
-        kind: Kind,
-        id: Option<String>,
-        body: String,
-    ) -> Result<Reply, Error> {
+    fn send(&self, channel: &str, kind: Kind, id: String, body: String) -> Result<Reply, Error> {
         if body.len() > Limits::default().body_bytes {
             return Err(Error::refused("message body exceeds the byte limit"));
         }
         let (text, value) = self.run(
             Command::Send {
                 channel: channel.to_owned(),
-                id,
+                id: Some(id),
                 kind,
                 reply_to: Vec::new(),
                 content_type: None,
@@ -377,4 +375,5 @@ struct ReportArgs {
 struct DelegateArgs {
     agent: String,
     task: String,
+    id: Option<String>,
 }

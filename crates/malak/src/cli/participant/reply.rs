@@ -188,11 +188,19 @@ impl Output {
                     "messages".into(),
                     Value::Array(shown.values.into_iter().take(count).collect()),
                 );
-                let text = if count == 0 {
+                let mut text = if count == 0 {
                     "No messages.".to_owned()
                 } else {
                     text[..count].concat()
                 };
+                // The board gave more than fit in the reply. They stay due.
+                let cut = messages.len() - count;
+                if cut > 0 {
+                    text.push_str(&format!(
+                        "\n{cut} more message(s) did not fit in this reply; read again for them.\n"
+                    ));
+                    header.insert("held_back".into(), Value::Bool(true));
+                }
                 Ok((text, Value::Object(header)))
             }
             Self::Messages { .. } | Self::Collected(_) => Err(invalid_reply()),

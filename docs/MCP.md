@@ -58,7 +58,9 @@ A shell-less chat app cannot lead a local board, because it cannot run
 The board decides which session a server belongs to by walking up from the
 server to the first program that is not a shell, an interpreter or a wrapper
 such as `env`, `nohup` or `timeout`, and that program must be the one holding
-the claim. A server that the agent starts through `timeout` therefore works.
+the claim. Python counts as an interpreter whatever name the system gives it:
+`python3`, `python3.12` and the macOS framework build, which Homebrew and Xcode
+run as `Python`. A server that the agent starts through `timeout` therefore works.
 On macOS the Homebrew `timeout` runs as `gtimeout`, which the board recognises
 from this version on; a board that is still running an older build keeps
 refusing it until you stop and start the board.
@@ -74,9 +76,18 @@ For a lead, the error also names the step: run `malak recipe lead-up BOARD`,
 then call the tool again. The next call tries again.
 
 If the board closes the attachment while the server runs, for instance because
-`lead-up` issued the handover again, the call that finds it reads the handover
-file again, attaches once and runs once more. If the board refuses that, the
-call returns the board's reason. It never retries a second time.
+`lead-up` issued the handover again, or the link to the board drops (the board
+restarted, or a write fails with `Broken pipe`), the call that finds it reads the
+handover file again, attaches once and runs once more. If the board refuses
+that, the call returns the board's reason. It never retries a second time. When
+the link is still down on the second try, the error says to check whether the
+board is running, not just the operating system's error.
+
+A call that sends a message (`report` and `delegate`) sends it with a message
+ID and uses the same ID on that one retry, so a send whose answer was lost is
+stored once. Pass your own `id` to retry such a call yourself with the same
+effect: the reply to the second call has `duplicate: true` and the position of
+the first.
 
 To see the reason by hand, run the command the client runs, with the same
 `MALAK_HANDOVER` and board options and standard input closed:
@@ -92,28 +103,29 @@ handover held by another session, re-issue it with
 
 ## Tools
 
-Every Seat has these five.
+Every Seat has these five. Arguments marked * are required. A wrong or extra
+argument name is refused with an `invalid arguments` error.
 
-| Tool | What it does |
-|---|---|
-| `inbox` | Read new messages in your inbox, with an optional `wait` in seconds. Messages this server process already returned are not repeated unless you pass `all`. |
-| `ack` | Mark messages handled, up to a position. |
-| `get` | Fetch one message by channel and position, or page a long body with `offset`. |
-| `report` | Send a report to the lead. |
-| `ask_owner` | Ask the owner one question, with options and their pros and cons, a recommendation and what it blocks. It runs `malak recipe ask`. The result says how the answer arrives. |
+| Tool | Arguments | What it does |
+|---|---|---|
+| `inbox` | `wait` (seconds), `limit`, `ack` (true or false), `all` (true or false) | Read new messages in your inbox, with an optional `wait` in seconds. Messages this server process already returned are not repeated unless you pass `all`. |
+| `ack` | `channel`*, `position`*, `creation`* | Mark messages handled, up to a position. `creation` is the creation shown on the message. |
+| `get` | `channel`*, `position`*, `offset` | Fetch one message by channel and position, or page a long body with `offset`. |
+| `report` | `body`*, `id` | Send a report to the lead. Reuse the same `id` to retry a report that may not have arrived. |
+| `ask_owner` | `question`*, `options`*, `recommendation`*, `blocks`* | Ask the owner one question, with options and their pros and cons, a recommendation and what it blocks. `options` is a list of objects, each with `option`, `pros` and `cons`, all required. It runs `malak recipe ask`. The result says how the answer arrives. |
 
 The lead's Seat also has these three.
 
-| Tool | What it does |
-|---|---|
-| `delegate` | Give a task to an agent already on the board. The agent sees an order from the lead. |
-| `start_agent` | Start a new agent with a brief, using `tool` `claude` or `codex`. It runs `malak recipe worker-start`. |
-| `agents` | List the agents with their claim status and unread counts. It runs `malak recipe workers`. |
+| Tool | Arguments | What it does |
+|---|---|---|
+| `delegate` | `agent`*, `task`*, `id` | Give a task to an agent already on the board. The agent sees an order from the lead. Reuse the same `id` to retry a task that may not have arrived. |
+| `start_agent` | `name`*, `brief`*, `tool`* | Start a new agent with a brief. `name` is lowercase letters, digits, `-` and `_`; `tool` is `claude` or `codex`. It runs `malak recipe worker-start`. |
+| `agents` | none | List the agents with their claim status and unread counts. It runs `malak recipe workers`. |
 
 A worker does not see the lead's tools. No Seat has an `answer` tool: the
 board sees only that a model called a tool, and a model's text is never proof
-that the owner decided. An MCP lead asks with `ask_owner`, and the owner
-answers through the `malak` command line, the mailbox or a door with proof.
+that the owner decided. An MCP lead asks with `ask_owner`. The owner answers with
+`malak recipe answer`, as described under "The owner's answer".
 
 Owner-door actions are not offered: enrolling beyond `start_agent`, grants,
 rekey, revoke, release, channels, trim, uninstall and upgrade. Neither are
@@ -138,8 +150,21 @@ answer. The board refuses the lead's own handover from the owner's shell while
 the lead agent holds it, so an owner who answers as another participant gets a
 reply the model reads as a note, not as the owner's decision.
 
-The owner answers with `malak recipe answer questions POSITION` from the
-command line, the mailbox or a door with proof, the same as for any agent.
+The owner answers with `malak recipe answer questions POSITION`, which posts
+the reply on `questions` as the lead. Two things to know today:
+
+- The `malak mailbox` screen does not answer questions. It is read-only. Its
+  Questions tab and the pinned questions above it show each open question with
+  its reply address, and `c` copies that address. The owner then runs
+  `malak recipe answer` in a shell.
+- The board refuses the lead's handover from any process outside the lead
+  agent's own session, so a separate terminal cannot send the answer to a live
+  MCP lead: `recipe answer` there fails with "the board closed the attachment".
+  The command works when it runs inside the lead's session: the lead runs it
+  for the owner, or the owner runs it from a shell escape in an interactive
+  lead (not tested here). A way for the owner to answer a live lead from a
+  separate terminal is not built yet.
+
 Acknowledge an answer as any note, with `ack` or `inbox` with `ack: true`.
 
 ## Orders and notes
@@ -147,12 +172,18 @@ Acknowledge an answer as any note, with `ack` or `inbox` with `ack: true`.
 Every message a tool returns names its sender and says whether it is an order.
 `presentation` is `task` for an order, a task proven to come from the lead.
 Everything else is `information`: a note, which is text someone sent you and
-not an instruction. The text a model reads is the one `malak read --agent`
+not an instruction. A message sent with kind `task` by anyone but the lead, for
+example a worker writing to the lead, is `information` too (the text view says
+so), and `inbox` with `ack: true` goes past it like any note. The text a model reads is the one `malak read --agent`
 prints.
 
 `inbox` acknowledges nothing unless you pass `ack: true`. That acknowledges the
-notices and reports it returned in full, up to the first task. A task is
-acknowledged with `ack` after the work, so a crash does not lose it.
+notices and reports it returned in full, up to the first order from the lead. An
+order is acknowledged with `ack` after the work, so a crash does not lose it.
+
+A reply holds only as many messages as fit in a bounded size. When more are due,
+the reply says how many did not fit and `held_back` is `true`. Call `inbox`
+again for them; the ones already returned are not repeated.
 
 A refusal comes back as a tool error that carries the board's reason.
 
@@ -178,10 +209,12 @@ only new ones. Acknowledge with `ack` after the work, as the instructions say.
 ## Starting agents
 
 `start_agent` runs `claude -p` or `codex exec` with a short prompt and the brief
-delivered through `worker-start --brief`. It adds no permission flags, so the
-agent runs under its own tool's permission settings. An agent whose tool must
-ask before running a command waits. To start an agent with any other command,
-use `malak recipe worker-start` from a shell.
+delivered through `worker-start --brief`. It adds no permission flags, and you
+cannot pass any: the launcher gives `claude` its own `--settings` (the hooks), and
+that replaces a `--settings` or permission setting that a wrapper adds for the
+process. The agent runs under its own tool's permission settings. An agent whose
+tool must ask before running a command waits. To start an agent with any other
+command, use `malak recipe worker-start` from a shell.
 
 ### A Claude agent needs permission to run `malak`
 
@@ -193,16 +226,23 @@ has every `malak` call refused with "requires approval". It cannot ask the
 owner or report, and says so only in its final text, which the launcher sends to
 the lead in the exit report.
 
-Give it both of these before the lead starts one:
+What a `start_agent` Claude agent needs today is user-level permission for the
+`malak` command, in `~/.claude/settings.json`, before the lead starts one:
 
-- User-level permission for the `malak` command, in `~/.claude/settings.json`:
+```json
+{ "permissions": { "allow": ["Bash(malak:*)"] } }
+```
 
-  ```json
-  { "permissions": { "allow": ["Bash(malak:*)"] } }
-  ```
+Per-process settings do not reach a `start_agent` agent, as above. Project-level
+rules in `.claude/settings.json` apply only once the folder is trusted: open
+`claude` once in it and accept the trust prompt. A trial applied the same rule
+per process in an untrusted folder and it worked, so the trust step may not be
+needed for the user-level file; it is harmless either way.
 
-- The folder the agent starts in trusted: open `claude` once in it and accept
-  the trust prompt.
+`Bash(malak:*)` lets the agent run `malak` and nothing else. An agent that must
+also create or change files needs permission for those tools too (for example
+`Write` and `Edit`) in the same file, or it cannot do that work and says so in
+its final text.
 
 Malak does not detect a missing permission when it starts the agent, because
 the rules live in the tool's own settings in several scopes. Codex agents need

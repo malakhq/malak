@@ -117,7 +117,11 @@ fn walk(
 }
 
 fn interpreter_name(name: &str) -> bool {
-    matches!(name, "sh" | "bash" | "zsh" | "dash" | "fish") || name.starts_with("python")
+    matches!(name, "sh" | "bash" | "zsh" | "dash" | "fish")
+        // The macOS framework build, which Homebrew and Xcode ship, is named "Python".
+        || name
+            .get(..6)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("python"))
 }
 
 #[cfg(test)]
@@ -178,6 +182,27 @@ mod tests {
         );
 
         assert_eq!(peer.trace.session.unwrap().identity.pid, 2);
+    }
+
+    #[test]
+    fn passes_over_every_python_interpreter_name() {
+        for name in ["Python", "python3", "python3.12", "Python3", "pythonw"] {
+            let mut peer = SenderPeer::transport("unix");
+
+            walk(
+                &mut peer,
+                4,
+                |pid| match pid {
+                    4 => Some(process(pid, 3, "malak")),
+                    3 => Some(process(pid, 2, name)),
+                    2 => Some(process(pid, 1, "claude")),
+                    _ => None,
+                },
+                |_| false,
+            );
+
+            assert_eq!(peer.trace.session.unwrap().identity.pid, 2, "{name}");
+        }
     }
 
     #[test]
