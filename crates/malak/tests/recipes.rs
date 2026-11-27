@@ -1523,6 +1523,13 @@ fn uninstall_removes_stock_recipe_state_and_keeps_unrelated_files() {
     let legacy_demo = board.state.join("demo.abcdefgh");
     fs::create_dir(&legacy_demo).unwrap();
     fs::write(legacy_demo.join("task-1.md"), "Legacy demo task").unwrap();
+    // Malak made these private whatever the umask, so do not inherit it.
+    fs::set_permissions(&legacy_demo, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::set_permissions(
+        legacy_demo.join("task-1.md"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
     assert_eq!(
         fs::read_dir(&board.state)
             .unwrap()
