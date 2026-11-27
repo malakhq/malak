@@ -422,6 +422,59 @@ fn inbox_with_ack_leaves_a_task_and_what_follows_it() {
 }
 
 #[test]
+fn a_workers_task_is_information_so_inbox_ack_goes_past_it() {
+    let board = Fixture::new();
+    let (_, peer) = board.enrol("peer");
+    let from_peer = |kind: &str, body: &str| {
+        run(Command::new(MALAK)
+            .env("HOME", board.socket.path())
+            .env("MALAK_HANDOVER", &peer)
+            .args(["--config"])
+            .arg(&board.config)
+            .args(["send", "lead", "--kind", kind, body]));
+    };
+    from_peer("report", "First.");
+
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &board.lead()).await;
+        let first = seat.ok("inbox", json!({})).await;
+        assert_eq!(messages_of(&first).len(), 1);
+        from_peer("task", "Not an order.");
+        from_peer("report", "Later.");
+
+        let reply = seat.ok("inbox", json!({ "ack": true })).await;
+
+        let messages = messages_of(&reply);
+        assert_eq!(messages.len(), 2, "{}", reply.text());
+        assert_eq!(messages[0]["presentation"], "information");
+        assert_eq!(reply.value()["acknowledged"][0]["position"], 3);
+        assert_eq!(reply.value()["held_back"], false);
+    });
+}
+
+#[test]
+fn inbox_says_when_messages_did_not_fit_and_returns_them_next() {
+    let (board, inbox, worker) = board_with_worker();
+    let body = "x".repeat(4096);
+    for _ in 0..6 {
+        call(&board.lead(), &["send", &inbox, "--kind", "report", &body]);
+    }
+
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &worker).await;
+        let first = seat.ok("inbox", json!({ "ack": true })).await;
+        let shown = messages_of(&first).len();
+        assert!(shown < 6, "{shown}");
+        assert_eq!(first.value()["held_back"], true);
+        assert!(first.text().contains("did not fit"), "{}", first.text());
+
+        let second = seat.ok("inbox", json!({ "ack": true })).await;
+
+        assert_eq!(shown + messages_of(&second).len(), 6);
+    });
+}
+
+#[test]
 fn ack_acknowledges_a_task_after_the_work() {
     let (board, inbox, worker) = board_with_worker();
     send_task(&board, &inbox, "Task.");
@@ -702,6 +755,40 @@ fn the_lead_lists_an_agent_it_started() {
 
     assert_eq!(reply.value()["agents"][0]["name"], "builder");
     assert!(reply.text().contains("builder"), "{}", reply.text());
+}
+
+#[test]
+fn delegate_with_the_same_id_stores_the_task_once() {
+    let board = Fixture::new();
+    start_stub_worker(&board, "builder");
+
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &board.lead()).await;
+        let task = json!({ "agent": "builder", "task": "Run the checks.", "id": "retry-1" });
+        let first = seat.ok("delegate", task.clone()).await;
+        let again = seat.ok("delegate", task).await;
+
+        assert_eq!(first.value()["duplicate"], false);
+        assert_eq!(again.value()["duplicate"], true);
+        assert_eq!(again.value()["position"], first.value()["position"]);
+    });
+
+    assert_eq!(unacknowledged(&board, &worker_inbox(&board, "builder")), 1);
+}
+
+#[test]
+fn delegate_without_an_id_still_sends_each_call() {
+    let board = Fixture::new();
+    start_stub_worker(&board, "builder");
+
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &board.lead()).await;
+        let task = json!({ "agent": "builder", "task": "Run the checks." });
+        seat.ok("delegate", task.clone()).await;
+        seat.ok("delegate", task).await;
+    });
+
+    assert_eq!(unacknowledged(&board, &worker_inbox(&board, "builder")), 2);
 }
 
 #[test]

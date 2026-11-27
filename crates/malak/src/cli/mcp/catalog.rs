@@ -85,10 +85,12 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
         ),
         (
             "delegate",
-            "Give a task to an agent already on the board, as the lead. The agent sees it as an order.",
+            "Give a task to an agent already on the board, as the lead. The agent sees it as an order. \
+             Reuse the same id to retry a task that may not have arrived.",
             json!({
                 "agent": { "type": "string", "description": "The agent's name, as agents lists it." },
                 "task": { "type": "string" },
+                "id": { "type": "string", "description": "Message ID, for an exact retry." },
             }),
             &["agent", "task"],
         ),

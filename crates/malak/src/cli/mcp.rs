@@ -165,7 +165,8 @@ impl Server {
     }
 
     /// Run one tool. A call that fails because the board closed the attachment
-    /// attaches again once and runs once more; a second failure is the answer.
+    /// or the link dropped attaches again once and runs once more, with the
+    /// same message ID; a second failure is the answer.
     fn dispatch(&self, name: &str, arguments: Value) -> Result<Reply, String> {
         let handover = std::env::var("MALAK_HANDOVER").ok();
         let scrub = |text: String| seat::scrub_handover(&text, handover.as_deref());
@@ -177,16 +178,55 @@ impl Server {
                 reason
             }
         })?;
-        match seat.call(name, arguments.clone()) {
-            Err(error) if attachment_lost(&error) => {
-                let seat = self
-                    .reattach(&seat)
-                    .map_err(|error| scrub(error.to_string()))?;
-                seat.call(name, arguments)
-                    .map_err(|error| seat.scrub(&error.to_string()))
-            }
-            outcome => outcome.map_err(|error| seat.scrub(&error.to_string())),
+        let send_id = participant::random_id().map_err(|error| error.to_string())?;
+        retry_once(
+            matches!(name, "report" | "delegate"),
+            &send_id,
+            seat,
+            |seat, send_id| seat.call(name, arguments.clone(), send_id),
+            |stale| {
+                self.reattach(stale)
+                    .map_err(|error| scrub(error.to_string()))
+            },
+            |seat, error| seat.scrub(&error.to_string()),
+        )
+    }
+}
+
+/// The failure a tool returns when the link dropped twice, with what to do next.
+fn link_lost(reason: &str, sends: bool) -> String {
+    let retry = if sends {
+        " A message this call sends may or may not have arrived; call again with the same id, \
+         or check before sending it a second time."
+    } else {
+        ""
+    };
+    format!("{reason}. {}{retry}", client_transport::LINK_HINT)
+}
+
+/// Run `call` on `seat` with the message ID `send_id`; if it fails because the
+/// attachment was lost, `reattach` and run it once more with the same ID. `show` turns the final error into the text returned.
+fn retry_once<S>(
+    sends: bool,
+    send_id: &str,
+    seat: S,
+    call: impl Fn(&S, &str) -> Result<Reply, Error>,
+    reattach: impl FnOnce(&S) -> Result<S, String>,
+    show: impl Fn(&S, &Error) -> String,
+) -> Result<Reply, String> {
+    match call(&seat, send_id) {
+        Err(error) if attachment_lost(&error) => {
+            let fresh = reattach(&seat)?;
+            call(&fresh, send_id).map_err(|error| {
+                let reason = show(&fresh, &error);
+                if client_transport::link_failed(&error) {
+                    link_lost(&reason, sends)
+                } else {
+                    reason
+                }
+            })
         }
+        outcome => outcome.map_err(|error| show(&seat, &error)),
     }
 }
 
@@ -257,4 +297,103 @@ impl Reply {
 pub(super) fn arguments<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, Error> {
     serde_json::from_value(value)
         .map_err(|error| Error::refused(format!("invalid arguments: {error}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::cell::RefCell;
+
+    fn done() -> Reply {
+        Reply {
+            text: "ok".into(),
+            value: json!({}),
+        }
+    }
+
+    /// Run a call that fails with `first` on the first seat and `second` on the next.
+    fn run(first: Error, second: Option<Error>) -> (Result<Reply, String>, Vec<&'static str>) {
+        let seen = RefCell::new(Vec::new());
+        let outcome = retry_once(
+            true,
+            "id-1",
+            "first",
+            |seat, _| {
+                seen.borrow_mut().push(*seat);
+                match *seat {
+                    "first" => Err(first.clone()),
+                    _ => second.clone().map_or_else(|| Ok(done()), Err),
+                }
+            },
+            |_| Ok("second"),
+            |_, error| error.to_string(),
+        );
+        (outcome, seen.into_inner())
+    }
+
+    #[test]
+    fn a_broken_pipe_attaches_again_and_runs_the_call_once_more() {
+        let pipe = Error::unavailable("write link: Broken pipe (os error 32)");
+
+        let (outcome, seen) = run(pipe, None);
+
+        assert!(outcome.is_ok());
+        assert_eq!(seen, ["first", "second"]);
+    }
+
+    #[test]
+    fn a_connection_reset_on_write_is_a_link_failure() {
+        let reset = Error::unavailable("write link: Connection reset by peer (os error 54)");
+
+        assert_eq!(run(reset, None).1, ["first", "second"]);
+    }
+
+    #[test]
+    fn a_refusal_is_not_retried() {
+        let (outcome, seen) = run(Error::refused("no such agent"), None);
+
+        assert_eq!(outcome.err().unwrap(), "no such agent");
+        assert_eq!(seen, ["first"]);
+    }
+
+    #[test]
+    fn a_second_dropped_link_says_what_to_do_instead_of_the_raw_error() {
+        let pipe = Error::unavailable("write link: Broken pipe (os error 32)");
+
+        let (outcome, seen) = run(pipe.clone(), Some(pipe));
+
+        let reason = outcome.err().unwrap();
+        assert_eq!(seen, ["first", "second"]);
+        assert!(
+            reason.contains("Check whether the board stopped"),
+            "{reason}"
+        );
+        assert!(reason.contains("same id"), "{reason}");
+    }
+
+    #[test]
+    fn a_send_that_committed_before_the_link_dropped_is_stored_once() {
+        let stored = RefCell::new(Vec::new());
+        let outcome = retry_once(
+            true,
+            "id-1",
+            "first",
+            |seat, id| {
+                if !stored.borrow().contains(&id.to_owned()) {
+                    stored.borrow_mut().push(id.to_owned());
+                }
+                match *seat {
+                    // The board stored the message, then the answer was lost.
+                    "first" => Err(Error::unavailable("write link: Broken pipe (os error 32)")),
+                    _ => Ok(done()),
+                }
+            },
+            |_| Ok("second"),
+            |_, error| error.to_string(),
+        );
+
+        assert!(outcome.is_ok());
+        assert_eq!(stored.into_inner(), ["id-1"]);
+    }
 }
