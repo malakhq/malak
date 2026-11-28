@@ -5,7 +5,7 @@ case $0 in */*) recipes=${0%/*} ;; *) recipes=. ;; esac
 . "$recipes/board.sh"
 
 usage() {
-    recipe_usage "${1:-help}" 'Usage: malak recipe ask [--config PATH | --board NAME] [--reply-to CHANNEL CREATION POSITION] --blocks TEXT --option TEXT [--option TEXT]... --recommend TEXT < QUESTION'
+    recipe_usage "${1:-help}" 'Usage: malak recipe ask [--config PATH | --board NAME] [--reply-to CHANNEL CREATION POSITION] [--to lead|owner|both] --blocks TEXT --option TEXT [--option TEXT]... --recommend TEXT < QUESTION'
 }
 
 blocks=
@@ -13,6 +13,7 @@ recommend=
 options=
 config=
 reply=
+audience=
 while [ "$#" -gt 0 ]; do
     case $1 in
         --blocks|--option|--recommend)
@@ -31,6 +32,12 @@ while [ "$#" -gt 0 ]; do
             config=$(recipe_config_option "$1" "$2")
             shift 2
             ;;
+        --to)
+            case ${2-} in lead|owner|both) ;; *) usage error >&2; exit 2 ;; esac
+            [ -z "$audience" ] || { usage error >&2; exit 2; }
+            audience=$2
+            shift 2
+            ;;
         --reply-to)
             [ "$#" -ge 4 ] && [ -n "$2" ] && [ -n "$3" ] && [ -z "$reply" ] || { usage error >&2; exit 2; }
             case $4 in ''|*[!0-9]*) usage error >&2; exit 2 ;; esac
@@ -46,6 +53,8 @@ done
 if [ -z "$blocks" ] || [ -z "$recommend" ] || [ -z "$options" ]; then usage error >&2; exit 2; fi
 
 MALAK_RECIPE_CONFIG=$(recipe_config "$config")
+# A worker's question is for the lead, the lead's is for the owner.
+[ -n "$audience" ] || audience=$("$malak_exe" ${MALAK_RECIPE_CONFIG:+--config "$MALAK_RECIPE_CONFIG"} recipe __audience-default)
 question=
 question_lines=0
 while :; do
@@ -77,5 +86,5 @@ case $question in
     *) recipe_notice 'post the question' 'No question was provided.' \
            'Give a question on standard input.' 'Give a question on standard input.' >&2; exit 2 ;;
 esac
-question_body "$question" "$blocks" "$options" "$recommend" |
+question_body "$question" "$blocks" "$options" "$recommend" "$audience" |
     task_send --kind note questions -

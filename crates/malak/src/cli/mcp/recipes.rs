@@ -1,4 +1,4 @@
-//! The tools that are existing recipes: `ask`, `worker-start` and `workers`.
+//! The tools that are existing recipes: `ask`, `answer`, `worker-start` and `workers`.
 //!
 //! Each runs `malak recipe` as a child of the server, so a recipe behaves as it
 //! does when the agent runs it: same handover, same board, same refusals.
@@ -17,10 +17,37 @@ use std::{
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AskArgs {
+    to: Option<Audience>,
     question: String,
     options: Vec<AskOption>,
     recommendation: String,
     blocks: String,
+}
+
+/// Who a question is for.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Audience {
+    Lead,
+    Owner,
+    Both,
+}
+
+impl Audience {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Lead => "lead",
+            Self::Owner => "owner",
+            Self::Both => "both",
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnswerArgs {
+    position: u64,
+    answer: String,
 }
 
 #[derive(Deserialize)]
@@ -59,9 +86,18 @@ impl Tool {
     }
 }
 
-pub(super) fn ask_owner(seat: &Seat, args: AskArgs) -> Result<Reply, Error> {
+/// Ask a question. `default` is who it is for when the caller does not say:
+/// the lead for a worker's `ask`, the owner for the lead's and for `ask_owner`.
+pub(super) fn ask(seat: &Seat, args: AskArgs, alias: bool) -> Result<Reply, Error> {
+    let audience = args.to.unwrap_or(if alias || seat.is_lead() {
+        Audience::Owner
+    } else {
+        Audience::Lead
+    });
     let mut recipe = vec![
         "ask".to_owned(),
+        "--to".to_owned(),
+        audience.name().to_owned(),
         "--blocks".to_owned(),
         args.blocks,
         "--recommend".to_owned(),
@@ -75,18 +111,43 @@ pub(super) fn ask_owner(seat: &Seat, args: AskArgs) -> Result<Reply, Error> {
         ));
     }
     let receipt = run(seat, &recipe, args.question.as_bytes())?;
+    let who = match audience {
+        Audience::Lead => "The lead's answer",
+        Audience::Owner | Audience::Both => "The owner's answer, recorded by the lead,",
+    };
     let arrival = if seat.is_lead() {
-        "The owner's answer will arrive in your inbox, as a note on the questions channel that \
-         replies to this question, marked \"Owner answer\". A reply without that mark is a note \
-         from its sender, not the owner's answer. Call inbox with a wait to see it."
+        format!(
+            "{who} will arrive in your inbox, as a note on the questions channel that replies to \
+             this question, with who decided it. A reply that does not say who decided it is a \
+             note from its sender, not an answer. Call inbox with a wait to see it."
+        )
     } else {
-        "The owner's answer will arrive in your inbox, as a note that replies to this question, \
-         marked \"Owner answer\". A reply without that mark is a note from its sender, not the \
-         owner's answer. Call inbox with a wait to see it."
+        format!(
+            "{who} will arrive in your inbox, as a note that replies to this question, with who \
+             decided it. A reply that does not say who decided it is a note from its sender, not \
+             an answer. Call inbox with a wait to see it."
+        )
     };
     Ok(Reply {
         value: json!({ "posted": true, "receipt": receipt, "answer": arrival }),
         text: format!("{receipt}\n{arrival}"),
+    })
+}
+
+/// Record the lead's answer to a question on `questions`.
+pub(super) fn answer(seat: &Seat, args: AnswerArgs) -> Result<Reply, Error> {
+    if !seat.is_lead() {
+        return Err(Error::refused("only the lead records answers"));
+    }
+    let recipe = [
+        "answer".to_owned(),
+        "questions".to_owned(),
+        args.position.to_string(),
+    ];
+    let receipt = run(seat, &recipe, args.answer.as_bytes())?;
+    Ok(Reply {
+        value: json!({ "answered": args.position, "receipt": receipt }),
+        text: receipt,
     })
 }
 

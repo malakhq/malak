@@ -3038,7 +3038,10 @@ fn answer_task_keeps_its_reply_address_and_trace() {
         json!(["questions", receipt["creation"], 1])
     );
     assert_eq!(received[0]["headers"]["trace"], "abcd");
-    assert_eq!(body(&received[0]), b"Use the first option.\n");
+    assert_eq!(
+        body(&received[0]),
+        b"Decided by: owner\nRecorded by: lead\n\nUse the first option.\n"
+    );
 }
 
 fn relay_board(settings: &str) -> (Fixture, PathBuf) {
@@ -3300,7 +3303,7 @@ fn ask_posts_what_it_blocks_the_options_and_a_recommendation() {
     assert_eq!(received[0]["sender"], board.worker_id());
     assert_eq!(
         body(&received[0]),
-        b"Ship the release?\n\nBlocks: the release\nOptions:\n- ship now\n- wait\nRecommendation: wait\n"
+        b"Ship the release?\n\nFor: lead\nBlocks: the release\nOptions:\n- ship now\n- wait\nRecommendation: wait\n"
     );
 }
 
@@ -3497,7 +3500,10 @@ fn answer_replies_to_a_question_on_the_questions_channel() {
         received[0]["headers"]["reply_to"],
         json!(["questions", original[0]["creation"], 1])
     );
-    assert_eq!(body(&received[0]), b"The first.\n");
+    assert_eq!(
+        body(&received[0]),
+        b"Decided by: owner\nRecorded by: lead\n\nThe first.\n"
+    );
 }
 
 #[test]

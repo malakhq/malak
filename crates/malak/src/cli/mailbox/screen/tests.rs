@@ -1,7 +1,7 @@
 use super::*;
 use crate::cli::mailbox::{
     model::{
-        Body, Preview, Question, QuestionKind, Status,
+        Audience, Body, Preview, Question, QuestionKind, Status,
         tests::{event, status},
     },
     view::{Action, copy_text},
@@ -25,6 +25,8 @@ fn fixture() -> Model {
         sent_at: [0, 0],
         first_line: "Which repository URL?".into(),
         kind: QuestionKind::Owner,
+        audience: Audience::Owner,
+        named: false,
         body: "Which repository URL?".into(),
     }]));
     model.apply(event("stored", "lead", "lead", "first", 7));
@@ -1220,6 +1222,8 @@ mod multiboard {
             sent_at: [1, 0],
             first_line: "Owner question".into(),
             kind: QuestionKind::Owner,
+            audience: Audience::Owner,
+            named: false,
             body: "Owner question".into(),
         }]));
         let mut b = fixture();
@@ -1231,6 +1235,8 @@ mod multiboard {
             sent_at: [3, 0],
             first_line: "Agent question".into(),
             kind: QuestionKind::Agent,
+            audience: Audience::Owner,
+            named: false,
             body: "Agent question".into(),
         }]));
         let a = BoardEntry::ready_fixture("alpha", a);

@@ -673,6 +673,11 @@ missing, and `malak recipe worker-start` grants each worker `questions:send`. A 
 posts a question with `malak recipe ask`. The question comes from standard input, and the
 flags say what it blocks, the options and the recommendation. The command needs
 `malak` and a POSIX shell. `malak recipe ask` refuses empty input or missing flags.
+`--to lead|owner|both` says who the question is for. It defaults to `lead` for a
+worker and `owner` for the lead. The question records it on a `For:` line, and
+`malak mailbox --questions` lists questions for the owner or both under "For the
+owner" and gives each question an `audience` in `--json`. A question with no
+`For:` line is an older one, for the owner.
 Send one question per message. If the
 body has more than one line ending in `?`, send each question with its own
 `malak recipe ask`.
@@ -711,6 +716,11 @@ for the owner. When the owner answers in chat, the lead starts the reply with
 `Owner, in chat at HH:MM: "…"`. The `malak recipe answer questions POSITION` recipe posts
 the reply on `questions`. An owner question closes when a lead reply on that
 channel names the earlier question.
+
+`malak recipe answer questions POSITION` starts the reply with who decided it: `Decided by: lead` for a question for
+the lead (or an answer under an order), and `Decided by: owner` with `Recorded by: lead` for a question for
+the owner or both. The lead is trusted as the owner's Door for every question; stronger proof for high-risk
+decisions comes later.
 
 A question from an agent stays on the list until the lead sends a reply that
 names it. Each reply answers one question. `malak mailbox --questions --json` returns

@@ -526,6 +526,26 @@ def send_result(command, title, fields=(), *, handover=None, body=None, stdin_pr
     return result.returncode
 
 
+def default_audience():
+    """Who a question is for when it names none: the lead's goes to the owner, any other asker's to the lead."""
+    handover = os.environ.get("MALAK_HANDOVER")
+    if not handover:
+        return "owner"
+    try:
+        _, sender = board_identity(handover)
+    except (OSError, ValueError):
+        return "lead"
+    return "owner" if sender == "lead" else "lead"
+
+
+def question_audience(body):
+    """The audience a question names on its For: line; an older question names none and is for the owner."""
+    for line in body.splitlines():
+        if line.startswith("For: ") and line[5:].strip() in ("lead", "owner", "both"):
+            return line[5:].strip()
+    return "owner"
+
+
 def answer_channel(config, position):
     if handover := os.environ.get("MALAK_HANDOVER"):
         try:
@@ -549,13 +569,12 @@ def answer_channel(config, position):
 
 def answer(config, order, kind, *address):
     use_board(config)
-    prefix = None
+    mark = None
     if order:
         mark = order_mark(config, order)
         if not sys.stdin.buffer.peek(1):
             out.error("send the answer", "Message body is empty.", "Give the reply on standard input.")
             return 2
-        prefix = f"{mark}\n\n".encode()
     if len(address) == 4:
         inbox, channel, creation, position = address
     else:
@@ -571,6 +590,18 @@ def answer(config, order, kind, *address):
         else:
             inbox = "lead" if sender == "lead" else f"to/{sender}"
         creation = question["creation"]
+    prefix = None
+    if channel == QUESTIONS_CHANNEL and default_audience() == "owner":
+        # Only the lead's reply is an answer, so only it carries the attribution.
+        # The answer says who decided it, from who the question is for: the lead
+        # decides a question for the lead, and records what the owner decides.
+        # An answer under an order is the lead's decision.
+        audience = "owner" if len(address) == 4 else question_audience(bytes(question["body"]).decode(errors="replace"))
+        decided = "lead" if audience == "lead" or order else "owner"
+        text = "Decided by: lead\n\n" if decided == "lead" else "Decided by: owner\nRecorded by: lead\n\n"
+        prefix = (text + (f"{mark}\n\n" if mark else "")).encode()
+    elif mark:
+        prefix = f"{mark}\n\n".encode()
     command = reply_command(inbox, channel, creation, position, kind)
     suffix = f" under order #{order}" if order else ""
     return send_result(

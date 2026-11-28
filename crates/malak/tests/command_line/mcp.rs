@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const PARTICIPANT_TOOLS: [&str; 5] = ["inbox", "ack", "get", "report", "ask_owner"];
+const PARTICIPANT_TOOLS: [&str; 5] = ["inbox", "ack", "get", "report", "ask"];
 
 struct Seat {
     client: RunningService<RoleClient, ()>,
@@ -134,7 +134,7 @@ fn a_worker_sees_the_participant_tools_and_no_lead_tool() {
 }
 
 #[test]
-fn the_lead_sees_the_lead_tools_and_no_answer_tool() {
+fn the_lead_sees_the_lead_tools_including_answer() {
     let board = Fixture::new();
 
     let names =
@@ -147,7 +147,8 @@ fn the_lead_sees_the_lead_tools_and_no_answer_tool() {
             "ack",
             "get",
             "report",
-            "ask_owner",
+            "ask",
+            "answer",
             "delegate",
             "start_agent",
             "agents"
@@ -1257,4 +1258,127 @@ fn path_with(folder: &Path) -> std::ffi::OsString {
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn ask_to(
+    seat: &mut Seat,
+    tool: &'static str,
+    to: Option<&str>,
+    question: &str,
+) -> impl Future<Output = Reply> {
+    let mut input = json!({
+        "question": question,
+        "options": [{ "option": "Yes", "pros": "Fast.", "cons": "Risky." }],
+        "recommendation": "Yes",
+        "blocks": "The work.",
+    });
+    if let Some(to) = to {
+        input["to"] = json!(to);
+    }
+    seat.ok(tool, input)
+}
+
+/// An asker that can read its own inbox, as a started worker can.
+fn reading_asker(board: &Fixture) -> String {
+    let (inbox, asker) = enrol_asker(board);
+    let id = inbox.strip_prefix("to/").unwrap();
+    run(board
+        .without_handover(&["grant", id, "questions:send"])
+        .arg(format!("{inbox}:read,get,ack")));
+    asker.to_string_lossy().into_owned()
+}
+
+fn posted_question(board: &Fixture) -> String {
+    call(&board.lead(), &["read", "questions", "--agent"])
+}
+
+#[test]
+fn a_workers_ask_is_for_the_lead_unless_it_says_otherwise() {
+    let board = Fixture::new();
+    let asker = PathBuf::from(reading_asker(&board));
+
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &asker).await;
+        ask_to(&mut seat, "ask", None, "Default?").await;
+        ask_to(&mut seat, "ask", Some("both"), "Both?").await;
+        ask_to(&mut seat, "ask_owner", None, "Old name?").await;
+    });
+
+    let posted = posted_question(&board);
+    assert!(posted.contains("Default?\nFor: lead\n"), "{posted}");
+    assert!(posted.contains("Both?\nFor: both\n"), "{posted}");
+    assert!(posted.contains("Old name?\nFor: owner\n"), "{posted}");
+}
+
+#[test]
+fn the_lead_inbox_shows_who_a_workers_question_is_for() {
+    let board = Fixture::new();
+    let asker = PathBuf::from(reading_asker(&board));
+
+    let reply = runtime().block_on(async {
+        let mut worker = Seat::take(&board, &asker).await;
+        ask_to(&mut worker, "ask", Some("owner"), "Ship it?").await;
+        ask_to(&mut worker, "ask", Some("lead"), "Which name?").await;
+        Seat::take(&board, &board.lead())
+            .await
+            .ok("inbox", json!({ "wait": 5 }))
+            .await
+    });
+
+    let shown = messages_of(&reply);
+    assert_eq!(shown[0]["audience"], "owner");
+    assert_eq!(shown[1]["audience"], "lead");
+    assert!(
+        reply.text().contains("Question for the owner\n"),
+        "{}",
+        reply.text()
+    );
+}
+
+#[test]
+fn the_lead_answers_and_the_asker_sees_who_decided() {
+    let board = Fixture::new();
+    let asker = PathBuf::from(reading_asker(&board));
+
+    let reply = runtime().block_on(async {
+        let mut worker = Seat::take(&board, &asker).await;
+        ask_to(&mut worker, "ask", Some("lead"), "Which name?").await;
+        ask_to(&mut worker, "ask", Some("owner"), "Ship it?").await;
+        let mut lead = Seat::take(&board, &board.lead()).await;
+        lead.ok("answer", json!({ "position": 1, "answer": "Call it x." }))
+            .await;
+        lead.ok("answer", json!({ "position": 2, "answer": "Yes." }))
+            .await;
+        worker.ok("inbox", json!({ "wait": 5 })).await
+    });
+
+    let shown = messages_of(&reply);
+    assert_eq!(shown[0]["body"], "Call it x.");
+    assert_eq!(shown[0]["decided_by"], "lead");
+    assert!(shown[0].get("recorded_by").is_none(), "{}", shown[0]);
+    assert!(shown[0].get("owner_answer").is_none(), "{}", shown[0]);
+    assert_eq!(shown[1]["body"], "Yes.");
+    assert_eq!(shown[1]["decided_by"], "owner");
+    assert_eq!(shown[1]["recorded_by"], "lead");
+    assert_eq!(shown[1]["owner_answer"], true);
+    assert!(
+        reply
+            .text()
+            .contains("Answer decided by the owner, recorded by the lead\n"),
+        "{}",
+        reply.text()
+    );
+}
+
+#[test]
+fn a_worker_has_no_answer_tool() {
+    let (board, _, worker) = board_with_worker();
+
+    let refused = runtime().block_on(async {
+        let seat = Seat::take(&board, &worker).await;
+        let request = CallToolRequestParams::new("answer");
+        seat.client.call_tool(request).await.is_err()
+    });
+
+    assert!(refused);
 }

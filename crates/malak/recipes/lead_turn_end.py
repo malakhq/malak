@@ -12,7 +12,8 @@ from recipe_board import board_selector
 BUDGET = 32 * 1024
 CONTINUE = (
     "Before you stop, handle the Malak messages below, then acknowledge the lead "
-    "messages with `malak ack`. Answer agent questions with `malak recipe answer`."
+    "messages with `malak ack`. Answer agent questions with `malak recipe answer`; for a "
+    "question for the owner, ask the owner first and record their reply."
 )
 REMINDER = "Malak: lead mail you were handed is still pending: {summary}."
 
@@ -43,6 +44,7 @@ def open_questions(config, handover, status):
         message = get_message("questions", str(question["position"]), config=config,
                               handover=handover, allow_missing=True)
         if message is not None and message["creation"] == channel["creation"]:
+            message["audience"] = question.get("audience", "owner")
             agents.append(message)
     return agents, sum(question["kind"] == "owner" for question in asked)
 
@@ -50,7 +52,9 @@ def open_questions(config, handover, status):
 def label(message, channel):
     sender = message.get("sender_name") or message.get("sender") or "unknown"
     address = guest_label(message) if channel is None else f"{channel} #{message['position']}"
-    return f"{address} from {sender}, kind {message['kind']}"
+    audience = message.get("audience")
+    for_whom = {"owner": ", for the owner", "both": ", for the owner and the lead"}.get(audience, "")
+    return f"{address} from {sender}, kind {message['kind']}{for_whom}"
 
 
 def signature(name, lead, agents, guests):

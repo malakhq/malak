@@ -112,28 +112,48 @@ argument name is refused with an `invalid arguments` error.
 | `ack` | `channel`*, `position`*, `creation`* | Mark messages handled, up to a position. `creation` is the creation shown on the message. |
 | `get` | `channel`*, `position`*, `offset` | Fetch one message by channel and position, or page a long body with `offset`. |
 | `report` | `body`*, `id` | Send a report to the lead. Reuse the same `id` to retry a report that may not have arrived. |
-| `ask_owner` | `question`*, `options`*, `recommendation`*, `blocks`* | Ask the owner one question, with options and their pros and cons, a recommendation and what it blocks. `options` is a list of objects, each with `option`, `pros` and `cons`, all required. It runs `malak recipe ask`. The result says how the answer arrives. |
+| `ask` | `to` (`lead`, `owner` or `both`), `question`*, `options`*, `recommendation`*, `blocks`* | Ask one question, with options and their pros and cons, a recommendation and what it blocks. `to` says who it is for (see "Who a question is for"); it defaults to `lead` for a worker and `owner` for the lead. `options` is a list of objects, each with `option`, `pros` and `cons`, all required. It runs `malak recipe ask`. The result says how the answer arrives. `ask_owner` is the old name, still accepted, and defaults `to` to `owner`. |
 
-The lead's Seat also has these three.
+The lead's Seat also has these four.
 
 | Tool | Arguments | What it does |
 |---|---|---|
 | `delegate` | `agent`*, `task`*, `id` | Give a task to an agent already on the board. The agent sees an order from the lead. Reuse the same `id` to retry a task that may not have arrived. |
 | `start_agent` | `name`*, `brief`*, `tool`* | Start a new agent with a brief. `name` is lowercase letters, digits, `-` and `_`; `tool` is `claude` or `codex`. It runs `malak recipe worker-start`. |
 | `agents` | none | List the agents with their claim status and unread counts. It runs `malak recipe workers`. |
+| `answer` | `position`*, `answer`* | Record the answer to the question at `position` on `questions`. It runs `malak recipe answer`. The answer says who decided it (see "The owner's answer"). |
 
-A worker does not see the lead's tools. No Seat has an `answer` tool: the
-board sees only that a model called a tool, and a model's text is never proof
-that the owner decided. An MCP lead asks with `ask_owner`. The owner answers with
-`malak recipe answer`, as described under "The owner's answer".
+A worker does not see the lead's tools, and a call to one is refused.
 
 Owner-door actions are not offered: enrolling beyond `start_agent`, grants,
 rekey, revoke, release, channels, trim, uninstall and upgrade. Neither are
 release or publish actions.
 
+## Who a question is for
+
+Every question names its audience on a `For:` line after the question text:
+
+- `lead`: the lead decides. This is the default for a worker's question. Use it
+  for choices inside the task: a name, an approach, which file.
+- `owner`: the owner decides. The lead's `inbox` shows the question as for the
+  owner; the lead asks the owner and records the owner's reply. Use it for
+  decisions that are the owner's: spending, publishing, scope, anything the
+  brief says is not yours.
+- `both`: the owner decides, and the lead sees it and may add a
+  recommendation. Use it when the lead's view will help the owner.
+
+The lead's `inbox` shows each worker's question with its audience (`audience`
+in the structured reply; `Question for the owner` in the text). A question with
+no `For:` line is an older one and reads as `owner`, which is what every
+question meant before.
+
+For now the lead is trusted as the owner's Door for every question: what the
+lead records as the owner's reply is taken as the owner's decision. Stronger
+proof for high-risk decisions (a release, spending, publishing) comes later.
+
 ## The owner's answer
 
-`ask_owner` posts the question on the board's `questions` channel and returns
+`ask` posts the question on the board's `questions` channel and returns
 at once. The answer comes back through `inbox`, as a note:
 
 - A worker's answer arrives in its own inbox, as a note.
@@ -141,17 +161,20 @@ at once. The answer comes back through `inbox`, as a note:
   reads along with its own inbox. Only replies to a question show there, not the
   questions themselves.
 
-A reply is the owner's answer only when it is marked `owner_answer` (the text
-shows `Owner answer yes`). The mark means the board proved the sender is the
-lead, which is how `malak recipe answer` sends the owner's answer from the owner's
-terminal. A reply from any other participant, a worker for example, still shows,
-as a note from that participant under its own name, and is never the owner's
-answer. The board refuses the lead's own handover from the owner's shell while
-the lead agent holds it, so an owner who answers as another participant gets a
-reply the model reads as a note, not as the owner's decision.
+A reply is an answer only when the board proved the sender is the lead, which
+is how `answer` and `malak recipe answer` send it. An answer says who decided
+it: `decided_by` is `lead` for a question for the lead, and `owner` for a
+question for the owner or both, with `recorded_by` `lead`. The text shows
+`Answer decided by the owner, recorded by the lead` or `Answer decided by the
+lead`, and `owner_answer` is true when the owner decided. An answer posted
+under an order is the lead's decision. A reply from any other participant, a
+worker for example, still shows, as a note from that participant under its own
+name, and is never an answer.
 
-The owner answers with `malak recipe answer questions POSITION`, which posts
-the reply on `questions` as the lead. Two things to know today:
+The lead answers with `answer` (MCP) or `malak recipe answer questions
+POSITION` (CLI), which post the reply as the lead. For a question for the
+owner or both, the lead first asks the owner, then records the owner's reply.
+Two things to know today:
 
 - The `malak mailbox` screen does not answer questions. It is read-only. Its
   Questions tab and the pinned questions above it show each open question with
@@ -162,8 +185,8 @@ the reply on `questions` as the lead. Two things to know today:
   MCP lead: `recipe answer` there fails with "the board closed the attachment".
   The command works when it runs inside the lead's session: the lead runs it
   for the owner, or the owner runs it from a shell escape in an interactive
-  lead (not tested here). A way for the owner to answer a live lead from a
-  separate terminal is not built yet.
+  lead (not tested here). So the owner answers through the lead: the lead
+  relays the question and records the reply with `answer`.
 
 Acknowledge an answer as any note, with `ack` or `inbox` with `ack: true`.
 
@@ -240,4 +263,4 @@ owner who already allows `malak` sees no change.
 Malak does not detect a missing permission for other tools when it starts the
 agent, because the rules live in the tool's own settings in several scopes.
 Codex agents need nothing extra. A lead that finds a Claude agent exited with
-"requires approval" in its report should ask the owner with `ask_owner`.
+"requires approval" in its report should ask with `ask`, naming `to`.

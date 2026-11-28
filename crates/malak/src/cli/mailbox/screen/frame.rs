@@ -1,7 +1,7 @@
 use super::Palette;
 use crate::cli::{
     mailbox::{
-        model::{Model, Question, QuestionKind},
+        model::{Model, Question},
         text,
         view::{Pane, Tab, View, Visible},
     },
@@ -241,7 +241,7 @@ fn owner_questions(model: &Model) -> impl Iterator<Item = &Question> {
         .open_questions()
         .into_iter()
         .flatten()
-        .filter(|q| q.kind == QuestionKind::Owner)
+        .filter(|q| q.for_owner())
 }
 
 pub(super) fn owner_question(

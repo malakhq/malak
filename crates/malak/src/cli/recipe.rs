@@ -31,6 +31,7 @@ mod quiet;
 
 const CHECK_BOARD: &str = "__check-board";
 const BOARD_CONFIG: &str = "__board-config";
+const AUDIENCE_DEFAULT: &str = "__audience-default";
 const BOARD_NAME: &str = "__board-name";
 const BOARD_LIST: &str = "__board-list";
 const REGISTER_GUEST: &str = "__register-guest";
@@ -71,6 +72,7 @@ impl Args {
 
     pub(super) fn operation(&self) -> String {
         match self.words.first() {
+            Some(name) if name == AUDIENCE_DEFAULT => "choose who a question is for".to_owned(),
             Some(name) if name == CHECK_BOARD => "check the recipe handover".to_owned(),
             Some(name) if name == BOARD_CONFIG || name == BOARD_NAME || name == BOARD_LIST => {
                 "select the recipe board".to_owned()
@@ -259,6 +261,17 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
                 .map(|record| participant::json_message(record.label, &record.body))
                 .collect();
             output::line(format_args!("{}", serde_json::Value::Array(records)))?;
+            return Ok(ExitCode::SUCCESS);
+        }
+        Some(AUDIENCE_DEFAULT) if arguments.is_empty() => {
+            // A question with no named audience: the lead's is for the owner,
+            // any other asker's for the lead.
+            let audience = match participant::preview_handover(config) {
+                Ok(handover) if handover.id().is_lead() => "owner",
+                Err(_) if std::env::var_os("MALAK_HANDOVER").is_none() => "owner",
+                _ => "lead",
+            };
+            output::line(format_args!("{audience}"))?;
             return Ok(ExitCode::SUCCESS);
         }
         Some(CHECK_BOARD) if arguments.is_empty() => {

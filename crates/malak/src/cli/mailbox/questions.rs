@@ -4,7 +4,7 @@
 
 use super::{
     messages::{RecordBody, read_message, readable_channels},
-    model::{Address, Channel, Preview, Question, QuestionKind},
+    model::{Address, Audience, Channel, Preview, Question, QuestionKind},
     now_ms, status, text,
 };
 use crate::cli::{output, owner, participant::Session};
@@ -38,12 +38,7 @@ pub(super) fn run(config: Option<PathBuf>, plain: bool, json: bool) -> Result<()
         return output::line(format_args!("{}", serde_json::json!(asked)));
     }
     if !plain {
-        asked.sort_unstable_by_key(|question| {
-            (
-                question.kind != QuestionKind::Owner,
-                Reverse(question.order()),
-            )
-        });
+        asked.sort_unstable_by_key(|question| (!question.for_owner(), Reverse(question.order())));
     }
     let names: HashMap<_, _> = status
         .participants
@@ -110,7 +105,7 @@ pub(super) fn collect<T: Borrow<Preview>, E>(
             .get(&question.position)
             .is_some_and(|&on_questions| question.kind == QuestionKind::Agent || on_questions)
     });
-    asked.sort_by_key(|question| question.kind != QuestionKind::Owner);
+    asked.sort_by_key(|question| !question.for_owner());
     Ok(asked)
 }
 
@@ -125,6 +120,7 @@ fn question(address: Address, message: &Preview, kind: QuestionKind) -> Question
         .body_text()
         .or(message.text.as_deref())
         .map_or_else(String::new, |body| text::preview(body.lines()).join("\n"));
+    let named = message.text.as_deref().and_then(Audience::of_body);
     Question {
         position: address.position,
         creation: address.creation,
@@ -132,6 +128,9 @@ fn question(address: Address, message: &Preview, kind: QuestionKind) -> Question
         at_ms: message.at_ms(),
         sent_at: message.sent_at,
         kind,
+        // An older question names none and reads as the owner's.
+        audience: named.unwrap_or(Audience::Owner),
+        named: named.is_some(),
         first_line,
         body,
     }
@@ -146,8 +145,7 @@ fn print_open(
     if questions.is_empty() {
         return output::result("No open questions.");
     }
-    let (owner, agent) =
-        questions.split_at(questions.partition_point(|q| q.kind == QuestionKind::Owner));
+    let (owner, agent) = questions.split_at(questions.partition_point(|q| q.for_owner()));
     let format = output::Format::stdout();
     let mut block = String::new();
     for (heading, group) in [(OWNER_HEADING, owner), ("Open questions", agent)] {

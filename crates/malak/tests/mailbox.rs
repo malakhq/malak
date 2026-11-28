@@ -2830,3 +2830,28 @@ fn the_orders_tab_adds_new_orders_above_earlier_decisions_and_orders() {
 mod multiboard;
 #[path = "mailbox/next.rs"]
 mod next;
+
+#[test]
+fn questions_say_who_they_are_for_and_an_older_one_reads_as_the_owners_in_json() {
+    let board = Board::start();
+    board.run(&["channel", "create", "questions"]);
+    let (_, handover) = board.asker("alpha");
+    board.ask(&handover, "Which name?\nFor: lead");
+    board.ask(&handover, "Ship it?\nFor: both");
+    board.ask(&handover, "Older question?");
+
+    let listed = board.run(&["mailbox", "--questions", "--json"]);
+    let audiences: Vec<_> = serde_json::from_str::<Vec<serde_json::Value>>(&listed)
+        .unwrap()
+        .iter()
+        .map(|question| question["audience"].as_str().unwrap().to_owned())
+        .collect();
+    let view = board.run(&["mailbox", "--questions"]);
+
+    assert_eq!(audiences, ["both", "lead", "owner"]);
+    let owner = view.find("For the owner").unwrap();
+    let open = view.find("Open questions").unwrap();
+    assert!(owner < view.find("Ship it?").unwrap() && view.find("Ship it?").unwrap() < open);
+    assert!(open < view.find("Which name?").unwrap(), "{view}");
+    assert!(open < view.find("Older question?").unwrap(), "{view}");
+}

@@ -56,6 +56,15 @@ Malak runs in the background to delegate work across your agents and subagents.
   hooks installed, or post it with `malak --board NAME recipe ask` before
   writing it in chat. Include options and a recommendation. If this chat
   leads several boards, choose the board explicitly with `recipe ask --board NAME`.
+- Every question names who it is for with `recipe ask --to`: `lead` (the lead
+  decides; a worker's default, for choices inside its task), `owner` (the owner
+  decides; the lead takes it to the owner and records the reply) or `both` (the
+  owner decides; the lead may add a recommendation). A worker asks the owner only
+  for what its brief does not leave to it. As lead, answer `lead` questions
+  yourself with `recipe answer questions POSITION`; for `owner` and `both`, ask
+  the owner, then record their reply the same way. The answer says who decided
+  it. For now the lead is trusted as the owner's Door for every question;
+  stronger proof for high-risk decisions comes later.
 - Put a question from the watcher to the owner in chat right away if you posted
   it for them or only they can answer a worker's question. Include the options
   and recommendation. If the owner answers in chat and the hook has yet to
