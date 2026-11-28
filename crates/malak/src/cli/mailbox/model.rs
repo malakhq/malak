@@ -304,6 +304,12 @@ pub(super) struct Question {
     pub sent_at: [u64; 2],
     pub first_line: String,
     pub kind: QuestionKind,
+    /// Who the question is for, from its `For:` line; none reads as the owner.
+    pub audience: Audience,
+    /// Whether the body has a `For:` line. An older question has none, and
+    /// stays among the agents' questions as it did before audiences.
+    #[serde(skip)]
+    pub named: bool,
     #[serde(skip)]
     pub body: String,
 }
@@ -311,6 +317,33 @@ pub(super) struct Question {
 impl Question {
     pub fn order(&self) -> ([u64; 2], u64) {
         (self.sent_at, self.position)
+    }
+
+    /// Whether the lead has to take the question to the owner.
+    pub fn for_owner(&self) -> bool {
+        self.kind == QuestionKind::Owner || (self.named && self.audience != Audience::Lead)
+    }
+}
+
+/// Who decides a question.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum Audience {
+    Lead,
+    Owner,
+    Both,
+}
+
+impl Audience {
+    /// The audience a question body names on a line `For: lead|owner|both`.
+    pub fn of_body(text: &str) -> Option<Self> {
+        text.lines()
+            .find_map(|line| match line.strip_prefix("For: ")?.trim() {
+                "lead" => Some(Self::Lead),
+                "owner" => Some(Self::Owner),
+                "both" => Some(Self::Both),
+                _ => None,
+            })
     }
 }
 

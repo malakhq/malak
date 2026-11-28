@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Questions name who they are for: `recipe ask --to lead|owner|both` and the MCP
+  `ask` tool (`ask_owner` stays as an alias that defaults to `owner`). A worker's
+  default is `lead`; the lead's is `owner`. The audience is a `For:` line in the
+  question body, so no stored format changes; a question without one reads as
+  `owner`. The mailbox, the Stop hook and the lead's MCP `inbox` show it. The
+  lead's MCP Seat gets an `answer` tool, and an answer says who decided it and
+  who recorded it (`Decided by:` lines at the start of its body, shown as
+  `decided_by` and `recorded_by`). The lead is trusted as the owner's Door for
+  every question; stronger proof for high-risk decisions comes later. Fixes #55.
+
 - `malak mcp` serves a Seat to any MCP client over stdio, built on the official
   Rust MCP SDK (`rmcp`) behind the new `mcp` feature, which is on by default for
   the command line and absent from the board-only library build. Every Seat has

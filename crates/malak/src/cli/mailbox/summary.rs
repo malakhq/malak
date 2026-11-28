@@ -1,6 +1,6 @@
 use super::{
     messages::readable_channels,
-    model::{Address, Channel, Model, Participant, Preview, QuestionKind, Status},
+    model::{Address, Channel, Model, Participant, Preview, Status},
     orders, questions, text,
 };
 use crate::cli::output::display;
@@ -200,10 +200,7 @@ fn question_counts(model: &Model) -> Option<(usize, usize)> {
         return Some((0, 0));
     }
     let open = model.open_questions()?;
-    let owner = open
-        .iter()
-        .filter(|q| q.kind == QuestionKind::Owner)
-        .count();
+    let owner = open.iter().filter(|q| q.for_owner()).count();
     Some((open.len(), owner))
 }
 

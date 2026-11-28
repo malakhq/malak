@@ -3,7 +3,7 @@
 use super::{RowKey, View, rows, shorten};
 use crate::cli::{
     mailbox::{
-        model::{Lane, Model, Question, QuestionKind},
+        model::{Lane, Model, Question},
         multiboard::{BoardEntry, BoardId, State},
         questions, summary, text,
         trace::LiveTrace,
@@ -136,10 +136,7 @@ impl Counts {
             self.question_inbox = true;
         } else if let Some(questions) = model.open_questions() {
             self.questions += questions.len();
-            self.owner += questions
-                .iter()
-                .filter(|q| q.kind == QuestionKind::Owner)
-                .count();
+            self.owner += questions.iter().filter(|q| q.for_owner()).count();
         } else {
             self.questions_pending |= model.has_retained(questions::CHANNEL);
         }
@@ -306,7 +303,7 @@ pub(super) fn owner_question(entries: &[&BoardEntry], width: usize) -> Option<St
                     .open_questions()
                     .into_iter()
                     .flatten()
-                    .filter(|question| question.kind == QuestionKind::Owner)
+                    .filter(|question| question.for_owner())
                     .map(|question| (*board, question))
             })
         })

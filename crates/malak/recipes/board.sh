@@ -1,8 +1,11 @@
 # Shared board selection for the shell recipes.
 malak_exe=${MALAK_RECIPE_EXE:-malak}
 
+# question_body QUESTION BLOCKS OPTIONS RECOMMENDATION [AUDIENCE]: AUDIENCE is
+# lead, owner or both and is recorded on a "For:" line after the question.
 question_body() {
     printf '%s\n' "$1"
+    if [ -n "${5-}" ]; then printf 'For: %s\n' "$5"; fi
     if [ -n "$2" ]; then printf 'Blocks: %s\n' "$2"; fi
     if [ -n "$3" ]; then printf 'Options:\n%s' "$3"; fi
     if [ -n "$4" ]; then printf 'Recommendation: %s\n' "$4"; fi

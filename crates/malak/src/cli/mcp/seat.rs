@@ -99,7 +99,9 @@ impl Seat {
             "ack" => self.ack(arguments(input)?),
             "get" => self.get(arguments(input)?),
             "report" => self.report(arguments(input)?, send_id),
-            "ask_owner" => recipes::ask_owner(self, arguments(input)?),
+            "ask" => recipes::ask(self, arguments(input)?, false),
+            "ask_owner" => recipes::ask(self, arguments(input)?, true),
+            "answer" if self.lead => recipes::answer(self, arguments(input)?),
             "delegate" => self.delegate(arguments(input)?, send_id),
             "start_agent" => recipes::start_agent(self, arguments(input)?),
             "agents" => recipes::agents(self),
@@ -146,7 +148,10 @@ impl Seat {
         let (mut text, mut value, _) = command.execute_reply_keeping(&mut session, |message| {
             message.mark_owner_answer();
             let (channel, creation, position) = message.address();
-            if channel == QUESTIONS && !message.answers_a_question() {
+            if channel == QUESTIONS
+                && !message.answers_a_question()
+                && !message.is_worker_question()
+            {
                 return false;
             }
             if !args.all {
