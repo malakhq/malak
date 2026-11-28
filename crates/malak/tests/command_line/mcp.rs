@@ -1243,6 +1243,29 @@ fn a_server_started_before_the_board_exists_returns_the_lead_up_step_then_works(
         let early = seat.call("inbox", json!({})).await;
         let early = (early.failed(), early.text().to_owned());
         run(&mut malak(&["recipe", "lead-up", "later"]));
+        // Opt in to the ordering that made the original test flaky: publish
+        // the claim notice before the server's next inbox call.
+        if std::env::var_os("MALAK_TEST_WAIT_FOR_CLAIM_NOTICE").is_some() {
+            let notice = run(&mut malak(&[
+                "--board", "later", "read", "--wait", "30", "lead",
+            ]));
+            assert!(notice.contains("lead is on the board (PID "), "{notice}");
+        }
+        // Claim acceptance is published asynchronously. Observe that setup
+        // message before checking that the recovered server's inbox is empty.
+        let accepted = seat.ok("inbox", json!({ "wait": 30 })).await;
+        let notices = messages_of(&accepted);
+        assert_eq!(notices.len(), 1, "{}", accepted.text());
+        assert_eq!(notices[0]["sender_name"], "owner");
+        assert_eq!(notices[0]["kind"], "note");
+        assert!(
+            notices[0]["body"]
+                .as_str()
+                .unwrap()
+                .starts_with("lead is on the board (PID "),
+            "{}",
+            accepted.text()
+        );
         let late = seat.ok("inbox", json!({})).await.value().clone();
         (names, early, late)
     });

@@ -138,6 +138,11 @@ fn launch(config: &Path) -> BoardChild {
 }
 
 fn launch_with_one_general_place(config: &Path) -> BoardChild {
+    // Opt-in fixture delay for reproducing the old aggregate test deadline.
+    // This helper is compiled only into the integration test executable.
+    if std::env::var_os("MALAK_TEST_SLOW_GENERAL_FIXTURE").is_some() {
+        std::thread::sleep(Duration::from_secs(16));
+    }
     // The reserve leaves two lead places and one general place under this budget.
     launch_with_descriptor_limits(config, "120", "120")
 }
@@ -548,12 +553,6 @@ fn assert_empty_send_refused(output: std::process::Output) {
 
 #[test]
 fn the_lead_cli_completes_all_verbs_with_the_general_entrance_full() {
-    malak_testkit::tasks::spawn(exercise_lead_with_full_general_entrance)
-        .wait(Duration::from_secs(15))
-        .expect("lead calls with a saturated general entrance timed out");
-}
-
-fn exercise_lead_with_full_general_entrance() {
     use malak_core::{HandoverFile, LocalClient};
     use malak_mechanism_key::Key;
     use malak_proto::encode_frame;
@@ -584,29 +583,42 @@ fn exercise_lead_with_full_general_entrance() {
     });
     // The rejected connections prove the worker has taken the only general
     // place. Keep that session and the churn live for each verb.
-    admitted.recv().unwrap();
+    admitted
+        .recv_timeout(Duration::from_secs(15))
+        .expect("general entrance did not become saturated");
     let lead = board.lead();
-    call(&lead, &["send", "lead", "--id", "saturated", "task"]);
-    let read = call(&lead, &["read", "lead", "--json"]);
+    // Bound each verb's completion, independently of fixture startup and the
+    // time already spent exercising the preceding verbs on a busy machine.
+    let lead_call = |words: &[&str]| {
+        let lead = lead.clone();
+        let words: Vec<String> = words.iter().map(|word| (*word).to_owned()).collect();
+        malak_testkit::tasks::spawn(move || {
+            let words: Vec<&str> = words.iter().map(String::as_str).collect();
+            call(&lead, &words)
+        })
+        .wait(Duration::from_secs(15))
+        .expect("lead call with a saturated general entrance timed out")
+    };
+    lead_call(&["send", "lead", "--id", "saturated", "task"]);
+    let read = lead_call(&["read", "lead", "--json"]);
     let task = &messages(&read)[0];
     let position = task["position"].as_u64().unwrap().to_string();
     assert_eq!(
-        messages(&call(&lead, &["get", "lead", &position, "--json"]))[0]["body"],
+        messages(&lead_call(&["get", "lead", &position, "--json"]))[0]["body"],
         task["body"]
     );
-    call(
-        &lead,
-        &[
-            "ack",
-            "lead",
-            &position,
-            "--creation",
-            task["creation"].as_str().unwrap(),
-        ],
-    );
+    lead_call(&[
+        "ack",
+        "lead",
+        &position,
+        "--creation",
+        task["creation"].as_str().unwrap(),
+    ]);
 
     drop(stop);
-    churn.join().unwrap();
+    malak_testkit::tasks::spawn(move || churn.join().unwrap())
+        .wait(Duration::from_secs(15))
+        .expect("general entrance rejection did not finish");
     let wait = Duration::from_secs(5);
     held.send_frame(encode_frame(2, "PING", 0, |_| {}, &[]).unwrap(), wait)
         .unwrap();

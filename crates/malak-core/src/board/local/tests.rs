@@ -730,6 +730,9 @@ fn a_saved_revoke_emits_an_event_when_its_reply_cannot_be_written() {
         .unwrap(),
     );
     let request = owner.next_request().unwrap();
+    // Request a transport close before exercising the lost-reply path instead
+    // of relying on the timing of a descriptor's drop.
+    fixture.transport.send(&fixture.client.io, &[]).unwrap();
     drop(fixture.client);
 
     assert!(owner.dispatch(request).is_err());
