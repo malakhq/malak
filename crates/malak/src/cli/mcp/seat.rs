@@ -95,6 +95,9 @@ impl Seat {
     /// the caller gave one, so a retry of the same call stores its message once.
     pub(super) fn call(&self, tool: &str, input: Value, send_id: &str) -> Result<Reply, Error> {
         match tool {
+            "briefs" | "brief" | "brief_view" | "brief_put" => {
+                super::briefs::call(self.config.clone(), tool, input, send_id)
+            }
             "inbox" => self.inbox(arguments(input)?),
             "ack" => self.ack(arguments(input)?),
             "get" => self.get(arguments(input)?),

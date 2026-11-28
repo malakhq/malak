@@ -131,6 +131,11 @@ const RECIPES: &[(&str, &str, Script)] = &[
         script!("await"),
     ),
     (
+        "brief",
+        "Store an immutable brief as the board's lead.",
+        script!("brief"),
+    ),
+    (
         "demo",
         "Run a lead and five workers on a disposable board.",
         script!("demo"),
@@ -242,6 +247,7 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
         return Ok(ExitCode::SUCCESS);
     };
     match name.to_str() {
+        Some("brief") => return super::briefs::put_recipe(arguments, config),
         Some(REGISTER_GUEST) => {
             let [board, handover] = arguments else {
                 return Err(Error::refused(

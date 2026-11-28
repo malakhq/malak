@@ -15,6 +15,8 @@ use std::time::{Duration, Instant};
 
 #[path = "recipes/adopt.rs"]
 mod adopt;
+#[path = "recipes/briefs.rs"]
+mod briefs;
 #[path = "fixtures/retained.rs"]
 mod retained;
 #[path = "recipes/worker_await.rs"]

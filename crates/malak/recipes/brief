@@ -1,0 +1,4 @@
+#!/bin/sh
+# The compiled recipe shares the brief contract with the CLI and MCP tools.
+set -eu
+exec "${MALAK_RECIPE_EXE:-malak}" recipe brief "$@"

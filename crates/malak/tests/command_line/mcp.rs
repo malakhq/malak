@@ -151,7 +151,11 @@ fn the_lead_sees_the_lead_tools_including_answer() {
             "answer",
             "delegate",
             "start_agent",
-            "agents"
+            "agents",
+            "briefs",
+            "brief",
+            "brief_view",
+            "brief_put"
         ]
     );
 }
@@ -167,6 +171,69 @@ fn a_worker_cannot_call_a_lead_tool() {
     });
 
     assert!(refused);
+}
+
+#[test]
+fn the_brief_tools_put_supersede_and_get_the_original() {
+    let board = Fixture::new();
+    let board_name = run(&mut board.without_handover(&["recipe", "__board-name"]));
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &board.lead()).await;
+        seat.ok(
+            "brief_put",
+            json!({"title":"First","kind":"learned","body":"Original text"}),
+        )
+        .await;
+        seat.ok(
+            "brief_put",
+            json!({"title":"Second","kind":"handover","body":"New text","replaces":1}),
+        )
+        .await;
+        let listed = seat.ok("briefs", json!({})).await;
+        assert_eq!(listed.value()["items"].as_array().unwrap().len(), 1);
+        let got = seat
+            .ok("brief", json!({"board":board_name.trim(),"position":1}))
+            .await;
+        assert_eq!(got.value()["items"][0]["status"], "superseded");
+        assert!(
+            got.value()["items"][0]["body"]
+                .as_str()
+                .unwrap()
+                .ends_with("Original text")
+        );
+    });
+}
+
+#[test]
+fn a_large_brief_tool_reply_fits_the_entire_mcp_budget() {
+    let board = Fixture::new();
+    let board_name = run(&mut board.without_handover(&["recipe", "__board-name"]));
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &board.lead()).await;
+        seat.ok(
+            "brief_put",
+            json!({"title":"Large","kind":"report","body":"🦀\"\\".repeat(10_000)}),
+        )
+        .await;
+        let got = seat
+            .ok("brief", json!({"board":board_name.trim(),"position":1}))
+            .await;
+        assert!(got.0.to_string().len() <= 32 * 1024);
+        assert!(got.value()["items"][0]["fetch"]["offset"].as_u64().unwrap() > 0);
+    });
+}
+
+#[test]
+fn a_sub_gets_a_reason_when_it_calls_a_brief_tool() {
+    let (board, _, worker) = board_with_worker();
+    let reply = runtime().block_on(async {
+        Seat::take(&board, &worker)
+            .await
+            .call("briefs", json!({}))
+            .await
+    });
+    assert!(reply.failed());
+    assert!(reply.text().contains("subs receive needed brief text"));
 }
 
 #[test]

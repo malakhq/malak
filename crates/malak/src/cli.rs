@@ -14,6 +14,7 @@ mod board_group;
 mod board_list;
 mod board_names;
 mod board_version;
+mod briefs;
 mod cargo_install;
 mod client_transport;
 mod config;
@@ -24,6 +25,8 @@ mod hook;
 mod mailbox;
 #[cfg(feature = "mcp")]
 mod mcp;
+#[allow(dead_code)] // Shared view API; CLI consumers land in the next commit.
+mod org;
 mod output;
 mod owner_commands;
 mod participant;
@@ -57,6 +60,20 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// List current briefs, grouped by lead, through existing read seats.
+    #[command(after_help = examples::help(&["briefs"]))]
+    Briefs {
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Get a stored brief or a linked view of the board's work.
+    #[command(after_help = examples::help(&["brief get", "brief view"]))]
+    Brief {
+        #[command(subcommand)]
+        command: briefs::Command,
+    },
     /// Discover, start, inspect or stop local boards.
     #[command(after_help = examples::help(&["board list", "board start"]))]
     Board {
@@ -404,6 +421,11 @@ impl Args {
                 | Command::Tail { json: true, .. }
                 | Command::Mailbox { json: true, .. }
                 | Command::Mailbox { plain: true, .. }
+                | Command::Briefs { json: true, .. }
+                | Command::Brief {
+                    command: briefs::Command::View { json: true, .. }
+                        | briefs::Command::Get { json: true, .. }
+                }
                 | Command::Hook(hook::Args { json: true, .. })
                 | Command::Participant(
                     participant::Command::Send { json: true, .. }
@@ -431,6 +453,7 @@ impl Args {
         }
         // The MCP server resolves the name when it attaches, so it can start before the board exists.
         if !self.serves_mcp()
+            && !matches!(self.command, Command::Briefs { .. })
             && let Some(name) = self.board.take()
             && !matches!(&self.command, Command::Recipe(args) if args.shows_help())
         {
@@ -443,6 +466,21 @@ impl Args {
             board_version::set_config_path(path.clone());
         }
         let result = match self.command {
+            Command::Briefs { kind, json } => briefs::show(
+                briefs::list(self.config, self.board.as_deref(), kind.as_deref())?,
+                json,
+            ),
+            Command::Brief { command } => match command {
+                briefs::Command::Get {
+                    target,
+                    position,
+                    offset,
+                    json,
+                } => briefs::show(briefs::get(self.config, &target, position, offset)?, json),
+                briefs::Command::View { since, json } => {
+                    briefs::show(briefs::view(self.config, &since)?, json)
+                }
+            },
             Command::Board {
                 command: Board::List { json },
             } => board_list::show(json),
@@ -510,7 +548,14 @@ impl Args {
                 channel,
                 position,
                 creation,
-            } => owner_commands::trim(&mut owner(self.config)?, &channel, position, creation),
+            } => {
+                if channel.as_str() == "briefs" {
+                    return Err(Error::refused(
+                        "briefs are never trimmed; supersede or withdraw a brief instead",
+                    ));
+                }
+                owner_commands::trim(&mut owner(self.config)?, &channel, position, creation)
+            }
             Command::Tail { channel, json } => {
                 owner_commands::tail(&mut owner(self.config)?, channel.as_ref(), json)
             }
@@ -957,6 +1002,10 @@ impl Args {
             Command::Recipe(args) => (
                 args.operation(),
                 "Run malak recipe to list the shipped recipes.",
+            ),
+            Command::Briefs { .. } | Command::Brief { .. } => (
+                "read briefs".into(),
+                "Only leads and the chief of staff read briefs, through their own seats. Subs receive needed brief text in their tasks.",
             ),
             Command::Participant(command) => match command {
                 participant::Command::Send { channel, .. } => (
