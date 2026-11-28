@@ -83,11 +83,12 @@ that, the call returns the board's reason. It never retries a second time. When
 the link is still down on the second try, the error says to check whether the
 board is running, not just the operating system's error.
 
-A call that sends a message (`report` and `delegate`) sends it with a message
+A call that sends a message (`report`, `delegate` and `brief_put`) sends it with a message
 ID and uses the same ID on that one retry, so a send whose answer was lost is
-stored once. Pass your own `id` to retry such a call yourself with the same
-effect: the reply to the second call has `duplicate: true` and the position of
-the first.
+stored once. For `report` and `delegate`, pass your own `id` to retry a call
+yourself with the same effect: the reply to the second call has
+`duplicate: true` and the position of the first. `brief_put` uses an internal
+ID for the server's automatic retry.
 
 To see the reason by hand, run the command the client runs, with the same
 `MALAK_HANDOVER` and board options and standard input closed:
@@ -102,6 +103,22 @@ handover held by another session, re-issue it with
 `malak recipe lead-up`.
 
 ## Tools
+
+Leads also have `briefs(board, kind)`, `brief(board, position, offset)`,
+`brief_view(since)` and `brief_put(title, kind, body, replaces)`. These use the
+same read seats, projection and size budget as the CLI. `brief` returns
+the original text after supersession or withdrawal, with its status and
+replacement link. Follow its `fetch.offset` to page a long body.
+`brief_view` includes a linked pulse bottom line, finished work, unresolved
+blockers and current briefs. A lead sees its own board; the chief of staff
+sees every roster board through its reader seats, with an explicit row for
+an unreadable board. Its open calls hook states when calls are unavailable
+in this build. A truncated result names the first omitted board.
+
+Only the board's lead may put a brief. Subs get no brief tools and cannot
+read the `briefs` channel; their lead puts needed text directly into their
+task. A large result reports omitted items or body bytes and gives a
+paging command. Both the text and structured data together fit 32 KiB.
 
 Every Seat has these five. Arguments marked * are required. A wrong or extra
 argument name is refused with an `invalid arguments` error.

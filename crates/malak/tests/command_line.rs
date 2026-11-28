@@ -24,6 +24,8 @@ const MALAK: &str = env!("CARGO_BIN_EXE_malak");
 mod board_lifecycle;
 #[path = "command_line/board_version.rs"]
 mod board_version;
+#[path = "command_line/briefs.rs"]
+mod briefs;
 #[path = "command_line/defaults.rs"]
 mod defaults;
 #[path = "command_line/detach.rs"]

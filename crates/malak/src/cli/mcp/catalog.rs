@@ -1,5 +1,5 @@
 //! The tools a Seat sees. A worker gets the participant tools; the lead also
-//! gets the three that run the board's workers.
+//! gets the worker, answer and brief tools.
 
 use rmcp::model::Tool;
 use serde_json::{Value, json};
@@ -11,7 +11,9 @@ const ALIASES: [&str; 1] = ["ask_owner"];
 
 /// The tool names a Seat offers.
 pub(super) fn offered(name: &str, lead: bool) -> bool {
-    PARTICIPANT.contains(&name) || ALIASES.contains(&name) || (lead && LEAD.contains(&name))
+    PARTICIPANT.contains(&name)
+        || ALIASES.contains(&name)
+        || (lead && (LEAD.contains(&name) || super::briefs::NAMES.contains(&name)))
 }
 
 pub(super) fn tools(lead: bool) -> Vec<Tool> {
@@ -105,7 +107,8 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
         (
             "delegate",
             "Give a task to an agent already on the board, as the lead. The agent sees it as an order. \
-             Reuse the same id to retry a task that may not have arrived.",
+             Reuse the same id to retry a task that may not have arrived. When it needs a brief, \
+             put the brief text in the task; do not give a sub a reference into a brief artifact store.",
             json!({
                 "agent": { "type": "string", "description": "The agent's name, as agents lists it." },
                 "task": { "type": "string" },
@@ -137,7 +140,8 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
             &[],
         ),
     ];
-    all.into_iter()
+    let mut tools: Vec<_> = all
+        .into_iter()
         .filter(|(name, ..)| offered(name, lead))
         .map(|(name, description, properties, required)| {
             let Value::Object(schema) = json!({
@@ -150,5 +154,9 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
             };
             Tool::new(name, description, schema)
         })
-        .collect()
+        .collect();
+    if lead {
+        tools.extend(super::briefs::tools());
+    }
+    tools
 }

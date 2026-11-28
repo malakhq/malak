@@ -4,6 +4,7 @@
 //! handover once, shares that connection between tool calls, and turns each tool
 //! into the board's verbs or an existing recipe. The router does not change.
 
+mod briefs;
 mod catalog;
 mod recipes;
 mod seat;
@@ -180,7 +181,7 @@ impl Server {
         })?;
         let send_id = participant::random_id().map_err(|error| error.to_string())?;
         retry_once(
-            matches!(name, "report" | "delegate"),
+            matches!(name, "report" | "delegate" | "brief_put"),
             &send_id,
             seat,
             |seat, send_id| seat.call(name, arguments.clone(), send_id),
@@ -257,6 +258,9 @@ impl ServerHandler for Server {
         let arguments = Value::Object(request.arguments.unwrap_or_default());
         let server = self.clone();
         let outcome = tokio::task::spawn_blocking(move || {
+            if !server.is_lead() && briefs::NAMES.contains(&name.as_str()) {
+                return Some(Err("Briefs require a lead or chief of staff Seat; subs receive needed brief text in their task.".to_owned()));
+            }
             if !catalog::offered(&name, server.is_lead()) {
                 return None;
             }

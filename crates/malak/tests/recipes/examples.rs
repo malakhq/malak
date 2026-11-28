@@ -158,6 +158,31 @@ macro_rules! examples {
 }
 
 examples! {
+    briefs_lists_the_stored_learned_brief: "briefs" [running] |example| {
+        let output = example.run();
+        let result: Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
+        assert_eq!(result["items"][0]["title"], "Retry contract");
+        assert_eq!(result["items"][0]["kind"], "learned");
+    }
+
+    brief_get_keeps_the_original_after_supersession: "brief get" [running] |example| {
+        let output = example.run();
+        assert!(output.contains("Original text."), "{output}");
+        assert!(output.contains("superseded"), "{output}");
+    }
+
+    brief_view_links_the_boards_bottom_line: "brief view" [running] |example| {
+        let result: Value = serde_json::from_str(&example.run()).unwrap();
+        assert_eq!(result["items"][0]["section"], "bottom line");
+        assert_eq!(result["items"][0]["link"]["board"], BOARD);
+    }
+
+    brief_put_stores_the_documented_source: "recipe brief" [running] |example| {
+        example.run();
+        let source = example.first_on("briefs");
+        assert!(source["text"].as_str().unwrap().ends_with("The retry must reuse its message ID.\n"));
+    }
+
     send_delivers_a_note: "send" [running] |example| {
         let output = example.run();
         assert!(output.contains("Build finished."), "{output}");

@@ -400,6 +400,13 @@ malak recipe worker-start builder --no-watcher --detach -- printf '%s\n' 'Build 
 malak recipe await builder --timeout 30s
 ```
 
+## `malak recipe brief`
+
+```sh
+# Store text; subsequent briefs can supersede or withdraw it.
+printf '%s\n' 'The retry must reuse its message ID.' | malak recipe brief put --title 'Retry contract' --kind learned
+```
+
 ## `malak recipe demo`
 
 ```sh
@@ -486,6 +493,30 @@ revoke the enrolment, and send `SIGTERM` to the worker's process group.
 # Look up the builder after its command has exited.
 malak recipe worker-start builder --no-watcher -- printf '%s\n' 'Build finished.'
 malak recipe workers builder
+```
+
+## `malak briefs`
+
+```sh
+# Store a learned brief and list it through your own seat.
+printf '%s\n' 'Reuse the message ID.' | malak recipe brief put --title 'Retry contract' --kind learned
+malak briefs --kind learned --json
+```
+
+## `malak brief get`
+
+```sh
+# The original text remains available after supersession.
+printf '%s\n' 'Original text.' | malak recipe brief put --title 'Contract' --kind spec
+printf '%s\n' 'Updated text.' | malak recipe brief put --title 'Contract' --kind spec --replaces 1
+malak brief get malak 1
+```
+
+## `malak brief view`
+
+```sh
+# A linked digest for this board.
+malak brief view --since 24h --json
 ```
 
 ## `malak recipe wrapper`

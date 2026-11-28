@@ -15,6 +15,7 @@ See the [command examples](EXAMPLES.md) for a runnable snippet for each recipe.
 - `answer` replies to a question and can assign follow-up work.
 - `ask` posts a question that needs a person, with options and a recommendation.
 - `await` waits for a worker's verified final report.
+- `brief put` stores an immutable brief as the board's lead.
 - `demo` starts a lead and five workers on a disposable board.
 - `forward` passes an existing message through the lead, preserving its source and trace.
 - `guest` enrols a cross-board guest with a reply inbox or upgrades an existing guest.
@@ -27,6 +28,35 @@ See the [command examples](EXAMPLES.md) for a runnable snippet for each recipe.
 - `worker-start` enrols and launches a worker with its inbox and native hooks.
 - `workers` shows launched and adopted workers by name.
 - `wrapper` runs a worker with no board tools and posts its final result.
+
+## Store and read briefs
+
+The lead stores brief text or an artifact reference on its board:
+
+```sh
+printf '%s\n' 'Retry with the same message ID.' | malak recipe brief put --title 'Retry contract' --kind learned
+malak briefs --kind learned --json
+malak brief get build 1
+malak brief view --since 24h --json
+```
+
+Kinds are `report`, `decision`, `spec`, `plan`, `learned`, `handover`, `exit`
+and `other`. Add `--replaces POSITION` to supersede an earlier proven brief
+on this board. Use `--kind withdrawn --replaces POSITION` to withdraw it.
+Listings hide superseded and withdrawn briefs. Getting an old position
+returns its original text, status and replacement link. Briefs are never
+trimmed; the client refuses `trim briefs`.
+
+Leads and the chief of staff read briefs through their own seats, including
+existing read-only seats on other boards. `malak briefs --board NAME`
+selects one of those boards. Subs cannot read `briefs`: their lead puts
+the text their task needs directly into the task. Do not give a sub an
+artifact reference into a brief store it cannot access. Every bounded
+result reports how many items did not fit and gives paging guidance.
+The brief view covers a lead's own board, or every roster board for the
+chief of staff. An unreadable board is shown explicitly. The first omitted
+board is named when the size budget is reached; `brief get --offset BYTES`
+pages the original body through the same reader seat.
 
 ## Run the five-worker demo
 
