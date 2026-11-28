@@ -99,7 +99,10 @@ fn a_first_start_creates_the_standard_channels() {
     let home = Home::new();
     home.start();
 
-    assert_eq!(home.channels(), ["lead", "orders", "questions"]);
+    assert_eq!(
+        home.channels(),
+        ["briefs", "calls", "lead", "orders", "questions", "rail"]
+    );
 }
 
 #[test]
@@ -154,7 +157,10 @@ fn a_board_missing_a_standard_channel_gets_it_on_its_next_start() {
     let again = home.start();
 
     assert!(again.status.success(), "{}", stderr(&again));
-    assert_eq!(home.channels(), ["lead", "orders", "questions"]);
+    assert_eq!(
+        home.channels(),
+        ["briefs", "calls", "lead", "orders", "questions", "rail"]
+    );
 }
 
 #[test]

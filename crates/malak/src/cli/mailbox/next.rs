@@ -37,6 +37,7 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
     let deadline = timeout.map(|seconds| Instant::now() + Duration::from_secs(seconds.into()));
     let started = now_ms();
     check_preview_board(config.clone())?;
+    let _ = crate::cli::org::lifecycle::on_command(config.clone());
     let settings = Arc::new(Config::read(config.clone())?.board);
     let (mut reader, _) = owner_for_board(&settings)?;
     let shown = Store::open(&settings.state)?;
@@ -88,6 +89,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
             return Ok(());
         }
         if now >= next_refresh {
+            if view.model.viewer.as_deref() == Some("lead") {
+                let _ = crate::cli::org::lifecycle::on_command(config.clone());
+            }
             if let Some(snapshot) = live_status(&mut reader, false, &settings)? {
                 if resuming {
                     _registration = plain::register_lead_watcher(&settings);
@@ -120,6 +124,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
         });
         match rx.recv_timeout(wait) {
             Ok(Update::Event(event)) => {
+                if view.model.viewer.as_deref() == Some("lead") {
+                    let _ = crate::cli::org::lifecycle::on_command(config.clone());
+                }
                 if view.is_lead_event(&event) {
                     if view.model.missing_event_participant(&event)
                         && let Some(snapshot) = live_status(&mut reader, false, &settings)?
@@ -170,9 +177,13 @@ fn print_guest(
         if records.is_empty() {
             continue;
         }
-        let key = guest.key();
         if store.update(|shown, _| {
             for record in records {
+                let key = format!(
+                    "{}/{}",
+                    guest.key(),
+                    record.label["channel"].as_str().unwrap_or("")
+                );
                 let (creation, position) = record.address()?;
                 if shown.guests.is_new(&key, creation, position) {
                     if plain::write_plain(output, &message_block(&record.label, &record.body)?)? {

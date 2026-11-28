@@ -6,7 +6,7 @@ use crate::cli::{
     output::{self, line},
     presentation,
 };
-use malak::Error;
+use malak::{CreationId, Error};
 use serde_json::{Map, Value};
 use std::io::{self, Write};
 
@@ -26,11 +26,15 @@ pub(super) enum Output {
     },
     Messages {
         json: bool,
+        board: Option<String>,
+        creation: Option<CreationId>,
         /// Channel, creation and position of each message printed so far.
         printed: Vec<(String, String, u64)>,
     },
     Agent {
         json: bool,
+        board: Option<String>,
+        creation: Option<CreationId>,
         offset: usize,
         messages: Vec<presentation::Message>,
     },
@@ -41,15 +45,39 @@ impl Output {
         if agent {
             Self::Agent {
                 json,
+                board: None,
+                creation: None,
                 offset,
                 messages: Vec::new(),
             }
         } else {
             Self::Messages {
                 json,
+                board: None,
+                creation: None,
                 printed: Vec::new(),
             }
         }
+    }
+
+    pub(super) fn read_context(
+        mut self,
+        source: Option<&str>,
+        expected: Option<CreationId>,
+    ) -> Self {
+        match &mut self {
+            Self::Messages {
+                board, creation, ..
+            }
+            | Self::Agent {
+                board, creation, ..
+            } => {
+                *board = source.map(str::to_owned);
+                *creation = expected;
+            }
+            _ => {}
+        }
+        self
     }
 
     pub(super) fn ok(self, header: &Map<String, Value>, shown: bool) -> Result<(), Error> {
@@ -128,6 +156,7 @@ impl Output {
                 json,
                 offset,
                 messages,
+                ..
             } => {
                 if json {
                     let mut envelope = match header.get("result").and_then(Value::as_str) {
@@ -238,6 +267,26 @@ impl Output {
         header: &mut Map<String, Value>,
         body: &[u8],
     ) -> Result<(), Error> {
+        if let Self::Messages {
+            board, creation, ..
+        }
+        | Self::Agent {
+            board, creation, ..
+        } = self
+        {
+            if creation.is_some_and(|expected| {
+                header.get("creation").and_then(Value::as_str)
+                    != Some(expected.to_string().as_str())
+            }) {
+                return Err(Error::refused(
+                    "channel creation changed; use the creation on the original message",
+                ));
+            }
+            if let Some(board) = board {
+                header.insert("guest_board".into(), Value::String(board.clone()));
+                header.insert("presentation".into(), Value::String("information".into()));
+            }
+        }
         if let Self::Messages { printed, .. } = self {
             let address = (
                 field(header, "channel")?,
@@ -254,11 +303,15 @@ impl Output {
                 json_message(std::mem::take(header), body)
             )),
             Self::Messages { json: false, .. } => output::write(&message_block(header, body)?),
-            Self::Agent { messages, .. } => {
-                messages.push(presentation::Message::from_frame(
-                    std::mem::take(header),
-                    body.to_vec(),
-                )?);
+            Self::Agent {
+                messages, board, ..
+            } => {
+                let mut message =
+                    presentation::Message::from_frame(std::mem::take(header), body.to_vec())?;
+                if board.is_some() {
+                    message.mark_foreign_read();
+                }
+                messages.push(message);
                 Ok(())
             }
             Self::Collected(records) => {
@@ -425,6 +478,9 @@ pub(in crate::cli) fn message_block(
         fields.push(("Lost before this message", lost));
     }
     let title = match guest {
+        Some(board) if matches!(channel, "top/leads" | "cos/ramp") => {
+            format!("{label} from {sender_name} in guest · {board} {channel} #{position}")
+        }
         Some(board) => format!("{label} from {sender_name} in guest · {board} #{position}"),
         None => format!("{label} from {sender_name} in {channel} #{position}"),
     };

@@ -92,7 +92,7 @@ pub(super) fn text(value: &Value) -> String {
 
 fn section(mut item: Value, section: &str) -> Value {
     item["section"] = section.into();
-    item
+    crate::cli::org::rail::public_event(item)
 }
 
 pub(super) fn items(
@@ -105,6 +105,7 @@ pub(super) fn items(
     let mut items = Vec::new();
     items.extend(pulse.map(|pulse| section(pulse, "bottom line")));
     rail.sort_by_key(|event| (event["at_ms"].as_u64(), event["position"].as_u64()));
+    let waits = crate::cli::org::rail::open_waits(&rail);
     let mut stuck = BTreeMap::new();
     for event in rail {
         let subject = event["subject"].as_str().unwrap_or("").to_owned();
@@ -115,7 +116,7 @@ pub(super) fn items(
                     items.push(section(event, "finished"));
                 }
             }
-            Some("blocked" | "waits on") => {
+            Some("blocked") => {
                 stuck.insert(subject, event);
             }
             Some("unblocked" | "handed over") => {
@@ -124,7 +125,12 @@ pub(super) fn items(
             _ => (),
         }
     }
-    items.extend(stuck.into_values().map(|event| section(event, "stuck")));
+    items.extend(
+        stuck
+            .into_values()
+            .chain(waits)
+            .map(|event| section(event, "stuck")),
+    );
     match calls {
         Some(calls) => items.extend(calls.into_iter().map(|call| section(call, "open calls"))),
         None => items.push(serde_json::json!({"section":"open calls", "items":[],

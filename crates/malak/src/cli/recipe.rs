@@ -166,9 +166,19 @@ const RECIPES: &[(&str, &str, Script)] = &[
         script!("observe"),
     ),
     (
+        "org",
+        "Set up the organisation roster and read-only seats.",
+        script!("org"),
+    ),
+    (
         "order",
         "Record what the lead can decide in your absence.",
         script!("order"),
+    ),
+    (
+        "rail",
+        "Record a dependency or work handed to another lead.",
+        script!("rail"),
     ),
     (
         "queue",
@@ -210,6 +220,9 @@ const SUPPORT: &[Script] = &[
     script!("lead_status.py"),
     script!("lead_turn_end.py"),
     script!("malak-skill.md"),
+    script!("org_state.py"),
+    script!("org_seats.py"),
+    script!("rail_events.py"),
     script!("question_hooks.py"),
     script!("recipe_board.py"),
     script!("recipe_output.py"),

@@ -25,7 +25,6 @@ mod hook;
 mod mailbox;
 #[cfg(feature = "mcp")]
 mod mcp;
-#[allow(dead_code)] // Shared view API; CLI consumers land in the next commit.
 mod org;
 mod output;
 mod owner_commands;
@@ -73,6 +72,20 @@ enum Command {
     Brief {
         #[command(subcommand)]
         command: briefs::Command,
+    },
+    /// Read lead-level events through your organisation seats.
+    #[command(after_help = examples::help(&["rail"]))]
+    Rail {
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read the organisation pulse as chief of staff.
+    #[command(after_help = examples::help(&["pulse"]))]
+    Pulse {
+        #[arg(long)]
+        json: bool,
     },
     /// Discover, start, inspect or stop local boards.
     #[command(after_help = examples::help(&["board list", "board start"]))]
@@ -426,6 +439,8 @@ impl Args {
                     command: briefs::Command::View { json: true, .. }
                         | briefs::Command::Get { json: true, .. }
                 }
+                | Command::Rail { json: true, .. }
+                | Command::Pulse { json: true }
                 | Command::Hook(hook::Args { json: true, .. })
                 | Command::Participant(
                     participant::Command::Send { json: true, .. }
@@ -481,6 +496,26 @@ impl Args {
                     briefs::show(briefs::view(self.config, &since)?, json)
                 }
             },
+            Command::Rail { since, json } => {
+                let selected = self
+                    .config
+                    .as_ref()
+                    .map(|path| board_names::name(&board_group::Entry::read(path.clone())));
+                let reader = org::seats::Reader::open(self.config)?;
+                org::print(
+                    org::rail::view(&reader, selected.as_deref(), since.as_deref())?,
+                    json,
+                    "Read earlier rail positions with malak --board BOARD get rail POSITION; --since accepts epoch milliseconds or an age such as 7d.",
+                )
+            }
+            Command::Pulse { json } => {
+                let reader = org::seats::Reader::open(self.config)?;
+                org::print(
+                    org::pulse::view(&reader, output::now_ms())?,
+                    json,
+                    "Read the linked board facts with malak --board BOARD get CHANNEL POSITION.",
+                )
+            }
             Command::Board {
                 command: Board::List { json },
             } => board_list::show(json),
@@ -871,6 +906,14 @@ impl Args {
         let check_participant =
             "Use malak board status with the participant ID to check its current enrolment.";
         match &self.command {
+            Command::Rail { .. } => (
+                "read the organisation rail".into(),
+                "Use a lead handover and an org read seat for the requested board.",
+            ),
+            Command::Pulse { .. } => (
+                "read the organisation pulse".into(),
+                "Use the chief of staff's lead handover on the top board.",
+            ),
             Command::Board { command } => match command {
                 Board::List { .. } => (
                     "list local boards".to_owned(),

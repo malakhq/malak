@@ -232,7 +232,7 @@ fn workers(seat: &Seat, name: Option<&str>) -> Result<Vec<Value>, Error> {
 }
 
 /// Run `malak recipe ...` on the Seat's board and return what it printed.
-fn run(seat: &Seat, recipe: &[String], input: &[u8]) -> Result<String, Error> {
+pub(super) fn run(seat: &Seat, recipe: &[String], input: &[u8]) -> Result<String, Error> {
     let executable = std::env::current_exe().map_err(super::super::config::io_error)?;
     let mut command = Command::new(executable);
     if let Some(config) = &seat.config {

@@ -49,6 +49,7 @@ pub(in crate::cli) struct Reader {
     pub home: PathBuf,
     pub name: String,
     pub home_board: String,
+    pub seat_key: String,
     pub roster: Option<Roster>,
     pub chief: bool,
 }
@@ -57,6 +58,32 @@ pub(in crate::cli) struct ReadSeat {
     pub board: String,
     pub config: PathBuf,
     pub session: Session,
+}
+
+/// A foreign read uses the caller's own recorded reader seat. The selector
+/// names the board; it never supplies a handover or another lead's authority.
+pub(in crate::cli) fn foreign(config: &Option<PathBuf>) -> Result<Option<ReadSeat>, Error> {
+    let Some(path) = config else { return Ok(None) };
+    let handover = primary_handover(
+        config.clone(),
+        std::env::var_os("MALAK_HANDOVER").map(PathBuf::from),
+    )?;
+    if Config::read(config.clone())?
+        .board
+        .check_handover(path, &handover)
+        .is_ok()
+    {
+        return Ok(None);
+    }
+    let reader = Reader::open(config.clone())?;
+    let name = board_names::name(&crate::cli::board_group::Entry::read(path.clone()));
+    let seat = reader.open_board(Some(&name))?;
+    if seat.config.canonicalize().map_err(io_error)? != path.canonicalize().map_err(io_error)? {
+        return Err(Error::refused(
+            "selected board does not match your recorded reader seat",
+        ));
+    }
+    Ok(Some(seat))
 }
 
 fn load(config: &Path) -> Result<Option<Roster>, Error> {
@@ -75,35 +102,43 @@ fn load(config: &Path) -> Result<Option<Roster>, Error> {
         .map_err(|error| io_error(error.into()))
 }
 
+pub(in crate::cli) fn primary_home(
+    config: Option<PathBuf>,
+) -> Result<(PathBuf, Vec<PathBuf>), Error> {
+    // An explicit board is the requested view, while the inherited handover
+    // still identifies the reader's home board.
+    let handover = primary_handover(
+        config.clone(),
+        std::env::var_os("MALAK_HANDOVER").map(PathBuf::from),
+    )?;
+    if !handover.id().is_lead() {
+        return Err(Error::refused(
+            "organisation views require a lead or chief of staff Seat; subs cannot read them",
+        ));
+    }
+    let mut paths: Vec<PathBuf> = config.into_iter().collect();
+    paths.extend(
+        board_names::list_quiet()?
+            .into_iter()
+            .map(|entry| entry.path),
+    );
+    let home = paths
+        .iter()
+        .find(|path| {
+            Config::read(Some((*path).clone()))
+                .is_ok_and(|config| config.board.check_handover(path, &handover).is_ok())
+        })
+        .cloned()
+        .ok_or_else(|| Error::refused("cannot find the reader's home board"))?;
+    Ok((home, paths))
+}
+
 impl Reader {
     pub fn open(config: Option<PathBuf>) -> Result<Self, Error> {
-        // An explicit board is the requested view, while the inherited handover
-        // still identifies the reader's home board.
-        let handover = primary_handover(
-            config.clone(),
-            std::env::var_os("MALAK_HANDOVER").map(PathBuf::from),
-        )?;
-        if !handover.id().is_lead() {
-            return Err(Error::refused(
-                "organisation views require a lead or chief of staff Seat; subs cannot read them",
-            ));
-        }
-        let mut paths: Vec<PathBuf> = config.into_iter().collect();
-        paths.extend(
-            board_names::list_quiet()?
-                .into_iter()
-                .map(|entry| entry.path),
-        );
-        let home = paths
-            .iter()
-            .find(|path| {
-                Config::read(Some((*path).clone()))
-                    .is_ok_and(|config| config.board.check_handover(path, &handover).is_ok())
-            })
-            .cloned()
-            .ok_or_else(|| Error::refused("cannot find the reader's home board"))?;
+        let (home, paths) = primary_home(config)?;
         // Validate the caller's session before consulting its roster.
-        Session::open(Some(home.clone()))?;
+        let mut session = Session::open(Some(home.clone()))?;
+        let _ = super::lifecycle::reconcile(&home, &mut session);
         let home_name = board_names::name(&crate::cli::board_group::Entry::read(home.clone()));
         let mut roster = None;
         for path in paths {
@@ -133,7 +168,9 @@ impl Reader {
         let chief = roster
             .as_ref()
             .is_some_and(|r| r.top == home && r.chief_of_staff.is_some());
+        let seat_key = format!("{}:{name}", if chief { "chief_of_staff" } else { "lead" });
         Ok(Self {
+            seat_key,
             home,
             name,
             home_board: home_name,
@@ -145,7 +182,7 @@ impl Reader {
     pub fn boards(&self) -> Vec<String> {
         let mut names = vec![self.home_board.clone()];
         if let Some(roster) = &self.roster
-            && let Some(seats) = roster.seats.get(&self.name)
+            && let Some(seats) = roster.seats.get(&self.seat_key)
         {
             names.extend(
                 seats
@@ -188,7 +225,7 @@ impl Reader {
         }
         let seat = roster
             .seats
-            .get(&self.name)
+            .get(&self.seat_key)
             .into_iter()
             .flatten()
             .find(|seat| seat.board == name)
@@ -198,13 +235,22 @@ impl Reader {
                 "board {name} was removed from the organisation"
             )));
         }
-        let handover = HandoverFile::read(&seat.handover)?;
+        let handover = HandoverFile::read(&seat.handover).map_err(|_| {
+            Error::refused(format!(
+                "cannot open your read seat on board {name}; ask the owner to run org reseat"
+            ))
+        })?;
         if handover.id().as_str() != seat.id || handover.id().is_lead() {
             return Err(Error::refused("organisation read seat changed identity"));
         }
         Config::read(Some(seat.config.clone()))?
             .board
-            .check_handover(&seat.handover, &handover)?;
+            .check_handover(&seat.handover, &handover)
+            .map_err(|_| {
+                Error::refused(format!(
+                    "your read seat no longer matches board {name}; ask the owner to run org reseat"
+                ))
+            })?;
         Ok(ReadSeat {
             board: name.to_owned(),
             config: seat.config.clone(),
@@ -274,6 +320,7 @@ mod tests {
             home: PathBuf::from("/fixture/top.toml"),
             name: "chief".into(),
             home_board: "top".into(),
+            seat_key: "chief_of_staff:chief".into(),
             roster: None,
             chief: true,
         };

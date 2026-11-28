@@ -78,6 +78,9 @@ pub(super) fn run(
     reader: owner_commands::Client,
     settings: &config::Board,
 ) -> Result<(), Error> {
+    if model.viewer.as_deref() == Some("lead") {
+        reconcile(settings);
+    }
     let mut reader = Some(reader);
     let mut output = io::stdout().lock();
     let mut loading = true;
@@ -97,6 +100,9 @@ pub(super) fn run(
     let mut next_refresh = Instant::now() + REFRESH;
     loop {
         if Instant::now() >= next_refresh {
+            if model.viewer.as_deref() == Some("lead") {
+                reconcile(settings);
+            }
             if let Some(status) = live_status(&mut reader, false, settings)? {
                 refresh(model, status)?;
             }
@@ -121,6 +127,9 @@ pub(super) fn run(
         };
         match update {
             Some(Update::Event(event)) => {
+                if model.viewer.as_deref() == Some("lead") {
+                    reconcile(settings);
+                }
                 // A worker can start sending before the next scheduled roster
                 // refresh. Resolve its name before printing an immutable line.
                 if watch.is_some()
@@ -186,8 +195,12 @@ fn print_guests(
     output: &mut impl Write,
 ) -> Result<bool, Error> {
     for guest in guest_inbox::for_board(settings) {
-        let key = guest.key();
         for record in guest.read(None) {
+            let key = format!(
+                "{}/{}",
+                guest.key(),
+                record.label["channel"].as_str().unwrap_or("")
+            );
             let (creation, position) = record.address()?;
             if shown.is_new(&key, creation, position) {
                 if !write_plain(output, &message_block(&record.label, &record.body)?)? {
@@ -274,4 +287,15 @@ pub(super) fn backfill(
         }
     }
     let _ = tx.send(Update::BackfillDone);
+}
+
+fn reconcile(settings: &config::Board) {
+    if let Ok(entries) = crate::cli::board_names::list_quiet()
+        && let Some(entry) = entries.into_iter().find(|entry| {
+            config::Config::read(Some(entry.path.clone()))
+                .is_ok_and(|config| config.board.socket_folder == settings.socket_folder)
+        })
+    {
+        let _ = crate::cli::org::lifecycle::on_command(Some(entry.path));
+    }
 }

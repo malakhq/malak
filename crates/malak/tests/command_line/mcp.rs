@@ -152,6 +152,10 @@ fn the_lead_sees_the_lead_tools_including_answer() {
             "delegate",
             "start_agent",
             "agents",
+            "rail",
+            "pulse",
+            "rail_wait",
+            "rail_handover",
             "briefs",
             "brief",
             "brief_view",
@@ -1448,4 +1452,30 @@ fn a_worker_has_no_answer_tool() {
     });
 
     assert!(refused);
+}
+
+#[test]
+fn a_worker_gets_the_reason_when_it_tries_to_read_rail() {
+    let (board, _, worker) = board_with_worker();
+    let reply = runtime().block_on(async {
+        Seat::take(&board, &worker)
+            .await
+            .call("rail", json!({}))
+            .await
+    });
+    assert!(reply.failed());
+    assert!(reply.text().contains("subs cannot"), "{}", reply.text());
+}
+
+#[test]
+fn an_ordinary_lead_cannot_read_the_chief_of_staff_pulse() {
+    let board = Fixture::new();
+    let reply = runtime().block_on(async {
+        Seat::take(&board, &board.lead())
+            .await
+            .call("pulse", json!({}))
+            .await
+    });
+    assert!(reply.failed());
+    assert!(reply.text().contains("chief of staff"), "{}", reply.text());
 }

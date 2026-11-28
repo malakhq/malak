@@ -105,3 +105,33 @@ addressed `get --agent --offset` command to continue a shortened body.
   standard error.
 - `hook --describe --json` returns one object with `environment`,
   `context_byte_limit`, `events` and `monitor`.
+
+## Organisation rail and pulse
+
+`malak rail --json` and `malak pulse --json` emit an object with `items`,
+`omitted` and `next`. `omitted` is the number of items left out to keep the
+result within 32 KiB. `next` is null when complete, or gives instructions for
+reading the linked facts. The same budget includes both copies of an MCP
+result: its text and structured content, with JSON escaping.
+Fetch an omitted fact with `malak --board BOARD get --agent --json --creation
+CREATION CHANNEL POSITION`, or MCP `get` with `board`, `channel`, `creation`
+and `position`. The caller's own recorded reader seat supplies foreign read
+access; foreign messages have `guest_board` and presentation `information`.
+
+Rail items include `board`, `channel`, `creation`, `position`, `at_ms`, `text`
+and `type`. Valid events have `type: rail`, `event`, `subject` and `link` (an
+array of board, channel, creation and position), plus `other_board` when
+relevant. Other messages have `type: note` and retain their text. `--since`
+accepts an age such as `24h` or `7d`, or Unix epoch milliseconds.
+A wait created with `--link` also has `work_link`, separate from its recording
+fact's `link`. Internal matching identities are not returned.
+
+Pulse items include `lead`, `colour`, `reason`, `on`, `blocker`,
+`last_activity` in epoch milliseconds and `counts` (`started`, `calls`,
+`finished`). Finished counts start at local midnight in the owner's time zone.
+The chief-of-staff onboarding row also reports its start and progress.
+
+During a chief-of-staff ramp, the pulse keeps its normal fields and colour
+priority while `on` shows briefing progress. A lead's own pulse reads ramp
+status through its own top-board seat. If that read is unavailable, `on` adds a
+note and the own-board colour, counts and blocker remain unchanged.

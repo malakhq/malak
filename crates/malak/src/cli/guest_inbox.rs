@@ -60,11 +60,20 @@ impl GuestInbox {
     }
 
     pub fn read(&self, limit: Option<u64>) -> Vec<GuestRecord> {
-        let records = self
-            .attach()
-            .and_then(|mut session| session.read_guest(&self.inbox, limit, REFRESH));
-        // A stopped or revoked guest board cannot interrupt the home board.
-        let mut records = records.unwrap_or_default();
+        let mut records = Vec::new();
+        // Only org top seats have the extra grant. Ordinary guests keep their
+        // inbox alone. A stopped or revoked guest never interrupts home.
+        for channel in [&self.inbox, "top/leads", "cos/ramp"] {
+            let remaining = limit.map(|limit| limit.saturating_sub(records.len() as u64));
+            if remaining == Some(0) {
+                break;
+            }
+            records.extend(
+                self.attach()
+                    .and_then(|mut session| session.read_guest(channel, remaining, REFRESH))
+                    .unwrap_or_default(),
+            );
+        }
         for record in &mut records {
             record
                 .label
@@ -74,15 +83,23 @@ impl GuestInbox {
     }
 
     pub fn for_creation(&self, creation: CreationId) -> Option<(Session, ChannelName)> {
-        let channel: ChannelName = self.inbox.parse().ok()?;
-        let mut session = self.attach().ok()?;
-        (session.creation_within(channel.clone(), REFRESH).ok()? == creation)
-            .then_some((session, channel))
+        for channel in [&self.inbox, "top/leads", "cos/ramp"] {
+            let channel: ChannelName = channel.parse().ok()?;
+            let mut session = self.attach().ok()?;
+            if session.creation_within(channel.clone(), REFRESH).ok() == Some(creation) {
+                return Some((session, channel));
+            }
+        }
+        None
     }
 
     pub fn acknowledge(&self, creation: &str, position: u64, feedback: bool) -> Result<(), Error> {
-        self.attach()?.ack_printed(
-            vec![(self.inbox.clone(), creation.to_owned(), position)],
+        let key = creation.parse()?;
+        let (mut session, channel) = self
+            .for_creation(key)
+            .ok_or_else(|| Error::refused("guest channel creation changed"))?;
+        session.ack_printed(
+            vec![(channel.to_string(), creation.to_owned(), position)],
             feedback,
         )
     }
@@ -109,7 +126,9 @@ pub(super) fn register(config: Option<PathBuf>, board: &str, path: &Path) -> Res
 fn save(folder: &Directory, entry: GuestInbox) -> io::Result<()> {
     folder.file().lock()?;
     let mut entries = load(folder)?;
-    entries.retain(|old| old.pin != entry.pin || old.inbox != entry.inbox);
+    entries.retain(|old| {
+        old.handover != entry.handover && (old.pin != entry.pin || old.inbox != entry.inbox)
+    });
     entries.push(entry);
     let staged = folder.open_file(STAGED, OFlag::O_WRONLY | OFlag::O_CREAT)?;
     staged.set_len(0)?;

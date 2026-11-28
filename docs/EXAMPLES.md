@@ -67,6 +67,23 @@ malak read lead && malak ack lead 1
 malak read lead
 ```
 
+## `malak rail`
+
+```sh
+# Record a dependency and read the board's recent rail.
+malak recipe rail wait --on build 'shared contract'
+malak rail --since 24h --json
+```
+
+## `malak pulse`
+
+Run this from the chief of staff's established top-board session.
+
+```sh
+# Read the organisation's current pulse as chief of staff.
+malak pulse --json
+```
+
 ## `malak board list`
 
 ```sh
@@ -458,12 +475,28 @@ printf 'Lead handover: %s\n' "$MALAK_HANDOVER"
 printf '%s\n' '{"session_id":"example","hook_event_name":"SessionStart","source":"startup"}' | MALAK_OBSERVE=1 malak recipe observe
 ```
 
+## `malak recipe org`
+
+```sh
+# Create a top board whose lead key remains unclaimed with the owner.
+malak recipe org setup
+malak --board top board status --json
+```
+
 ## `malak recipe order`
 
 ```sh
 # Record what the lead can decide over the next hour.
 printf '%s\n' 'The lead may choose the test order.' | malak recipe order --for 1h
 malak read orders
+```
+
+## `malak recipe rail`
+
+```sh
+# Track a dependency until its subject is done.
+malak recipe rail wait --on build 'shared contract'
+malak recipe rail wait --done 'shared contract'
 ```
 
 ## `malak recipe queue`

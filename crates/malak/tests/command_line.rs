@@ -1551,13 +1551,29 @@ fn owner_status_recovers_the_reader_acknowledgement() {
     let mut board = Fixture::new();
     call(&board.lead(), &["send", "lead", "body"]);
     let status = board.status();
-    let creation = status["channels"][0]["creation"].as_str().unwrap();
+    let creation = status["channels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|channel| channel["name"] == "lead")
+        .unwrap()["creation"]
+        .as_str()
+        .unwrap();
     call(&board.lead(), &["read", "lead"]);
     call(&board.lead(), &["ack", "--creation", creation, "lead", "1"]);
 
     board.restart();
 
-    assert_eq!(board.status()["channels"][0]["readers"]["lead"], 1);
+    let recovered = board.status();
+    assert_eq!(
+        recovered["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|channel| channel["name"] == "lead")
+            .unwrap()["readers"]["lead"],
+        1
+    );
 }
 
 #[test]
