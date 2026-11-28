@@ -3165,6 +3165,61 @@ fn forward_uses_the_selected_board_for_an_explicit_target() {
 }
 
 #[test]
+fn inbox_names_forward_accepts_an_inbox_address() {
+    let board = Fixture::new();
+    board.start();
+    board.enrol("alice", &[]);
+    board.lead(&["send", "lead", "For Alice"]);
+
+    let mut forward = board.recipe("forward");
+    forward.args(["lead", "1", "to/alice"]);
+    run(forward);
+
+    let received = messages(&board.lead(&["get", "to/alice", "1", "--json"]));
+    assert!(body(&received[0]).ends_with(b"For Alice"));
+}
+
+#[test]
+fn inbox_names_worker_start_refuses_new_underscore_names_before_enrolling() {
+    let board = Fixture::new();
+    board.start();
+    let mut start = board.recipe("worker-start");
+    start.args(["old_worker", "--no-watcher", "--", "true"]);
+
+    let result = output(start);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("1 to 24"));
+    assert!(
+        !board.status()["participants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|person| person["name"] == "old_worker")
+    );
+}
+
+#[test]
+fn inbox_names_guest_refuses_new_underscore_names_before_enrolling() {
+    let board = Fixture::new();
+    board.start();
+    let mut guest = board.recipe("guest");
+    guest
+        .args(["old_guest", "--out"])
+        .arg(board.home.path().join("new-guest"));
+
+    let result = output(guest);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("1 to 24"));
+    assert!(
+        !board.status()["participants"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|person| person["name"] == "old_guest")
+    );
+}
+
+#[test]
 fn forwarding_refuses_a_manager_handover_for_another_board() {
     let parent = Fixture::new();
     parent.start();

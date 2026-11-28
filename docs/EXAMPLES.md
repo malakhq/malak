@@ -27,10 +27,12 @@ environment.
 ## `malak send`
 
 Give a nonempty body as an argument, or pass `-` to read it from standard input.
+Inbox addresses accept `to/NAME` or `to/ID`; names resolve to the active
+participant. An unknown inbox is refused with the nearest match.
 
 ```sh
-# Send two notes to lead and read them back.
-malak send lead "Build finished."
+# Send two notes to lead and read them back. to/lead is the same inbox.
+malak send to/lead "Build finished."
 printf '%s\n' 'A second note.' | malak send lead -
 malak read lead
 ```

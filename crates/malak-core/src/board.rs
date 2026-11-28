@@ -36,6 +36,7 @@ mod links;
 mod local;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub use local::LocalStartup;
+mod inbox;
 mod read;
 mod remove;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -267,6 +268,9 @@ impl Owner {
     }
 
     /// Enrol a new Direct participant and create its inbox in one change.
+    ///
+    /// New names use 1–24 lowercase letters, digits or hyphens, start with a
+    /// letter, and contain no double or trailing hyphen. Reserved names fail.
     pub fn enrol(&self, name: &str, grant: Grant) -> Result<Handle, Error> {
         let result = self.enrol_direct(name, grant);
         #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -279,13 +283,13 @@ impl Owner {
     }
 
     fn enrol_direct(&self, name: &str, grant: Grant) -> Result<Handle, Error> {
-        let name: ParticipantName = name.parse()?;
         let deadline = owner_save_deadline();
-        self.board
+        let name = self
+            .board
             .table
             .save_until(deadline)?
             .authority
-            .check_enrol_name(&name)?;
+            .check_enrol_name(name)?;
         loop {
             let id = new_participant_id()?;
             let inbox = id.inbox();
@@ -404,7 +408,11 @@ impl Handle {
     }
 
     fn get_counted(&self, channel: &str, position: u64) -> Result<GetReply, Error> {
-        let channel: ChannelName = channel.parse()?;
+        let channel = self
+            .board
+            .table
+            .check()
+            .resolve_read_channel(&channel.parse()?, Some(&self.id))?;
         let position = Position::try_from(position)?;
         let Some(channel) = self.allowed_channel(Action::Get, &channel)? else {
             return Ok(GetReply::Absent);
@@ -430,7 +438,13 @@ impl Handle {
         agent_session_id: Option<&str>,
     ) -> Result<Receipt, Error> {
         let board = &self.board;
-        let content = request.validate(&board.limits, self.grade())?;
+        let mut content = request.validate(&board.limits, self.grade())?;
+        {
+            let table = board.table.check();
+            content.channel = table
+                .authority
+                .resolve_channel(&content.channel, Some(&self.id))?;
+        }
         crate::reserved_names::check_channel_write(&content.channel)?;
         self.authorize(Action::Send, &content.channel)?;
         self.persist_send(name, content, agent_session_id)
@@ -525,17 +539,19 @@ impl Board {
                 "store cannot reach the requested durability",
             ));
         }
-        let trace = trace_header(&content.headers);
-        let empty_trace = trace == Some("");
+        let empty_trace = trace_header(&content.headers) == Some("");
         let no_legacy_retry = || Error::refused("empty trace requires an exact legacy retry");
-        let channel = if empty_trace {
-            self.table
-                .check()
-                .channels
-                .get(&content.channel)
-                .cloned()
-                .ok_or_else(no_legacy_retry)?
+        let existing = self.table.check().channels.get(&content.channel).cloned();
+        let mut headers_resolved = false;
+        let channel = if let Some(existing) = existing {
+            existing
+        } else if empty_trace {
+            return Err(no_legacy_retry());
         } else {
+            // A new channel has no retry to preserve. Validate its canonical
+            // references before allowing implicit channel creation.
+            self.resolve_reply_channels(&mut content, sender_id)?;
+            headers_resolved = true;
             resolve_channel(&content.channel)?
         };
         let deadline = Instant::now() + STORE_WAIT;
@@ -550,19 +566,39 @@ impl Board {
         }
 
         let body = HashedBody::new(content.body);
+        // Older boards stored literal inbox aliases in reply headers. Keep an
+        // exact historical retry before changing those bytes for a new write.
+        let raw_conflict = match history.retry(
+            sender_id,
+            &content.id,
+            &RetryInput {
+                kind: content.kind,
+                headers: &content.headers,
+                body: body.digest(),
+            },
+        ) {
+            Ok(Some(receipt)) => return Ok(receipt),
+            Ok(None) => None,
+            Err(conflict) => Some(conflict),
+        };
+        if !headers_resolved {
+            self.resolve_reply_channels(&mut content, sender_id)?;
+        }
         let input = RetryInput {
             kind: content.kind,
             headers: &content.headers,
             body: body.digest(),
         };
-        if let Some(receipt) = history.retry(sender_id, &content.id, &input)? {
-            return Ok(receipt);
+        if let Some(conflict) = raw_conflict {
+            return history
+                .retry(sender_id, &content.id, &input)?
+                .ok_or(conflict);
         }
         if empty_trace {
             return Err(no_legacy_retry());
         }
         let digest = input.current();
-        let mut trace = trace.and_then(TraceId::parse);
+        let mut trace = trace_header(&content.headers).and_then(TraceId::parse);
         if trace.is_none()
             && !content
                 .headers
@@ -809,7 +845,11 @@ impl Board {
     }
 
     fn create_channel(&self, name: &str) -> Result<(CreationId, bool), Error> {
-        let name: ChannelName = name.parse()?;
+        let name = self
+            .table
+            .check()
+            .authority
+            .resolve_channel(&name.parse()?, None)?;
         crate::reserved_names::check_channel_write(&name)?;
         let candidate = self.channel(name)?;
         let mut table = self.table.save_until(owner_save_deadline())?;
@@ -822,7 +862,10 @@ impl Board {
     }
 
     fn trim(&self, channel: &str, creation: CreationId, before: u64) -> Result<u64, Error> {
-        let name: ChannelName = channel.parse()?;
+        let name = self
+            .table
+            .check()
+            .resolve_read_channel(&channel.parse()?, None)?;
         if !(1..=Position::MAX + 1).contains(&before) {
             return Err(Error::refused("invalid retention position"));
         }
@@ -833,8 +876,13 @@ impl Board {
             .channels
             .get(&name)
             .cloned()
-            .filter(|channel| channel.creation == creation)
             .ok_or_else(|| Error::refused("channel creation no longer matches"))?;
+        if channel.creation != creation {
+            return Err(Error::refused(format!(
+                "channel creation no longer matches: {name} has creation {}; requested creation {creation}",
+                channel.creation
+            )));
+        }
         let history = channel
             .history
             .try_lock_arc_until(authority_deadline)
@@ -1046,6 +1094,9 @@ impl Board {
         id: &ParticipantId,
         channel: Arc<Channel>,
     ) -> Result<(), Error> {
+        if table.authority.resolve_channel(&channel.name, Some(id))? != channel.name {
+            return Err(Error::refused("an inbox alias cannot create a channel"));
+        }
         let limit = self.limits.board_channels;
         let limit = if id.is_lead() {
             limit

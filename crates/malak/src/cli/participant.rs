@@ -40,14 +40,16 @@ pub(super) fn report_connection_failed(error: &Error) -> bool {
 
 #[derive(Subcommand)]
 pub(super) enum Command {
-    /// Send opaque message bytes to a channel.
+    /// Send opaque message bytes; inboxes accept to/NAME or to/ID.
     #[command(after_help = examples::help(&["send"]))]
     Send {
+        /// Channel or inbox, for example to/reviewer.
         channel: String,
         #[arg(long)]
         id: Option<String>,
         #[arg(long, default_value = "note")]
         kind: Kind,
+        /// Reply address; an inbox channel accepts to/NAME or to/ID.
         #[arg(long, num_args = 3, value_names = ["CHANNEL", "CREATION", "POSITION"])]
         reply_to: Vec<String>,
         #[arg(long = "type")]
@@ -66,6 +68,7 @@ pub(super) enum Command {
     /// Read messages; acknowledge them only with --ack. A foreign board uses your recorded reader seat.
     #[command(after_help = examples::help(&["read"]))]
     Read {
+        /// Channels or inboxes, for example to/reviewer or to/ID.
         #[arg(required = true, value_name = "CHANNEL")]
         channels: Vec<String>,
         #[arg(long)]
@@ -87,6 +90,7 @@ pub(super) enum Command {
     /// Retrieve one position without advancing the reader. A foreign board uses your recorded reader seat.
     #[command(after_help = examples::help(&["get"]))]
     Get {
+        /// Channel or inbox, for example to/reviewer.
         channel: String,
         position: u64,
         /// Refuse a message from a different channel creation.
@@ -104,6 +108,7 @@ pub(super) enum Command {
     /// Acknowledge a position already read in a particular channel creation.
     #[command(after_help = examples::help(&["ack"]))]
     Ack {
+        /// Channel or inbox, for example to/reviewer.
         channel: String,
         position: u64,
         /// Use this creation directly. Omitting it requires read permission.
@@ -140,14 +145,18 @@ impl Command {
         let guests = match &self {
             Self::Read {
                 channels, limit, ..
-            } if *limit != Some(0) && channels.iter().any(|channel| channel == "lead") => {
+            } if *limit != Some(0)
+                && channels
+                    .iter()
+                    .any(|channel| matches!(channel.as_str(), "lead" | "to/lead")) =>
+            {
                 guest_inbox::for_lead(&config)
             }
             Self::Ack {
                 channel,
                 creation: Some(_),
                 ..
-            } if channel == "lead" => guest_inbox::for_lead(&config),
+            } if matches!(channel.as_str(), "lead" | "to/lead") => guest_inbox::for_lead(&config),
             _ => Vec::new(),
         };
         let mut session = Session::new(config);
@@ -823,7 +832,7 @@ impl Session {
         else {
             return Err(invalid_reply());
         };
-        if entry["channel"].as_str() != Some(channel.as_str()) {
+        if !channel_reply_matches(channel.as_str(), entry["channel"].as_str()) {
             return Err(invalid_reply());
         }
         let Some(creation) = entry.get("creation") else {
@@ -1041,7 +1050,7 @@ impl Session {
                             return Err(invalid_reply());
                         };
                         if label["creation"].as_str() == Some(creation)
-                            && label["channel"].as_str() == Some(channel)
+                            && channel_reply_matches(channel, label["channel"].as_str())
                             && label["position"].as_u64() == Some(position)
                             && matches(&label)
                         {
@@ -1225,6 +1234,19 @@ fn remote_error(header: &Map<String, Value>) -> Error {
 
 fn invalid_reply() -> Error {
     Error::unavailable("invalid reply from the board")
+}
+
+// The authenticated board resolves inbox aliases. Creation and position checks
+// still bind previews to the exact historical message, even after name reuse.
+fn channel_reply_matches(requested: &str, returned: Option<&str>) -> bool {
+    returned.is_some_and(|channel| {
+        channel == requested
+            || (requested.starts_with("to/")
+                && (channel == "lead"
+                    || channel
+                        .strip_prefix("to/")
+                        .is_some_and(|id| id.parse::<ParticipantId>().is_ok())))
+    })
 }
 
 fn value(input: &mut Decoder<'_>) -> Result<Value, Error> {

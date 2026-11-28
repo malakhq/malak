@@ -382,7 +382,7 @@ impl<'a> Row<'a> {
         let recipient = match self.context {
             Context::Question(_) | Context::Order => String::new(),
             _ => model.message_recipient(&address.channel).map_or_else(
-                || display(&address.channel),
+                || model.plain_recipient(&address.channel).into_owned(),
                 |person| render::participant(&person.name),
             ),
         };

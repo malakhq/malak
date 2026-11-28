@@ -7,7 +7,7 @@ use crate::handover::{guest_address, local_address};
 use crate::journal_entry::Entry;
 use crate::{
     CreationId, Error, Grant, HandoverFile, HandoverTarget, HandoverWrite, Limits, OwnerCredential,
-    ParticipantId, ParticipantName,
+    ParticipantId,
 };
 use malak_layers::{Enrolment, Handover, Mechanism, Source, Store};
 use malak_proto::{Binding, Entrance, KeyPair};
@@ -412,13 +412,13 @@ impl LocalEntrances {
             malak_fs::trusted_parent_for_account(socket, self.settings.board_user, uid)
                 .map_err(|error| Error::refused(format!("general entrance: {error}")))?;
         }
-        let name: ParticipantName = name.parse()?;
         let deadline = owner_save_deadline();
-        self.board
+        let name = self
+            .board
             .table
             .save_until(deadline)?
             .authority
-            .check_enrol_name(&name)?;
+            .check_enrol_name(name)?;
         let target = HandoverTarget::prepare(path, uid, HandoverWrite::New)?;
         #[cfg(test)]
         crate::enrol_kill::checkpoint(path, "preflight");

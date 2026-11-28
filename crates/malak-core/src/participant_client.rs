@@ -3,6 +3,8 @@
 //! A [`ParticipantClient`] opens a connection with a handover file, performs the
 //! handshake and attachment, and then offers `send`, `read`, `get` and `ack`
 //! with the same types as an in-process [`Handle`](crate::Handle).
+//! Inbox channels accept `to/NAME` or `to/ID`; the board resolves the active
+//! name and checks the resolved ID grant. Replies retain the ID channel.
 
 use crate::client::LocalClient;
 use crate::{CreationId, Error, GetReply, ReadReply, Receipt, SendRequest};

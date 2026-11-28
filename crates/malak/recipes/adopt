@@ -113,7 +113,7 @@ def arguments():
     selectors.add_argument("--config", type=Path, metavar="PATH", help="Select a board config")
     args = parser.parse_args()
     if args.name == "lead" or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
-        parser.error(f"invalid worker name {args.name!r}")
+        parser.error(board.PARTICIPANT_NAME_RULE)
     if args.session is None and not (sys.stdin.isatty() and sys.stderr.isatty()):
         parser.error("use --session PID when running without a terminal")
     return args
@@ -130,6 +130,8 @@ def adopt_worker(connection, name, pid, grants):
     config, state = connection.config, connection.state
     with select_enrolment(state, name):
         current = named(connection.status(), name)
+        if current is None:
+            board.check_new_participant_name(name)
         if current:
             record = LaunchRecord(state, current)
             evidence, live = record.observe()

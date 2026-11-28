@@ -136,7 +136,7 @@ The lead's Seat also has these worker and answer tools.
 | Tool | Arguments | What it does |
 |---|---|---|
 | `delegate` | `agent`*, `task`*, `id` | Give a task to an agent already on the board. The agent sees an order from the lead. Reuse the same `id` to retry a task that may not have arrived. |
-| `start_agent` | `name`*, `brief`*, `tool`* | Start a new agent with a brief. `name` is lowercase letters, digits, `-` and `_`; `tool` is `claude` or `codex`. It runs `malak recipe worker-start`. |
+| `start_agent` | `name`*, `brief`*, `tool`* | Start a new agent with a brief. `name` follows the new participant name rule below; `tool` is `claude` or `codex`. It runs `malak recipe worker-start`. |
 | `agents` | none | List the agents with their claim status and unread counts. It runs `malak recipe workers`. |
 | `answer` | `position`*, `answer`* | Record the answer to the question at `position` on `questions`. It runs `malak recipe answer`. The answer says who decided it (see "The owner's answer"). |
 
@@ -226,6 +226,37 @@ the reply says how many did not fit and `held_back` is `true`. Call `inbox`
 again for them; the ones already returned are not repeated.
 
 A refusal comes back as a tool error that carries the board's reason.
+
+Inbox addresses accept either `to/NAME` or `to/ID`. The board resolves an
+active name before checking the caller's grant, and stores the message in
+the ID inbox. For example, `delegate` with
+`{"agent":"reviewer","task":"Review the change."}` and the same call with
+the reviewer's ID reach the same inbox; `get` and `ack` accept
+`"channel":"to/reviewer"`. An unknown address is refused with the nearest
+match and creates no channel. After `worker-start reviewer --again`, the
+name addresses the new enrolment; an old ID still identifies its history.
+Suggestions include only inboxes the caller is granted to send, read, get
+or acknowledge. Without an eligible inbox, the refusal contains only the
+unknown address.
+An exact retry of an older message with a literal inbox name in its reply
+header returns the original receipt and leaves that record unchanged. New
+writes canonicalize reply headers to ID addresses before storage.
+`to/lead` addresses `lead`. New names use 1–24 lowercase letters, digits and
+hyphens, start with a letter, and have no double or trailing hyphen. Existing
+longer names, underscores and other old valid spellings keep working until
+re-enrolled. Existing IDs take precedence over existing names with the same spelling.
+
+Old literal `to/NAME` channels that are not participant inboxes remain in
+storage and appear as stray channels in the mailbox, with retained message
+counts. They accept no new messages. Existing grants still govern
+`read`, `get` and `ack` when no participant resolves that address. An active
+name shadows a stray, while its old records remain stored.
+Owner `board status` selectors remain literal inventory names; human output
+marks strays and shows the active name's resolved ID beside a shadowed stray.
+Owner create, trim and remove accept inbox aliases. When trim or remove
+omits `--creation`, the CLI discovers it from owner inventory; the board
+resolves the operation again and rejects an alias that now names a different
+creation. Name-based removal prints the resolved inbox ID and creation.
 
 ## Staying awake as the lead
 

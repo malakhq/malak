@@ -19,6 +19,39 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn inbox_names_resolve_the_current_enrolment_after_a_durable_restart() {
+    let fixture = Fixture::new();
+    let board = fixture.board(false);
+    let old = board.enrol("reviewer", Grant::default()).unwrap();
+    board
+        .lead()
+        .send(SendRequest::note("to/reviewer", "one", b"old"))
+        .unwrap();
+    board.revoke(old.id()).unwrap();
+    let current = board.enrol("reviewer", Grant::default()).unwrap();
+    board
+        .lead()
+        .send(SendRequest::note("to/reviewer", "one", b"current"))
+        .unwrap();
+    let old_inbox = old.id().inbox();
+    let current_inbox = current.id().inbox();
+    drop(old);
+    drop(current);
+    drop(board);
+
+    let board = fixture.restart();
+    let GetReply::Message(message) = board.lead().get("to/reviewer", 1).unwrap() else {
+        panic!("missing current inbox");
+    };
+    assert_eq!(message.channel, current_inbox);
+    assert_eq!(&message.body[..], b"current");
+    let GetReply::Message(message) = board.lead().get(old_inbox.as_str(), 1).unwrap() else {
+        panic!("missing old history");
+    };
+    assert_eq!(&message.body[..], b"old");
+}
+
 struct Fixture {
     root: PathBuf,
     state: PathBuf,

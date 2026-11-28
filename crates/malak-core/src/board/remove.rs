@@ -32,7 +32,8 @@ impl Board {
         name: &str,
         creation: CreationId,
     ) -> Result<(bool, Option<CreationId>), Error> {
-        let name: ChannelName = name.parse()?;
+        let requested: ChannelName = name.parse()?;
+        let name = self.table.check().resolve_read_channel(&requested, None)?;
         let deadline = owner_save_deadline();
         let current = self
             .table
@@ -44,6 +45,12 @@ impl Board {
             return Ok((false, None));
         };
         if channel.creation != creation {
+            if requested != name {
+                return Err(Error::refused(format!(
+                    "channel creation no longer matches: {requested} resolves to {name} creation {}; requested creation {creation}",
+                    channel.creation
+                )));
+            }
             return Ok((false, Some(channel.creation)));
         }
         let history = channel

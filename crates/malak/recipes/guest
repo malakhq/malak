@@ -26,6 +26,8 @@ def ensure_guest(config, name, handover, session):
         status = board.board_status(config)
         active = next((person for person in status["participants"]
                        if person["name"] == name and not person["revoked"]), None)
+        if active is None:
+            board.check_new_participant_name(name)
         participant = (active["id"] if active is not None
                        else board.enrol_lead_sender(config, name, handover, "--session", str(session)))
         inbox = f"to/{participant}"
@@ -119,7 +121,7 @@ def main():
     if args.name == "lead":
         raise board.RecipeError("'lead' is reserved for the lead")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
-        raise board.RecipeError(f"invalid participant name {args.name!r}")
+        raise board.RecipeError(board.PARTICIPANT_NAME_RULE)
     handover = args.out.absolute()
     process = board.current_session() if args.session is None else None
     session = args.session if args.session is not None else process["pid"]

@@ -885,6 +885,65 @@ fn the_lead_delegates_a_task_the_agent_receives_as_an_order() {
 }
 
 #[test]
+fn inbox_names_mcp_delegate_accepts_a_participant_id() {
+    let (board, inbox, _) = board_with_worker();
+    runtime().block_on(async {
+        Seat::take(&board, &board.lead())
+            .await
+            .ok(
+                "delegate",
+                json!({
+                    "agent": inbox.strip_prefix("to/").unwrap(), "task": "Review this."
+                }),
+            )
+            .await;
+    });
+
+    assert_eq!(unacknowledged(&board, &inbox), 1);
+}
+
+#[test]
+fn inbox_names_mcp_delegate_uses_the_boards_typo_suggestion() {
+    let (board, _, _) = board_with_worker();
+    let reply = runtime().block_on(async {
+        Seat::take(&board, &board.lead())
+            .await
+            .call(
+                "delegate",
+                json!({
+                    "agent": "buidler", "task": "Review this."
+                }),
+            )
+            .await
+    });
+
+    assert!(reply.failed());
+    assert!(reply.text().contains("unknown inbox"), "{}", reply.text());
+}
+
+#[test]
+fn inbox_names_mcp_get_and_ack_use_the_existing_worker_id_grants() {
+    let (board, inbox, worker) = board_with_worker();
+    call(&board.lead(), &["send", "to/worker", "Review this."]);
+    let record = &super::messages(&call(&board.lead(), &["get", &inbox, "1", "--json"]))[0];
+    runtime().block_on(async {
+        let mut seat = Seat::take(&board, &worker).await;
+        let got = seat
+            .ok("get", json!({"channel":"to/worker", "position":1}))
+            .await;
+        assert!(got.text().contains("Review this."));
+        seat.ok("inbox", json!({})).await;
+        seat.ok(
+            "ack",
+            json!({"channel":"to/worker", "position":1, "creation":record["creation"]}),
+        )
+        .await;
+    });
+
+    assert_eq!(unacknowledged(&board, &inbox), 0);
+}
+
+#[test]
 fn a_lead_without_a_watcher_is_refused_when_it_starts_an_agent() {
     let board = Fixture::new();
     let stubs = stub_tools(&board);

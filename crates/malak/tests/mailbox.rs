@@ -9,6 +9,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
+#[path = "fixtures/legacy_store.rs"]
+mod legacy_store;
 #[path = "fixtures/retained.rs"]
 mod retained;
 #[path = "fixtures/terminal.rs"]
@@ -150,6 +152,20 @@ impl Board {
 
     fn send(&self, channel: &str, kind: &str, body: &str) -> Receipt {
         Receipt::parse(&self.run(&["send", "--json", channel, "--kind", kind, body]))
+    }
+
+    fn retained_legacy(&mut self, channel: &str, kind: &str, body: &str) -> Receipt {
+        let receipt = self.send("legacy-fixture", kind, body);
+        self.run(&["board", "stop"]);
+        let _ = self.process.wait();
+        legacy_store::channel(
+            &self.root.path().join("st"),
+            "legacy-fixture",
+            channel,
+            &receipt.creation,
+        );
+        self.process = launch_board(self.root.path());
+        receipt
     }
 
     fn post_upgrade_notice(&self) -> String {
@@ -636,16 +652,41 @@ fn a_same_channel_reply_names_its_position_in_plain_output() {
 #[test]
 fn a_cross_channel_reply_names_the_channel_in_plain_output() {
     let board = Board::start();
-    board.run(&["channel", "create", "to/worker"]);
+    board.run(&["channel", "create", "work/worker"]);
     let (_mailbox, lines) = board.plain();
-    let original = board.send("to/worker", "task", "original task");
-    board.reply("lead", "to/worker", &original, "cross-channel reply");
+    let original = board.send("work/worker", "task", "original task");
+    board.reply("lead", "work/worker", &original, "cross-channel reply");
 
     let line = block_with(&lines, "    cross-channel reply");
 
     assert!(
-        line.contains(&format!("Reply to #{} to/worker", original.position)),
+        line.contains(&format!("Reply to #{} work/worker", original.position)),
         "{line}"
+    );
+}
+
+#[test]
+fn inbox_names_plain_feed_names_an_enrolled_worker_and_links_its_reply() {
+    let board = Board::start();
+    let (id, _) = board.enrol("reviewer");
+    let (_mailbox, lines) = board.plain();
+    let original = board.send("to/reviewer", "task", "a task addressed by name");
+    let linked = board.reply("lead", "to/reviewer", &original, "a linked name reply");
+
+    let task = block_with(&lines, "    a task addressed by name");
+    assert!(task.contains("lead sent a task to reviewer #1"), "{task}");
+    let reply = block_with(&lines, "    a linked name reply");
+    assert!(
+        reply.contains(&format!("Reply to #{} reviewer", original.position)),
+        "{reply}"
+    );
+    let stored = board.run(&["get", "lead", &linked.position, "--json"]);
+    let stored: serde_json::Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored["text"], "a linked name reply", "{stored}");
+    assert_eq!(
+        stored["headers"]["reply_to"][0],
+        format!("to/{id}"),
+        "{stored}"
     );
 }
 
@@ -699,13 +740,13 @@ fn a_same_channel_link_to_a_future_position_has_no_reply_marker() {
 #[test]
 fn a_reference_to_a_retired_creation_does_not_link_to_its_replacement() {
     let board = Board::start();
-    let old = board.send("to/old", "note", "original creation");
-    board.run(&["channel", "remove", "to/old"]);
-    let replacement = board.send("to/old", "note", "replacement creation");
+    let old = board.send("work/old", "note", "original creation");
+    board.run(&["channel", "remove", "work/old"]);
+    let replacement = board.send("work/old", "note", "replacement creation");
     assert_eq!(old.position, replacement.position);
     assert_ne!(old.creation, replacement.creation);
     let (_mailbox, lines) = board.plain();
-    board.reply("lead", "to/old", &old, "retired link");
+    board.reply("lead", "work/old", &old, "retired link");
 
     let line = block_with(&lines, "    retired link");
 
@@ -804,13 +845,13 @@ fn an_expanded_waiting_message_shows_the_reply_reference() {
 #[test]
 fn a_live_activity_row_shows_its_preview_without_a_keypress() {
     let board = Board::start();
-    board.run(&["channel", "create", "to/alias"]);
+    board.run(&["channel", "create", "work/alias"]);
     // This store belongs to the selected sender's feed but not its inbox.
     let (_mailbox, mut output) = board.terminal_with(30, 200, &["--for", "lead"]);
     output.wait_for("[Activity]");
-    board.send("to/alias", "note", "arrived with its preview");
+    board.send("work/alias", "note", "arrived with its preview");
 
-    output.wait_for("@lead → to/alias");
+    output.wait_for("@lead → work/alias");
     output.wait_for("arrived with its preview");
 }
 
@@ -841,9 +882,8 @@ fn a_live_answer_does_not_clear_the_waiting_for_ack_count() {
 
 #[test]
 fn the_waiting_tab_excludes_aliases_like_the_one_shot_list() {
-    let board = Board::start();
-    board.run(&["channel", "create", "to/m2"]);
-    board.send("to/m2", "note", "unread alias message");
+    let mut board = Board::start();
+    board.retained_legacy("to/m2", "note", "unread alias message");
     let (_mailbox, mut output) = board.terminal(30);
     output.wait_for("unread alias message");
     output.bytes.clear();
@@ -944,8 +984,8 @@ fn a_linked_reply_quotes_the_original_above_its_body() {
 fn history_and_live_messages_share_one_ordered_plain_feed() {
     let board = Board::start();
     board.send("lead", "note", "removed by trim");
-    let first = board.send("to/beta", "note", "first retained message");
-    board.send("to/alpha", "note", "second retained message");
+    let first = board.send("work/beta", "note", "first retained message");
+    board.send("work/alpha", "note", "second retained message");
     board.run(&["trim", "lead", "2"]);
     let (_mailbox, lines) = launch_plain(command(board.root.path(), &["mailbox", "--plain"]));
     assert!(
@@ -2216,13 +2256,13 @@ fn an_order_box_names_a_decisions_inbox_recipient() {
 
 #[test]
 fn an_order_box_shortens_an_inbox_id_when_the_recipient_is_unknown() {
-    let board = Board::start();
+    let mut board = Board::start();
     let order = board.post_order(None, "Choose the fixture.");
     let body = format!(
         "Under order: {} {}\n\nUse the shared fixture.",
         order.creation, order.position
     );
-    board.send("to/0123456789abcdef0123456789abcdef", "note", &body);
+    board.retained_legacy("to/0123456789abcdef0123456789abcdef", "note", &body);
 
     let view = board.run(&["mailbox", "--orders"]);
 

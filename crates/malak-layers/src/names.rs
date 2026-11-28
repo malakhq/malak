@@ -91,7 +91,8 @@ impl ParticipantId {
 }
 
 name!(
-    /// A human-readable participant label. The board enforces uniqueness.
+    /// A human-readable participant label, including retained legacy spellings.
+    /// New enrolments enforce the current name rule and active-name uniqueness.
     ParticipantName, "invalid participant name",
     |value: &str| value.len() <= 64 && segment(value)
 );

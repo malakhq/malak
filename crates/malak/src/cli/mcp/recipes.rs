@@ -209,18 +209,6 @@ pub(super) fn agents(seat: &Seat) -> Result<Reply, Error> {
     })
 }
 
-/// The inbox of the agent the lead names, as `workers` lists it.
-pub(super) fn inbox_of(seat: &Seat, name: &str) -> Result<String, Error> {
-    let found = workers(seat, Some(name))?
-        .into_iter()
-        .find(|row| row["active"] == true && row["enrolment"] == "active")
-        .ok_or_else(|| Error::refused(format!("no active agent named {name} on the board")))?;
-    found["inbox"]
-        .as_str()
-        .map(str::to_owned)
-        .ok_or_else(|| Error::unavailable("the agent list names no inbox"))
-}
-
 fn workers(seat: &Seat, name: Option<&str>) -> Result<Vec<Value>, Error> {
     let mut recipe = vec!["workers".to_owned()];
     recipe.extend(name.map(str::to_owned));
