@@ -1,6 +1,7 @@
 //! Organisation views are reading clients of ordinary board messages.
 
 pub(in crate::cli) mod bounded;
+pub(in crate::cli) mod calls;
 pub(in crate::cli) mod lifecycle;
 pub(in crate::cli) mod pulse;
 pub(in crate::cli) mod rail;

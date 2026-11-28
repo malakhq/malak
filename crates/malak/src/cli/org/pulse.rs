@@ -77,8 +77,13 @@ pub(in crate::cli) fn row(
             lead_activity = lead_activity.max(typed::at_ms(record));
         }
     }
-    let red = calls.iter().find(|call| call["level"] == "red");
-    let orange = calls.iter().find(|call| call["level"] == "orange");
+    let black = calls.iter().find(|call| call["pulse"] == "black");
+    let red = calls
+        .iter()
+        .find(|call| call["pulse"] == "red" || call["pulse"].is_null() && call["level"] == "red");
+    let orange = calls.iter().find(|call| {
+        call["pulse"] == "yellow" || call["pulse"].is_null() && call["level"] == "orange"
+    });
     let silent = (!open.is_empty() || !calls.is_empty())
         && now.saturating_sub(lead_activity) >= timing.silent_ms;
     let wait = waits.iter().max_by_key(|event| event["at_ms"].as_u64());
@@ -86,6 +91,8 @@ pub(in crate::cli) fn row(
         ("black", "not reachable", None)
     } else if silent {
         ("black", "lead silent", None)
+    } else if let Some(call) = black {
+        ("black", "open call", Some(call))
     } else if let Some(call) = red {
         ("red", "open red call", Some(call))
     } else if let Some(call) = orange {
@@ -114,47 +121,6 @@ pub(in crate::cli) fn row(
     json!({"lead":name,"colour":colour,"reason":reason,"on":on,"blocker":blocker.cloned().map(rail::public_event),"last_activity":activity,"counts":{"started":open.len(),"calls":calls.len(),"finished":finished}})
 }
 
-fn open_calls(board: &str, messages: &[Value]) -> Vec<Value> {
-    // Authored owner questions supply fallback open calls. The validated calls
-    // projection plugs into row(); call-level reference fields belong there.
-    let mut calls = BTreeMap::<(String, u64), Value>::new();
-    let mut answered = HashSet::new();
-    for message in messages {
-        let reply = &message["headers"]["reply_to"];
-        if message["sender"] == "lead"
-            && message["grade"] == "proven"
-            && reply[0] == "questions"
-            && (message["channel"] == "questions"
-                || message["channel"] == "lead"
-                || message["channel"].as_str().unwrap_or("").starts_with("to/"))
-        {
-            answered.insert((
-                reply[1].as_str().unwrap_or("").to_owned(),
-                reply[2].as_u64().unwrap_or(0),
-            ));
-        }
-        if message["channel"] == "questions"
-            && message["sender"] == "lead"
-            && message["grade"] == "proven"
-            && reply.is_null()
-        {
-            let text = typed::text(message);
-            let level = text.lines().find_map(|line| line.strip_prefix("Level: "));
-            let audience = text.lines().find_map(|line| line.strip_prefix("For: "));
-            if let Some(level) = level.filter(|level| ["red", "orange", "blue"].contains(level))
-                && audience.is_none_or(|audience| matches!(audience, "owner" | "both"))
-            {
-                calls.insert((message["creation"].as_str().unwrap_or("").to_owned(), message["position"].as_u64().unwrap_or(0)), json!({"level":level,"link":[board,"questions",message["creation"],message["position"]]}));
-            }
-        }
-    }
-    calls
-        .into_iter()
-        .filter(|(key, _)| !answered.contains(key))
-        .map(|(_, call)| call)
-        .collect()
-}
-
 pub(in crate::cli) fn view(reader: &Reader, now: u64) -> Result<Vec<Value>, Error> {
     if !reader.chief {
         return Err(Error::refused(
@@ -172,7 +138,7 @@ pub(in crate::cli) fn view(reader: &Reader, now: u64) -> Result<Vec<Value>, Erro
         midnight_ms: midnight,
     };
     let mut top = reader.open_board(None)?;
-    let ramp = records::retained(&top.config, &mut top.session, &["cos/ramp"])?;
+    let ramp = records::retained(&top.config, &mut top.session, &["top/ramp", "cos/ramp"])?;
     let (seated, ready) = ramp_status(
         roster
             .candidate
@@ -180,6 +146,7 @@ pub(in crate::cli) fn view(reader: &Reader, now: u64) -> Result<Vec<Value>, Erro
             .and_then(|candidate| candidate["id"].as_str()),
         &ramp,
     );
+    let calls = super::calls::load(reader)?;
     let mut rows = Vec::new();
     let mut briefed = 0;
     for (name, lead) in &roster.leads {
@@ -217,7 +184,7 @@ pub(in crate::cli) fn view(reader: &Reader, now: u64) -> Result<Vec<Value>, Erro
             name,
             &messages,
             &events,
-            &open_calls(name, &messages),
+            &calls.open(Some(name)),
             now,
             reachable,
             overdue,
@@ -277,7 +244,7 @@ fn own_handover_overdue(reader: &Reader, messages: &[Value], now: u64) -> Result
     let top_name =
         crate::cli::board_names::name(&crate::cli::board_group::Entry::read(roster.top.clone()));
     let mut top = reader.open_board(Some(&top_name))?;
-    let ramp = records::retained(&top.config, &mut top.session, &["cos/ramp"])?;
+    let ramp = records::retained(&top.config, &mut top.session, &["top/ramp", "cos/ramp"])?;
     let (seated, ready) = ramp_status(
         roster
             .candidate
@@ -332,6 +299,7 @@ pub(in crate::cli) fn own(reader: &Reader, now: u64) -> Result<Value, Error> {
         ],
     )?;
     let events = rail::reader_projection(reader, &seat.board, &messages);
+    let calls = super::calls::load(reader)?;
     let timing = Timing {
         silent_ms: reader
             .roster
@@ -350,7 +318,7 @@ pub(in crate::cli) fn own(reader: &Reader, now: u64) -> Result<Value, Error> {
         &seat.board,
         &messages,
         &events,
-        &open_calls(&seat.board, &messages),
+        &calls.open(Some(&seat.board)),
         now,
         true,
         ramp.as_ref().copied().unwrap_or(false),

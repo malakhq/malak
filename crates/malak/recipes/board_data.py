@@ -522,7 +522,7 @@ def reply_command(inbox, channel, creation, position, kind="note", *, identifier
     )
 
 
-def send_result(command, title, fields=(), *, handover=None, body=None, stdin_prefix=None):
+def send_result(command, title, fields=(), *, handover=None, body=None, stdin_prefix=None, after=None):
     env = None if handover is None else {**os.environ, "MALAK_HANDOVER": str(handover)}
     if stdin_prefix is None:
         result = subprocess.run(command, input=body, env=env, stdout=subprocess.PIPE)
@@ -539,6 +539,8 @@ def send_result(command, title, fields=(), *, handover=None, body=None, stdin_pr
             result = subprocess.CompletedProcess(command, send.wait(), stdout)
     if result.returncode == 0:
         value = json.loads(result.stdout)
+        if after is not None:
+            after(value)
         out.receipt(title(value["position"]), value, fields)
     return result.returncode
 
@@ -585,6 +587,15 @@ def answer_channel(config, position):
 
 
 def answer(config, order, kind, *address):
+    if not config and (credential := os.environ.get("MALAK_HANDOVER")):
+        try:
+            socket, sender = board_identity(credential)
+        except (OSError, ValueError):
+            sender = None
+        if sender == "lead":
+            config = config_for_socket(socket)
+            if config is None:
+                raise RecipeError("cannot find the handover's board; pass --board NAME or --config PATH")
     use_board(config)
     mark = None
     if order:
@@ -615,17 +626,41 @@ def answer(config, order, kind, *address):
         # An answer under an order is the lead's decision.
         audience = "owner" if len(address) == 4 else question_audience(bytes(question["body"]).decode(errors="replace"))
         decided = "lead" if audience == "lead" or order else "owner"
-        text = "Decided by: lead\n\n" if decided == "lead" else "Decided by: owner\nRecorded by: lead\n\n"
+        import org_state
+        found = org_state.find(config or board_config())
+        has_top = found and found[1].get("top_lead", found[1].get("chief_of_staff"))
+        text = ("Decided by: lead\n\n" if decided == "lead" or has_top
+                else "Decided by: owner, recorded by lead, no top lead\n\n")
         prefix = (text + (f"{mark}\n\n" if mark else "")).encode()
     elif mark:
         prefix = f"{mark}\n\n".encode()
     command = reply_command(inbox, channel, creation, position, kind)
     suffix = f" under order #{order}" if order else ""
+    payload = None
+    after = None
+    if channel == QUESTIONS_CHANNEL and default_audience() == "owner" and kind == "note":
+        command = reply_command(QUESTIONS_CHANNEL, channel, creation, position, kind)
+        def after(receipt):
+            from rail_events import emit
+            recorded = dict(receipt)
+            if inbox != QUESTIONS_CHANNEL:
+                answer_record = get_message(QUESTIONS_CHANNEL, str(recorded["position"]))
+                delivered = json.loads(malak("--config", config or board_config(), "send", "--json", "--kind", "note",
+                    "--reply-to", channel, creation, str(position), inbox, "-", body=bytes(answer_record["body"])).stdout)
+                receipt.update(delivered)
+            question = get_message(channel, position)
+            lines = bytes(question["body"]).decode(errors="replace").splitlines()
+            subject = lines[0] if lines else "Question"
+            link = {"channel": QUESTIONS_CHANNEL, **recorded}
+            emit(config or board_config(), "decided", subject, link)
+            emit(config or board_config(), "unblocked", subject, link)
     return send_result(
         command,
         lambda _: f"Answered {channel} #{position}{suffix}.",
         (("Inbox", inbox),),
         stdin_prefix=prefix,
+        body=payload,
+        after=after,
     )
 
 

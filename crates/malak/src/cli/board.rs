@@ -284,6 +284,7 @@ pub(super) fn start(
     lead_handover: Option<PathBuf>,
     lead_account: Option<String>,
 ) -> Result<(), Error> {
+    super::org::calls::settings::validate_start(&config)?;
     let board_uid = geteuid().as_raw();
     let lead_uid = lead_account
         .as_deref()

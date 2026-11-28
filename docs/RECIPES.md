@@ -27,6 +27,7 @@ working until re-enrolled; `worker-start --again` creates a new enrolment.
 - `answer` replies to a question and can assign follow-up work.
 - `ask` posts a question that needs a person, with options and a recommendation.
 - `await` waits for a worker's verified final report.
+- `calls` raises, levels, merges, decides and relays calls.
 - `brief put` stores an immutable brief as the board's lead.
 - `demo` starts a lead and five workers on a disposable board.
 - `forward` passes an existing message through the lead, preserving its source and trace.
@@ -761,10 +762,12 @@ for the owner. When the owner answers in chat, the lead starts the reply with
 the reply on `questions`. An owner question closes when a lead reply on that
 channel names the earlier question.
 
-`malak recipe answer questions POSITION` starts the reply with who decided it: `Decided by: lead` for a question for
-the lead (or an answer under an order), and `Decided by: owner` with `Recorded by: lead` for a question for
-the owner or both. The lead is trusted as the owner's Door for every question; stronger proof for high-risk
-decisions comes later.
+`malak recipe answer questions POSITION` records who decided. An ordinary
+answer inside an organisation says `Decided by: lead`; top and owner decisions
+use the validated source link described under [Calls](#calls). Without a top
+lead, the lead records the owner's words with
+`Decided by: owner, recorded by lead, no top lead`. Answers to the lead and
+answers under an order say `Decided by: lead`.
 
 A question from an agent stays on the list until the lead sends a reply that
 names it. Each reply answers one question. `malak mailbox --questions --json` returns
@@ -1287,3 +1290,77 @@ Each lead board keeps only published source links in its owner-only
 never recreates a trimmed lifecycle event. If that file is missing after a trim
 or cannot be read, publication pauses and prints a notice; the owner must restore
 its publication history. Pending facts remain on the board.
+
+## Calls and decisions
+
+A sub only asks. Every level answers what it knows. The asking lead can propose
+a call; the top lead decides its real level, up or down, and uses its own
+judgment about what reaches the owner. A topic is only a hint.
+
+```sh
+malak recipe calls raise 1 --level red --topic release
+malak --board top recipe calls level build 1 --level orange
+malak recipe calls merge '["build","questions","CREATION",1]' '["build","questions","CREATION",2]'
+printf '%s\n' 'Use the reviewed approach.' | malak --board top recipe calls decide build 1
+printf '%s\n' 'Use the first option.' | malak --board top recipe calls relay build 2
+malak recipe answer 1 --decision top calls CREATION POSITION
+malak calls --all
+```
+
+Use actual creation IDs from `get --json` and the receipt's position. The
+[examples guide](EXAMPLES.md#malak-calls) has runnable setup and command examples.
+`raise` and a local `merge` require that board's lead; `level`, `decide`, `relay`
+and cross-board merges require the top board's lead. No writer uses another
+lead's handover. A decision is an ordinary proven `Type: decision` note on the
+top board's `calls`, with `Link: [board,"questions",creation,position]` and
+`Decided by: top lead` or `Decided by: owner, relayed by top lead`, then a blank
+line and its words. `call-level` has `Link:`, `Level:` and optional `Topic:`;
+`call-merge` has `Links:` containing an array of question links. Raw typed sends
+use the same validator. On any other board or channel, a decision is text.
+
+`answer --decision` validates the original top note and question link, writes the
+record on the asking board's `questions`, delivers it to the worker's inbox,
+and writes `decided` and `unblocked` on rail. A proven merge extends a decision
+to every listed question; each asking lead records its own original. Forged,
+missing, foreign, wrong-channel and relinked decisions do not close calls.
+Readers show the source text, every earlier decision, and every level change
+with its original. Without a top lead the direct owner record says
+`Decided by: owner, recorded by lead, no top lead`.
+
+A sub trusts a recorded decision from its own proven lead; its agent view says
+`source_checked_by: "lead"`. A lead reader validates the top source through its
+own Seat and sees `source_checked_by: "self"`. Attribution is shown in
+`decided_by` and `recorded_by`, without the attribution header in the body.
+
+### Calls settings
+
+`[board.calls]` is optional. Defaults below are configurable. In an organisation,
+the roster's `calls.levels` sets level names and severity order for every board,
+from least to most severe. A board may override only delivery and pulse for
+those names, in the same order. With no roster, its board map supplies the names
+and order. Roster `calls.digest` supplies digest defaults; boards may override it.
+
+```toml
+[board.calls]
+# Default levels and severity order, configurable without a roster.
+levels = [
+  { name = "blue", delivery = "digest", pulse = "green" },
+  { name = "orange", delivery = "listed", pulse = "yellow" },
+  { name = "red", delivery = "tick", pulse = "red" },
+]
+# Default digest contents, configurable on the board or roster.
+digest = ["briefs", "finished", "blockers", "calls"]
+# Default ready-report level, configurable; roster-only inside an organisation.
+ready_level = "orange"
+```
+
+Each level's `name` defaults to the names above, configurable through the
+roster; `delivery` defaults to the values above, configurable as `tick` (within
+one watcher tick), `listed` (in calls reads) or `digest` (digest and `--all`);
+`pulse` defaults to the colours above, configurable as red, yellow, green or
+black. No new timing is introduced: `tick` uses the existing watcher tick
+(default 60 seconds, configurable). Unknown or removed stored levels retain
+their raw name and use the most severe current level's delivery and pulse.
+`ready_level` defaults to orange, configurable on the roster (or a board with no roster) and validated against its level names at start. A board inside a roster cannot override it. A top-lead note cannot change a candidate ready report's level. Names must be unique and nonempty; maps need at least one level. Invalid names,
+delivery, pulse, digest entries or board overrides refuse board startup with a
+reason. Authority and link validation are fixed safety rules, never settings.

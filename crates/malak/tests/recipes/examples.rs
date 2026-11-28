@@ -10,6 +10,18 @@ use terminal::{TerminalOutput, terminal_pair, terminal_text};
 #[path = "../../src/cli/examples.rs"]
 mod guide;
 
+fn recipe_names() -> Vec<&'static str> {
+    let mut seen = BTreeSet::new();
+    guide::snippets()
+        .filter_map(|(command, _)| {
+            command
+                .strip_prefix("recipe ")
+                .and_then(|recipe| recipe.split_whitespace().next())
+        })
+        .filter(|name| seen.insert(*name))
+        .collect()
+}
+
 struct Example {
     board: Fixture,
     code: &'static str,
@@ -158,6 +170,37 @@ macro_rules! examples {
 }
 
 examples! {
+    calls_shows_both_levels: "calls" [running] |example| {
+        assert!(example.run().contains("proposed: red"));
+    }
+    calls_raise_records_a_blocker: "recipe calls raise" [running] |example| {
+        example.run();
+        assert!(example.first_on("rail")["text"].as_str().unwrap().contains("Event: blocked"));
+    }
+    calls_level_shows_the_lowering: "recipe calls level" [running] |example| {
+        let _top = super::calls::top_for(&example.board);
+        super::calls::prepare(&example.board,1);
+        let output=example.run();
+        assert!(output.contains("proposed: red"),"{output}");
+        assert!(output.contains("effective: orange"),"{output}");
+    }
+    calls_merge_lists_both_askers: "recipe calls merge" [running] |example| {
+        super::calls::prepare(&example.board,2);
+        let output=example.run();
+        assert!(output.contains("questions"),"{output}");
+        assert!(output.contains(",2]"),"{output}");
+    }
+    calls_decide_keeps_the_top_lead_attribution: "recipe calls decide" [running] |example| {
+        let _top=super::calls::top_for(&example.board);
+        super::calls::prepare(&example.board,1);
+        assert!(example.run().contains("Decided by: top lead"));
+    }
+    calls_relay_keeps_the_owner_attribution: "recipe calls relay" [running] |example| {
+        let _top=super::calls::top_for(&example.board);
+        super::calls::prepare(&example.board,1);
+        assert!(example.run().contains("Decided by: owner, relayed by top lead"));
+    }
+
     briefs_lists_the_stored_learned_brief: "briefs" [running] |example| {
         let output = example.run();
         let result: Value = serde_json::from_str(output.lines().last().unwrap()).unwrap();
@@ -409,10 +452,7 @@ examples! {
 
     recipe_lists_all_shipped_names_without_a_board: "recipe" [stopped] |example| {
         let output = example.run();
-        let names: Vec<_> = guide::snippets()
-            .filter_map(|(command, _)| command.strip_prefix("recipe "))
-            .collect();
-        assert_eq!(output.lines().collect::<Vec<_>>(), names);
+        assert_eq!(output.lines().collect::<Vec<_>>(), recipe_names());
     }
 
     adopt_prints_bootstrap_commands_for_the_running_session: "recipe adopt" [running] |example| {
@@ -619,9 +659,8 @@ fn recipe_terminal_lists_every_description_in_one_aligned_column() {
     screen.wait_for("malak recipe NAME --help");
     assert!(child.0.wait().unwrap().success());
     let output = String::from_utf8_lossy(&screen.bytes);
-    let names = guide::snippets().filter_map(|(command, _)| command.strip_prefix("recipe "));
     let mut columns = BTreeSet::new();
-    for name in names {
+    for name in recipe_names() {
         let (_, description) = output
             .lines()
             .find_map(|row| row.strip_prefix("  ")?.strip_prefix(name)?.split_once("  "))

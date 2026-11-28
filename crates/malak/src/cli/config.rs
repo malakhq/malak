@@ -34,6 +34,8 @@ pub(super) struct Board {
     inbox_limits: InboxLimits,
     #[serde(default)]
     pub sync: bool,
+    #[serde(default)]
+    pub calls: super::org::calls::settings::Options,
 }
 
 #[derive(Deserialize)]
@@ -184,6 +186,7 @@ impl Board {
     }
 
     fn validate(&self) -> Result<(), Error> {
+        self.calls.validate()?;
         for (actual, supported) in [(&self.transport, "unix-socket"), (&self.mechanism, "key")] {
             if actual.as_deref().is_some_and(|value| value != supported) {
                 return Err(Error::not_supported("configured layer is unavailable"));

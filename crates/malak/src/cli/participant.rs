@@ -195,7 +195,9 @@ impl Command {
         }
         let mut remote = Vec::new();
         let (mut output, header) = if matches!(self, Self::Read { .. }) && !guests.is_empty() {
-            self.read_with_guests(&mut session, &guests, &mut remote)?
+            let (mut output, header) = self.read_with_guests(&mut session, &guests, &mut remote)?;
+            resolve_answers(&mut output, &session, None)?;
+            (output, header)
         } else {
             self.exchange(&mut session, None)
                 .map_err(|error| session.launcher_report_error(error))?
@@ -445,7 +447,9 @@ impl Command {
                 let wait = Duration::from_secs(wait).min(Limits::default().read_wait);
                 let output =
                     || Output::messages(json, agent, offset.unwrap_or(0)).read_context(board, None);
-                return session.read_command(&channels, wait, limit, output);
+                let (mut output, header) = session.read_command(&channels, wait, limit, output)?;
+                resolve_answers(&mut output, session, board)?;
+                return Ok((output, header));
             }
             Self::Get {
                 channel,
@@ -493,10 +497,35 @@ impl Command {
             }
         };
         let frame = frame.map_err(|_| Error::refused("request does not fit"))?;
-        session.request(output, wait, false, |client| {
+        let (mut output, header) = session.request(output, wait, false, |client| {
             client.send_frame(frame, CALL_WAIT)
-        })
+        })?;
+        resolve_answers(&mut output, session, board)?;
+        Ok((output, header))
     }
+}
+
+fn resolve_answers(
+    output: &mut Output,
+    session: &Session,
+    board: Option<&str>,
+) -> Result<(), Error> {
+    if let Output::Agent { messages, .. } = output {
+        let config = board
+            .map(super::board_names::resolve)
+            .transpose()?
+            .or_else(|| session.config());
+        for message in messages {
+            message.mark_owner_answer();
+            let source = message
+                .answer_board()
+                .map(super::board_names::resolve)
+                .transpose()?
+                .or_else(|| config.clone());
+            message.resolve_recorded(source);
+        }
+    }
+    Ok(())
 }
 
 fn ack_fields(out: &mut Encoder<Vec<u8>>, channel: &str, creation: &str, position: u64) {
@@ -601,6 +630,10 @@ pub(super) struct Session {
 }
 
 impl Session {
+    pub(in crate::cli) fn config(&self) -> Option<PathBuf> {
+        self.config.clone()
+    }
+
     fn new(config: Option<PathBuf>) -> Self {
         Self {
             check_board: config.is_some(),

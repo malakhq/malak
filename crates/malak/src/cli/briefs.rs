@@ -405,6 +405,7 @@ pub(super) fn view(config: Option<PathBuf>, since: &str) -> Result<ResultView, E
     };
     names.sort();
     names.dedup();
+    let calls = super::org::calls::load(&reader)?;
     let mut items = Vec::new();
     for name in names {
         let fetched = (|| {
@@ -458,12 +459,45 @@ pub(super) fn view(config: Option<PathBuf>, since: &str) -> Result<ResultView, E
                     "creation":message["creation"],"position":message["position"]});
             }
         }
-        // The calls lane supplies validated open calls here when available.
-        let mut board_items = view::items(briefs, rail, pulse, None, cutoff);
+        let mut board_items =
+            view::items(briefs, rail, pulse, Some(calls.open(Some(&name))), cutoff);
+        let digest = super::org::calls::settings::for_board(&reader, &name)?.digest;
+        board_items.retain(|item| {
+            let section = match item["section"].as_str() {
+                Some("finished") => "finished",
+                Some("stuck") => "blockers",
+                Some("open calls") => "calls",
+                Some("briefs") => "briefs",
+                _ => return true,
+            };
+            digest.iter().any(|enabled| enabled == section)
+        });
         for item in &mut board_items {
-            item["board"] = name.clone().into();
+            if item["board"].is_null() {
+                item["board"] = name.clone().into();
+            }
         }
         items.extend(board_items);
+    }
+    if reader.chief {
+        // Per-board digest settings select membership first. A merged call
+        // then appears once, at its shared effective level, with every asker.
+        let mut merged: std::collections::BTreeMap<_, _> = calls
+            .open(None)
+            .into_iter()
+            .map(|call| (call["link"].to_string(), call))
+            .collect();
+        items.retain_mut(|item| {
+            if item["type"] != "call" {
+                return true;
+            }
+            let Some(mut call) = merged.remove(&item["link"].to_string()) else {
+                return false;
+            };
+            call["section"] = item["section"].clone();
+            *item = call;
+            true
+        });
     }
     // Keep every board's overview and reachability ahead of artifact rows, so
     // a busy board cannot hide another board that needs attention.

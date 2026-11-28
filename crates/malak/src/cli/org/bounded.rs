@@ -5,6 +5,16 @@ use serde_json::{Value, json};
 const BUDGET: usize = 32 * 1024;
 
 fn fact_hint(item: &Value, tail: &str) -> String {
+    let item = item
+        .get("fetch")
+        .filter(|fetch| {
+            fetch["tool"] == "get"
+                && (0..3).all(|index| fetch[["board", "channel", "creation"][index]].is_string())
+                && fetch["position"]
+                    .as_u64()
+                    .is_some_and(|position| position > 0)
+        })
+        .unwrap_or(item);
     format!(
         "First omitted fact: board {}, channel {}, creation {}, position {}. Use get with board, channel, creation and position; CLI: malak --board BOARD get --agent --creation CREATION CHANNEL POSITION. {tail}",
         item["board"], item["channel"], item["creation"], item["position"]

@@ -4,7 +4,7 @@ use malak_fs::{Directory, check_user_permissions, trusted_parent};
 use nix::unistd::{User, geteuid};
 use std::fs::{self, DirBuilder};
 use std::io;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::SocketAddr;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -154,7 +154,28 @@ fn create_fixture(root: &Path, parent: &Path, path: &Path, uid: u32) -> io::Resu
             .file()
             .set_permissions(fs::Permissions::from_mode(0o711))?;
     }
-    DirBuilder::new().mode(0o700).create(path)
+    match DirBuilder::new().mode(0o700).create(path) {
+        // Darwin can report EINVAL when another fixture retires this parent
+        // during mkdir. Retry only after proving the opened parent is gone
+        // or replaced; genuine invalid paths still keep their original error.
+        Err(error)
+            if error.kind() == io::ErrorKind::InvalidInput
+                && retired_parent(&directory, parent) =>
+        {
+            Err(io::ErrorKind::NotFound.into())
+        }
+        result => result,
+    }
+}
+
+fn retired_parent(opened: &Directory, path: &Path) -> bool {
+    let Ok(original) = opened.file().metadata() else {
+        return false;
+    };
+    match fs::symlink_metadata(path) {
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
+        Ok(current) => original.dev() != current.dev() || original.ino() != current.ino(),
+    }
 }
 
 impl Drop for SocketDir {
@@ -209,6 +230,40 @@ mod tests {
         assert_eq!(fixture.path().parent(), Some(run.as_path()));
         drop(fixture);
         assert!(!run.exists());
+    }
+
+    #[test]
+    fn parallel_socket_fixtures_retry_when_their_shared_parent_is_retired() {
+        let root = SocketDir::new().unwrap();
+        let gate = std::sync::Barrier::new(2);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    gate.wait();
+                    for _ in 0..1500 {
+                        let fixture = SocketDir::with_run(
+                            Some(root.path()),
+                            Some("r"),
+                            &mut cleanup_command(),
+                        )
+                        .unwrap();
+                        drop(fixture);
+                    }
+                });
+            }
+        });
+    }
+
+    #[test]
+    fn an_invalid_fixture_leaf_is_not_retried_when_the_parent_is_unchanged() {
+        let root = SocketDir::new().unwrap();
+        let parent = root.path().join("parent");
+        let path = parent.join("invalid\0name");
+
+        let error = create_fixture(root.path(), &parent, &path, geteuid().as_raw()).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert!(parent.is_dir());
     }
 
     #[test]

@@ -49,6 +49,17 @@ def open_questions(config, handover, status):
     return agents, sum(question["kind"] == "owner" for question in asked)
 
 
+def pending_calls(config, handover):
+    result = malak("--config", config, "recipe", "__calls-watch", handover=handover)
+    calls = json.loads(result.stdout)
+    for call in calls:
+        link = call["link"]
+        call.update(channel=link[1], creation=link[2], position=link[3], sender="lead", kind="note")
+        if call["type"] == "call":
+            call["text"] = json.dumps(call, ensure_ascii=False)
+    return calls
+
+
 def label(message, channel):
     sender = message.get("sender_name") or message.get("sender") or "unknown"
     address = guest_label(message) if channel is None else f"{channel} #{message['position']}"
@@ -57,11 +68,14 @@ def label(message, channel):
     return f"{address} from {sender}, kind {message['kind']}{for_whom}"
 
 
-def signature(name, lead, agents, guests):
+def signature(name, lead, agents, guests, calls=()):
     pending = [("lead", m["creation"], m["position"]) for m in lead]
     pending += [("questions", m["creation"], m["position"]) for m in agents]
     pending += [(m["guest_board"], m["creation"], m["position"]) for m in guests]
-    return hashlib.sha256(json.dumps([name, pending]).encode()).hexdigest()
+    work = hashlib.sha256(json.dumps([name, pending, calls], sort_keys=True).encode()).hexdigest()
+    notes = [call for call in calls if call.get("type") == "note"]
+    shown = hashlib.sha256(json.dumps(notes, sort_keys=True).encode()).hexdigest()
+    return work + ":" + shown
 
 
 def body_text(message):
@@ -71,7 +85,7 @@ def body_text(message):
     return text
 
 
-def handover_text(name, command, lead, agents, guests, owner_open, reserved):
+def handover_text(name, command, lead, agents, guests, owner_open, reserved, calls=()):
     header = f"Malak board {json.dumps(name)}: {CONTINUE}"
     footer = ""
     if owner_open:
@@ -79,6 +93,7 @@ def handover_text(name, command, lead, agents, guests, owner_open, reserved):
         footer = f"\n{owner_open} owner {noun} waiting on the owner; do not wait for it."
     entries = [("lead", m) for m in lead] + [("questions", m) for m in agents]
     entries += [(None, m) for m in guests]
+    entries += [(m["channel"], m) for m in calls]
     room = BUDGET - reserved - len(header.encode()) - len(footer.encode())
     parts = []
     for index, (channel, message) in enumerate(entries):
@@ -98,6 +113,12 @@ def handover_text(name, command, lead, agents, guests, owner_open, reserved):
             data = data[:max(allowance - len(note.encode()), 0)]
             body = data.decode("utf-8", "ignore") + note
         part = f"\n--- {title}\n{body}"
+        notice = f"\n[{left} notifications omitted; run {command} read lead and {command} calls --all]"
+        reserve = len(notice.encode()) if left > 1 else 0
+        if len(part.encode()) > room - reserve:
+            if len(notice.encode()) <= room:
+                parts.append(notice)
+            break
         room -= len(part.encode())
         parts.append(part)
     return header + "".join(parts) + footer
@@ -108,9 +129,15 @@ def turn_end(name, config, handover, status, last, active, reserved):
     lead = pending_lead(config, handover, status)
     agents, owner_open = open_questions(config, handover, status)
     guests = available(pending_guests, config, handover) or []
-    if not lead and not agents and not guests:
+    calls = available(pending_calls, config, handover) or []
+    if not lead and not agents and not guests and not calls:
         return None, None
-    current = signature(name, lead, agents, guests)
+    current = signature(name, lead, agents, guests, calls)
+    # A new top note must arrive even after its question closed. Once shown,
+    # old notes alone never keep a lead alive or issue stale reminders.
+    notes_only = calls and not lead and not agents and not guests and all(call.get("type") == "note" for call in calls)
+    if notes_only and last and last.rsplit(":", 1)[-1] == current.rsplit(":", 1)[-1]:
+        return None, current
     # Without a remembered set, a Stop that already continued once must not continue again.
     if current == last or (active and last is None):
         parts = []
@@ -118,8 +145,10 @@ def turn_end(name, config, handover, status, last, active, reserved):
             parts.append(f"{len(lead)} lead message{'s' * (len(lead) != 1)} unacknowledged")
         if agents:
             parts.append(f"{len(agents)} agent question{'s' * (len(agents) != 1)} unanswered")
+        if calls:
+            parts.append(f"{len(calls)} call notifications waiting")
         if guests:
             parts.append(f"{len(guests)} guest repl{'y' if len(guests) == 1 else 'ies'} unacknowledged")
         return {"systemMessage": REMINDER.format(summary=", ".join(parts))}, current
     command = f"malak {board_selector(config, name)}"
-    return {"decision": "block", "reason": handover_text(name, command, lead, agents, guests, owner_open, reserved)}, current
+    return {"decision": "block", "reason": handover_text(name, command, lead, agents, guests, owner_open, reserved, calls)}, current

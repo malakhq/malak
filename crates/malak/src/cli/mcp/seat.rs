@@ -28,6 +28,7 @@ struct Returned {
     messages: HashSet<(String, String, u64)>,
     /// The text of each ended-session notice returned.
     notices: HashSet<String>,
+    calls: std::collections::BTreeMap<String, String>,
 }
 
 /// `text` with the handover's path replaced, so no output points at the file.
@@ -99,6 +100,9 @@ impl Seat {
             .then(|| crate::cli::org::lifecycle::on_command(self.config.clone()))
             .flatten();
         let result = match tool {
+            name if super::calls::NAMES.contains(&name) => {
+                super::calls::call(self, name, input, send_id)
+            }
             "briefs" | "brief" | "brief_view" | "brief_put" => {
                 super::briefs::call(self.config.clone(), tool, input, send_id)
             }
@@ -108,7 +112,7 @@ impl Seat {
             "report" => self.report(arguments(input)?, send_id),
             "ask" => recipes::ask(self, arguments(input)?, false),
             "ask_owner" => recipes::ask(self, arguments(input)?, true),
-            "answer" if self.lead => recipes::answer(self, arguments(input)?),
+            "answer" if self.lead => recipes::answer(self, arguments(input)?, send_id),
             "delegate" => self.delegate(arguments(input)?, send_id),
             "start_agent" => recipes::start_agent(self, arguments(input)?),
             "agents" => recipes::agents(self),
@@ -167,7 +171,6 @@ impl Seat {
         };
         let mut session = self.session.lock().unwrap_or_else(|held| held.into_inner());
         let (mut text, mut value, _) = command.execute_reply_keeping(&mut session, |message| {
-            message.mark_owner_answer();
             let (channel, creation, position) = message.address();
             if channel == QUESTIONS
                 && !message.answers_a_question()
@@ -231,17 +234,52 @@ impl Seat {
         }
     }
 
+    fn waiting_calls(&self, all: bool) -> Result<Option<Reply>, Error> {
+        if !self.lead {
+            return Ok(None);
+        }
+        let reader = crate::cli::org::seats::Reader::open(self.config.clone())?;
+        let mut returned = self
+            .returned
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let calls: Vec<_> = crate::cli::org::calls::watch(&reader)?
+            .into_iter()
+            .filter(|call| {
+                all || returned.calls.get(&call["link"].to_string())
+                    != Some(&crate::cli::org::calls::signature(call))
+            })
+            .collect();
+        if calls.is_empty() {
+            return Ok(None);
+        }
+        let value = crate::cli::org::calls::result(calls);
+        for call in value["items"].as_array().into_iter().flatten() {
+            returned.calls.insert(
+                call["link"].to_string(),
+                crate::cli::org::calls::signature(call),
+            );
+        }
+        Ok(Some(Reply {
+            text: format!("Calls waiting: {value}"),
+            value,
+        }))
+    }
+
     fn inbox(&self, args: InboxArgs) -> Result<Reply, Error> {
         // A lead that waits on its inbox counts as watching, as a `mailbox --next` tick does.
         let _tick = (self.lead && args.wait > 0).then(|| TickMark::start(&self.board));
         let deadline = Instant::now() + Duration::from_secs(args.wait);
         let mut wait = args.wait;
         let (mut text, mut value) = loop {
-            let (text, value, repeats) = self.read_new(&args, wait)?;
+            if let Some(reply) = self.waiting_calls(args.all)? {
+                return Ok(reply);
+            }
+            let (text, value, repeats) = self.read_new(&args, if self.lead { 0 } else { wait })?;
             let remaining = deadline.saturating_duration_since(Instant::now());
             let empty = value["messages"].as_array().is_none_or(Vec::is_empty);
             // Messages already returned end a read's wait at once; look again until the deadline.
-            if !empty || repeats == 0 || remaining.is_zero() {
+            if !empty || (repeats == 0 && !self.lead) || remaining.is_zero() {
                 break (text, value);
             }
             std::thread::sleep(POLL.min(remaining));

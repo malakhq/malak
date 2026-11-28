@@ -36,13 +36,16 @@ pub(in crate::cli) struct Seat {
 pub(in crate::cli) struct Roster {
     pub top: PathBuf,
     pub leads: BTreeMap<String, Lead>,
-    pub chief_of_staff: Option<Value>,
+    #[serde(alias = "chief_of_staff")]
+    pub top_lead: Option<Value>,
     pub candidate: Option<Value>,
     pub seats: BTreeMap<String, Vec<Seat>>,
     pub rail_age_days: u64,
     pub lead_silent_minutes: u64,
     pub work_stale_minutes: u64,
     pub ramp_minutes: u64,
+    #[serde(default)]
+    pub calls: super::calls::settings::Options,
 }
 
 pub(in crate::cli) struct Reader {
@@ -86,7 +89,7 @@ pub(in crate::cli) fn foreign(config: &Option<PathBuf>) -> Result<Option<ReadSea
     Ok(Some(seat))
 }
 
-fn load(config: &Path) -> Result<Option<Roster>, Error> {
+pub(in crate::cli) fn load(config: &Path) -> Result<Option<Roster>, Error> {
     let board = Config::read(Some(config.to_owned()))?.board;
     let file = match Directory::open(&board.state)
         .and_then(|root| root.child("org".as_ref()))
@@ -97,7 +100,15 @@ fn load(config: &Path) -> Result<Option<Roster>, Error> {
         Err(error) => return Err(io_error(error)),
     };
     check_user_permissions(&file, geteuid().as_raw(), true).map_err(io_error)?;
-    serde_json::from_reader(file)
+    let mut value: Value = serde_json::from_reader(file).map_err(|error| io_error(error.into()))?;
+    // During migration the new key wins, including an explicit null. An old
+    // role record must never resurrect a top lead the owner has cleared.
+    if let Some(fields) = value.as_object_mut()
+        && fields.contains_key("top_lead")
+    {
+        fields.remove("chief_of_staff");
+    }
+    serde_json::from_value(value)
         .map(Some)
         .map_err(|error| io_error(error.into()))
 }
@@ -153,7 +164,7 @@ impl Reader {
             .as_ref()
             .and_then(|r| {
                 if r.top == home {
-                    r.chief_of_staff
+                    r.top_lead
                         .as_ref()
                         .and_then(|chief| chief["name"].as_str())
                         .map(str::to_owned)
@@ -167,8 +178,8 @@ impl Reader {
             .unwrap_or_else(|| home_name.clone());
         let chief = roster
             .as_ref()
-            .is_some_and(|r| r.top == home && r.chief_of_staff.is_some());
-        let seat_key = format!("{}:{name}", if chief { "chief_of_staff" } else { "lead" });
+            .is_some_and(|r| r.top == home && r.top_lead.is_some());
+        let seat_key = format!("{}:{name}", if chief { "top" } else { "lead" });
         Ok(Self {
             seat_key,
             home,
@@ -182,7 +193,10 @@ impl Reader {
     pub fn boards(&self) -> Vec<String> {
         let mut names = vec![self.home_board.clone()];
         if let Some(roster) = &self.roster
-            && let Some(seats) = roster.seats.get(&self.seat_key)
+            && let Some(seats) = roster
+                .seats
+                .get(&self.seat_key)
+                .or_else(|| roster.seats.get(&format!("chief_of_staff:{}", self.name)))
         {
             names.extend(
                 seats
@@ -226,6 +240,7 @@ impl Reader {
         let seat = roster
             .seats
             .get(&self.seat_key)
+            .or_else(|| roster.seats.get(&format!("chief_of_staff:{}", self.name)))
             .into_iter()
             .flatten()
             .find(|seat| seat.board == name)

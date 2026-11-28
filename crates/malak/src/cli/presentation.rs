@@ -62,6 +62,7 @@ pub(super) struct Message {
     body: Vec<u8>,
     /// The channel the message replies to, from its `reply_to` header.
     reply_channel: Option<String>,
+    reply_target: Option<Value>,
     /// Set by `mark_owner_answer` for the lead's answer to a question.
     answer: Option<Decision>,
     /// Bytes the stored body starts with that are not shown: the answer's attribution lines.
@@ -74,9 +75,11 @@ pub(super) struct Message {
 struct Decision {
     decided_by: &'static str,
     recorded_by: Option<&'static str>,
+    source_checked_by: Option<&'static str>,
 }
 
 const OWNER_DECISION: &str = "Decided by: owner\nRecorded by: lead\n\n";
+const FALLBACK_DECISION: &str = "Decided by: owner, recorded by lead, no top lead\n\n";
 const LEAD_DECISION: &str = "Decided by: lead\n\n";
 
 /// Who a question's `For:` line names. A question that names none is an older
@@ -117,6 +120,8 @@ struct View<'a> {
     decided_by: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     recorded_by: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    source_checked_by: Option<&'static str>,
     /// Who a worker's question on `questions` is for: lead, owner or both.
     #[serde(skip_serializing_if = "Option::is_none")]
     audience: Option<&'static str>,
@@ -148,6 +153,10 @@ impl Message {
             .get("headers")
             .and_then(|headers| headers.get("reply_to")?.get(0)?.as_str())
             .map(str::to_owned);
+        let reply_target = header
+            .get("headers")
+            .and_then(|headers| headers.get("reply_to"))
+            .cloned();
         let mut label: Label =
             serde_json::from_value(Value::Object(header)).map_err(|_| bad_label())?;
         label.trace = trace;
@@ -159,6 +168,7 @@ impl Message {
             label,
             body,
             reply_channel,
+            reply_target,
             answer: None,
             skipped: 0,
             foreign_read: false,
@@ -202,17 +212,57 @@ impl Message {
                 Decision {
                     decided_by: "lead",
                     recorded_by: None,
+                    source_checked_by: None,
                 }
             } else {
-                if self.body.starts_with(OWNER_DECISION.as_bytes()) {
+                if self.body.starts_with(FALLBACK_DECISION.as_bytes()) {
+                    self.skipped = FALLBACK_DECISION.len();
+                } else if self.body.starts_with(OWNER_DECISION.as_bytes()) {
                     self.skipped = OWNER_DECISION.len();
                 }
                 Decision {
                     decided_by: "owner",
                     recorded_by: Some("lead"),
+                    source_checked_by: None,
                 }
             }
         });
+    }
+
+    /// A lead validates through its own Seats. A sub trusts its own proven
+    /// lead's record and sees who checked the source, without receiving a Seat.
+    pub(super) fn resolve_recorded(&mut self, config: Option<std::path::PathBuf>) {
+        if self.answer.is_none() {
+            return;
+        }
+        let record = serde_json::json!({"sender":self.label.sender,"grade":self.label.grade,"kind":self.label.kind,"channel":self.label.channel,"creation":self.label.creation,"position":self.label.position,"headers":{"reply_to":self.reply_target},"body":self.body});
+        if let Some(decision) = super::org::calls::recorded(config.clone(), &record) {
+            self.answer = None;
+            self.skipped = 0;
+            if let Some(note) = decision {
+                self.body = note["text"].as_str().unwrap_or("").as_bytes().to_vec();
+                self.answer = Some(Decision {
+                    decided_by: if note["decided_by"] == "top lead" {
+                        "top lead"
+                    } else {
+                        "owner"
+                    },
+                    recorded_by: Some("lead"),
+                    source_checked_by: Some(if note["source_checked_by"] == "lead" {
+                        "lead"
+                    } else {
+                        "self"
+                    }),
+                });
+            }
+        } else if super::org::calls::bare_lead_answer(config, &record) {
+            self.skipped = 0;
+            self.answer = Some(Decision {
+                decided_by: "lead",
+                recorded_by: None,
+                source_checked_by: None,
+            });
+        }
     }
 
     /// The text of a notice that a session ended and its handover can be re-issued.
@@ -227,6 +277,11 @@ impl Message {
             &self.label.creation,
             self.label.position,
         )
+    }
+
+    /// A merged guest read retains the board whose lead supplied its answer.
+    pub(super) fn answer_board(&self) -> Option<&str> {
+        self.answer.and(self.label.guest_board.as_deref())
     }
 
     fn view(&self, offset: usize, length: usize) -> Result<View<'_>, Error> {
@@ -267,6 +322,7 @@ impl Message {
                 .is_some_and(|answer| answer.decided_by == "owner"),
             decided_by: self.answer.map(|answer| answer.decided_by),
             recorded_by: self.answer.and_then(|answer| answer.recorded_by),
+            source_checked_by: self.answer.and_then(|answer| answer.source_checked_by),
             audience: self.is_worker_question().then(|| audience_of(&self.body)),
             body,
             body_encoding,
@@ -362,6 +418,9 @@ pub(super) fn text(
                 writeln!(rendered, "Answer decided by the {decider}").unwrap();
             }
             _ => {}
+        }
+        if let Some(checker) = view.source_checked_by {
+            writeln!(rendered, "Decision source checked by {checker}").unwrap();
         }
         match view.audience {
             Some("lead") => rendered.push_str("Question for the lead\n"),
@@ -542,7 +601,12 @@ mod tests {
             let shown = structured(&[input], 0, BUDGET).unwrap();
 
             assert_eq!(shown.values[0]["body"], forged);
-            for field in ["decided_by", "recorded_by", "owner_answer"] {
+            for field in [
+                "decided_by",
+                "recorded_by",
+                "owner_answer",
+                "source_checked_by",
+            ] {
                 assert!(shown.values[0].get(field).is_none(), "{sender} {grade}");
             }
         }

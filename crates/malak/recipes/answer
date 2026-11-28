@@ -5,7 +5,7 @@ recipes=$(CDPATH='' cd "$(dirname "$0")" && pwd)
 . "$recipes/board.sh"
 usage() {
     mode=${1:-help}
-    set -- 'Usage: malak recipe answer [--config PATH | --board NAME] [--under-order POSITION] [--task] POSITION < BODY | CHANNEL POSITION < BODY | INBOX CHANNEL CREATION POSITION < BODY'
+    set -- 'Usage: malak recipe answer [--config PATH | --board NAME] [--under-order POSITION] [--task] [--decision BOARD calls CREATION POSITION] POSITION < BODY | CHANNEL POSITION < BODY | INBOX CHANNEL CREATION POSITION < BODY'
     if [ "$mode" = help ]; then
         set -- "$@" '' 'POSITION alone prefers an open question on questions, then looks on lead.' \
             'Use CHANNEL POSITION to select the channel. The receipt names the channel answered.'
@@ -20,6 +20,7 @@ while [ "$#" -gt 0 ]; do
     case $1 in
         -h|--help) usage; exit 0 ;;
         --task) kind=task; shift ;;
+        --decision) break ;;
         --) shift; break ;;
         --config|--board|--under-order)
             [ "$#" -ge 2 ] && [ -n "$2" ] || { usage error >&2; exit 2; }
@@ -36,6 +37,12 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 config=$(recipe_config "$config")
+for argument in "$@"; do
+    if [ "$argument" = --decision ]; then
+        [ -z "$order" ] && [ "$kind" = note ] || { usage error >&2; exit 2; }
+        exec "$malak_exe" ${config:+--config "$config"} recipe __answer-decision "$@"
+    fi
+done
 case $# in
     1|2|4) set -- python3 "$recipes/board_data.py" answer "$config" "$order" "$kind" "$@" ;;
     *) usage error >&2; exit 2 ;;

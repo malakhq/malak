@@ -17,6 +17,8 @@ use std::time::{Duration, Instant};
 mod adopt;
 #[path = "recipes/briefs.rs"]
 mod briefs;
+#[path = "recipes/calls.rs"]
+mod calls;
 #[path = "recipes/org.rs"]
 mod org;
 #[path = "fixtures/retained.rs"]
@@ -3044,7 +3046,7 @@ fn answer_task_keeps_its_reply_address_and_trace() {
     assert_eq!(received[0]["headers"]["trace"], "abcd");
     assert_eq!(
         body(&received[0]),
-        b"Decided by: owner\nRecorded by: lead\n\nUse the first option.\n"
+        b"Decided by: owner, recorded by lead, no top lead\n\nUse the first option.\n"
     );
 }
 
@@ -3561,7 +3563,7 @@ fn answer_replies_to_a_question_on_the_questions_channel() {
     );
     assert_eq!(
         body(&received[0]),
-        b"Decided by: owner\nRecorded by: lead\n\nThe first.\n"
+        b"Decided by: owner, recorded by lead, no top lead\n\nThe first.\n"
     );
 }
 

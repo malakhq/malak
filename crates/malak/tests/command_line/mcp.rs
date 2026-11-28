@@ -159,7 +159,13 @@ fn the_lead_sees_the_lead_tools_including_answer() {
             "briefs",
             "brief",
             "brief_view",
-            "brief_put"
+            "brief_put",
+            "calls",
+            "raise_call",
+            "call_level",
+            "call_merge",
+            "decide_call",
+            "relay_owner_decision"
         ]
     );
 }

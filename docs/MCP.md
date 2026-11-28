@@ -110,10 +110,9 @@ same read seats, projection and size budget as the CLI. `brief` returns
 the original text after supersession or withdrawal, with its status and
 replacement link. Follow its `fetch.offset` to page a long body.
 `brief_view` includes a linked pulse bottom line, finished work, unresolved
-blockers and current briefs. A lead sees its own board; the chief of staff
+blockers, open calls (including default blue digest calls) and current briefs. A lead sees its own board; the top lead
 sees every roster board through its reader seats, with an explicit row for
-an unreadable board. Its open calls hook states when calls are unavailable
-in this build. A truncated result names the first omitted board.
+an unreadable board. Digest contents default to briefs, finished work, blockers and calls, configurable. A truncated result names the first omitted board.
 
 Only the board's lead may put a brief. Subs get no brief tools and cannot
 read the `briefs` channel; their lead puts needed text directly into their
@@ -138,7 +137,7 @@ The lead's Seat also has these worker and answer tools.
 | `delegate` | `agent`*, `task`*, `id` | Give a task to an agent already on the board. The agent sees an order from the lead. Reuse the same `id` to retry a task that may not have arrived. |
 | `start_agent` | `name`*, `brief`*, `tool`* | Start a new agent with a brief. `name` follows the new participant name rule below; `tool` is `claude` or `codex`. It runs `malak recipe worker-start`. |
 | `agents` | none | List the agents with their claim status and unread counts. It runs `malak recipe workers`. |
-| `answer` | `position`*, `answer`* | Record the answer to the question at `position` on `questions`. It runs `malak recipe answer`. The answer says who decided it (see "The owner's answer"). |
+| `answer` | `position`*, `answer` or `decision` | Answer what the lead knows, or record the top decision named by `decision` (four-part link). The linked note supplies the authoritative words and attribution. Writes the question record, the asker's inbox and decided/unblocked rail events. |
 
 A worker does not see the lead's tools, and a call to one is refused.
 
@@ -178,32 +177,28 @@ at once. The answer comes back through `inbox`, as a note:
   reads along with its own inbox. Only replies to a question show there, not the
   questions themselves.
 
-A reply is an answer only when the board proved the sender is the lead, which
-is how `answer` and `malak recipe answer` send it. An answer says who decided
-it: `decided_by` is `lead` for a question for the lead, and `owner` for a
-question for the owner or both, with `recorded_by` `lead`. The text shows
-`Answer decided by the owner, recorded by the lead` or `Answer decided by the
-lead`, and `owner_answer` is true when the owner decided. An answer posted
-under an order is the lead's decision. A reply from any other participant, a
-worker for example, still shows, as a note from that participant under its own
-name, and is never an answer.
+A proven answer from the asking board's lead records who decided it. Each level
+answers what it knows. A lead proposes a call when it cannot answer; the top lead
+sets its real level and decides what needs the owner. Topics are hints, with no
+fixed list of owner-only topics. The owner speaks to the top lead.
 
-The lead answers with `answer` (MCP) or `malak recipe answer questions
-POSITION` (CLI), which post the reply as the lead. For a question for the
-owner or both, the lead first asks the owner, then records the owner's reply.
-Two things to know today:
+The top lead uses `decide_call` for its own decision and
+`relay_owner_decision` for the owner's actual words. Both write `Type: decision`
+on the top board's `calls`. The asking lead records the returned link with
+`answer` and `decision: ["top", "calls", "CREATION", POSITION]`. Readers validate
+the sender, top board, source creation and exact question link, or a proven
+merge; the linked note's text is displayed, never the lead's copy. Earlier
+decisions remain visible and the latest proven top decision wins. An invalid or
+relinked record stays text and leaves the call open. A sub has no top-board
+reader seat; it trusts its own proven lead's record and sees the attribution,
+source link and `source_checked_by: "lead"`. A reader that verifies through
+its own Seat sees `source_checked_by: "self"`.
 
-- The `malak mailbox` screen does not answer questions. It is read-only. Its
-  Questions tab and the pinned questions above it show each open question with
-  its reply address, and `c` copies that address. The owner then runs
-  `malak recipe answer` in a shell.
-- The board refuses the lead's handover from any process outside the lead
-  agent's own session, so a separate terminal cannot send the answer to a live
-  MCP lead: `recipe answer` there fails with "the board closed the attachment".
-  The command works when it runs inside the lead's session: the lead runs it
-  for the owner, or the owner runs it from a shell escape in an interactive
-  lead (not tested here). So the owner answers through the lead: the lead
-  relays the question and records the reply with `answer`.
+Without a top lead, the lead records the owner's words directly with
+`Decided by: owner, recorded by lead, no top lead`. An ordinary answer from
+the lead inside an organisation says `Decided by: lead`. The mailbox is read-only.
+A bound lead handover works only inside its lead session; a separate owner
+terminal cannot impersonate that session to send an answer.
 
 Acknowledge an answer as any note, with `ack` or `inbox` with `ack: true`.
 
@@ -335,3 +330,35 @@ age such as `7d` or epoch milliseconds. No events are pushed; clients poll.
 The optional wait `link` is `[board, channel, creation, position]`; it identifies
 the work that can close the dependency. Without it, only explicit `wait --done`
 closes the wait. An unreadable linked peer leaves it open with a pulse reason.
+
+## Calls tools
+
+All links are `[board, channel, creation, position]`, never handover paths. Subs
+have none of these tools; they use `ask`, which accepts no level or topic.
+
+| Tool | Arguments | Role and behavior |
+|---|---|---|
+| `calls` | `level`, `all` | Top lead across the roster, or lead for its own board. Lists proposal, effective level, every original, all askers, and linked decisions. |
+| `raise_call` | `position`, `level`, `topic` | Asking board's lead proposes a level and writes blocked on rail. |
+| `call_level` | `question`, `level`, `topic` | Top lead sets the real level up or down, even without a lead proposal. |
+| `call_merge` | `questions` (array of links) | Board lead for its own calls; top lead across boards. |
+| `decide_call` | `question`, `body` | Top lead writes a decision attributed to top lead. |
+| `relay_owner_decision` | `question`, `body` | Top lead relays the owner's words with explicit attribution. |
+
+Example: `raise_call` with `{"position":1,"level":"red","topic":"release"}`;
+then `call_level` with `{"question":["build","questions","CREATION",1],"level":"orange"}`.
+The topic never grants authority. Record a returned decision with
+`answer` and `{"position":1,"decision":["top","calls","CREATION",2]}`.
+
+The defaults are red within one watcher tick, orange listed, blue digest only;
+all are configurable using `calls.levels` and `calls.digest` (see
+[the recipe guide](RECIPES.md#calls-settings)). Agent watchers continue once for
+an open proposal or effective level configured with `delivery: tick`. Top notes
+naming a lead's board reach that lead through its own top seat. The open-source
+build has no push Door; the effective delivery hook is available for one.
+
+Recorded decision views include `source_checked_by`: `"self"` when the reader
+validated the top link through its own Seat, or `"lead"` when a sub trusts the
+record from its own proven lead. Subs receive no reader Seat. `decided_by` and
+`recorded_by` remain separate fields, and attribution headers are stripped from
+the shown answer body. A record from any other or unproven sender stays text.

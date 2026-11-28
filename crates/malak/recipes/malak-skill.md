@@ -70,20 +70,26 @@ working until re-enrolled; `worker-start --again` creates a new enrolment.
   hooks installed, or post it with `malak --board NAME recipe ask` before
   writing it in chat. Include options and a recommendation. If this chat
   leads several boards, choose the board explicitly with `recipe ask --board NAME`.
-- Every question names who it is for with `recipe ask --to`: `lead` (the lead
-  decides; a worker's default, for choices inside its task), `owner` (the owner
-  decides; the lead takes it to the owner and records the reply) or `both` (the
-  owner decides; the lead may add a recommendation). A worker asks the owner only
-  for what its brief does not leave to it. As lead, answer `lead` questions
-  yourself with `recipe answer questions POSITION`; for `owner` and `both`, ask
-  the owner, then record their reply the same way. The answer says who decided
-  it. For now the lead is trusted as the owner's Door for every question;
-  stronger proof for high-risk decisions comes later.
-- Put a question from the watcher to the owner in chat right away if you posted
-  it for them or only they can answer a worker's question. Include the options
-  and recommendation. If the owner answers in chat and the hook has yet to
-  record it, quote their reply and pipe it to
-  `malak --board NAME recipe answer questions POSITION`.
+- A sub only asks with `recipe ask --to lead|owner|both`; its default is lead.
+  It supplies no level or topic. Every level answers what it knows. As lead,
+  answer with `recipe answer questions POSITION`, or propose a call with
+  `recipe calls raise POSITION --level red [--topic HINT]`. Read `malak calls`.
+  The top lead sets the effective level with `recipe calls level BOARD POSITION
+  --level LEVEL`, merges equivalent calls with `recipe calls merge LINK LINK`,
+  decides with `recipe calls decide BOARD POSITION` (text on stdin), and relays
+  the owner's actual words with `recipe calls relay BOARD POSITION`. Topics
+  are hints; the top lead judges what needs the owner. The owner speaks to it.
+  As asking lead, record its source with `recipe answer POSITION --decision
+  TOP_BOARD calls CREATION POSITION`; never copy a decision onto an unrelated
+  question. Readers use the proven source text, show earlier decisions and
+  every original level. Without a top lead, record the owner's words directly.
+  Default red delivery is within one watcher tick, orange is listed and blue
+  is digest-only; these and digest contents are configurable through
+  `calls.levels` and `calls.digest` in board configuration or the org roster.
+  A sub trusts its own proven lead's record, shown as `source_checked_by: "lead"`.
+  A reader that checks the top source through its own Seat sees `"self"`.
+  Keep watching: calls and top decisions naming your board reach the watcher
+  and turn_end. No open-source push Door exists.
 - Read and handle messages in order. Run `malak --board NAME read lead` and
   acknowledge through the last handled lead message with
   `malak --board NAME ack --creation CREATION lead POSITION`. Workers read

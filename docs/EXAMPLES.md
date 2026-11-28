@@ -562,3 +562,74 @@ malak enrol alice --grant lead:send --out alice.key
 MALAK_WORKER_HANDOVER="$PWD/alice.key" MALAK_REPORT_ID=wrapper-example MALAK_WRAPPER_STATE="$PWD" malak recipe wrapper -- printf '%s\n' 'Build finished.'
 malak read lead
 ```
+
+## `malak calls`
+
+The default levels and delivery are configurable: red is shown within one watcher
+tick, orange is listed, and blue appears in the digest or with `--all`.
+
+```sh
+# Raise a question, then read proposed and effective levels.
+malak send questions 'May we proceed? For: owner'
+malak recipe calls raise 1 --level red
+malak calls --all
+```
+
+## `malak recipe calls raise`
+
+Only the asking board's lead may propose a level. Default levels are blue,
+orange and red, configurable in severity order.
+
+```sh
+# Raise an owner question at the default red level.
+malak send questions 'May we proceed? For: owner'
+malak recipe calls raise 1 --level red --topic release
+malak calls
+```
+
+## `malak recipe calls level`
+
+On an organisation with an active top lead on `top`, and an open question #1
+on `malak`, the top lead can raise or lower its effective level. The proposal
+and every original stay visible. Run this as that top lead's session.
+
+```sh
+# Lower a call while keeping its lead's proposal visible.
+malak --board top recipe calls level malak 1 --level orange
+malak --board top calls
+```
+
+## `malak recipe calls merge`
+
+With two raised questions #1 and #2 on the current board, merge them by their
+immutable four-part source links. Each original still needs its lead's record.
+
+```sh
+# Merge two questions that ask the same thing.
+creation=$(malak get --json questions 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["creation"])')
+malak recipe calls merge "[\"malak\",\"questions\",\"$creation\",1]" "[\"malak\",\"questions\",\"$creation\",2]"
+malak calls --all
+```
+
+## `malak recipe calls decide`
+
+On an organisation with an active top lead on `top`, and an open call for
+question #1 on `malak`, decide it as that top lead. Its lead records the returned
+link with `recipe answer POSITION --decision BOARD calls CREATION POSITION`.
+
+```sh
+# Decide what the top lead knows; the topic is only a hint.
+printf '%s\n' 'Proceed with the documented approach.' | malak --board top recipe calls decide malak 1
+malak --board top calls
+```
+
+## `malak recipe calls relay`
+
+With the same organisation and call as above, relay the owner's actual words
+as the top lead. The record always identifies the relay.
+
+```sh
+# Relay an owner answer with its source attribution.
+printf '%s\n' 'Use the first option.' | malak --board top recipe calls relay malak 1
+malak --board top calls
+```
