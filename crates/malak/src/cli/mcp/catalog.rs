@@ -22,7 +22,10 @@ const ALIASES: [&str; 1] = ["ask_owner"];
 pub(super) fn offered(name: &str, lead: bool) -> bool {
     PARTICIPANT.contains(&name)
         || ALIASES.contains(&name)
-        || (lead && (LEAD.contains(&name) || super::briefs::NAMES.contains(&name)))
+        || (lead
+            && (LEAD.contains(&name)
+                || super::briefs::NAMES.contains(&name)
+                || super::calls::NAMES.contains(&name)))
 }
 
 pub(super) fn tools(lead: bool) -> Vec<Tool> {
@@ -105,15 +108,13 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
         ),
         (
             "answer",
-            "Record the answer to a question on the questions channel, as the lead. For a question for the \
-             lead, you decide: say what you decide. For a question for the owner or both, record only what \
-             the owner has said to you: ask the owner first (the question tool of your chat), then post \
-             their reply here. The answer is posted to the asker's inbox and says who decided it.",
+            "Answer what you know as the asking lead, or record a linked top-lead decision with decision. The linked note supplies the authoritative text and attribution; an unrelated, forged or non-top decision is refused. Without a top lead, record the owner's words directly. Writes questions, the asker's inbox and decided/unblocked rail events.",
             json!({
                 "position": { "type": "integer", "minimum": 1, "description": "The question's position on questions." },
                 "answer": { "type": "string" },
+                "decision": { "type": "array", "minItems":4, "maxItems":4, "description":"[top board, calls, creation, position] of a proven decision for this question or a proven merge." },
             }),
-            &["position", "answer"],
+            &["position"],
         ),
         (
             "delegate",
@@ -192,6 +193,7 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
         .collect();
     if lead {
         tools.extend(super::briefs::tools());
+        tools.extend(super::calls::tools());
     }
     tools
 }

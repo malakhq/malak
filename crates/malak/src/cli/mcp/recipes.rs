@@ -47,7 +47,8 @@ impl Audience {
 #[serde(deny_unknown_fields)]
 pub(super) struct AnswerArgs {
     position: u64,
-    answer: String,
+    answer: Option<String>,
+    decision: Option<crate::cli::org::calls::Link>,
 }
 
 #[derive(Deserialize)]
@@ -135,16 +136,31 @@ pub(super) fn ask(seat: &Seat, args: AskArgs, alias: bool) -> Result<Reply, Erro
 }
 
 /// Record the lead's answer to a question on `questions`.
-pub(super) fn answer(seat: &Seat, args: AnswerArgs) -> Result<Reply, Error> {
+pub(super) fn answer(seat: &Seat, args: AnswerArgs, send_id: &str) -> Result<Reply, Error> {
     if !seat.is_lead() {
         return Err(Error::refused("only the lead records answers"));
     }
+    if let Some(decision) = args.decision {
+        let value = crate::cli::org::calls::record(
+            seat.config.clone(),
+            args.position,
+            &decision,
+            Some(send_id.to_owned()),
+        )?;
+        return Ok(Reply {
+            text: value.to_string(),
+            value,
+        });
+    }
+    let answer = args
+        .answer
+        .ok_or_else(|| Error::refused("give answer or a decision link"))?;
     let recipe = [
         "answer".to_owned(),
         "questions".to_owned(),
         args.position.to_string(),
     ];
-    let receipt = run(seat, &recipe, args.answer.as_bytes())?;
+    let receipt = run(seat, &recipe, answer.as_bytes())?;
     Ok(Reply {
         value: json!({ "answered": args.position, "receipt": receipt }),
         text: receipt,

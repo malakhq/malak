@@ -200,6 +200,11 @@ const RECIPES: &[(&str, &str, Script)] = &[
         "Run a command and post its result as a worker.",
         script!("wrapper.sh"),
     ),
+    (
+        "calls",
+        "Raise, level, merge and decide calls.",
+        script!("calls"),
+    ),
 ];
 
 const SUPPORT: &[Script] = &[
@@ -260,6 +265,16 @@ pub(super) fn run(args: Args, config: Option<PathBuf>) -> Result<ExitCode, Error
         return Ok(ExitCode::SUCCESS);
     };
     match name.to_str() {
+        Some("calls") => return super::org::calls::recipe(arguments, config),
+        Some("__answer-decision") => return super::org::calls::record_recipe(arguments, config),
+        Some("__calls-watch") if arguments.is_empty() => {
+            let reader = super::org::seats::Reader::open(config)?;
+            output::line(format_args!(
+                "{}",
+                serde_json::Value::Array(super::org::calls::watch(&reader)?)
+            ))?;
+            return Ok(ExitCode::SUCCESS);
+        }
         Some("brief") => return super::briefs::put_recipe(arguments, config),
         Some(REGISTER_GUEST) => {
             let [board, handover] = arguments else {

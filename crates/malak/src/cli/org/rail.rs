@@ -49,7 +49,7 @@ fn project_with_peers(
         if !EVENTS.contains(&event.as_str()) || !dependencies::valid(&link) { return item; }
         let wait_key = (link[2].as_str().unwrap().to_owned(), link[3].as_u64().unwrap());
         if event == "wait done" && (link[0] != board || link[1] != "rail" || !waits.get(&wait_key).is_some_and(|wait| wait["subject"] == subject.as_str())) { return item; }
-        if event == "decided" && !resolve(&link).is_some_and(|answer| answer["sender"] == "lead" && answer["grade"] == "proven" && answer["kind"] == "note" && answer["headers"]["reply_to"].as_array().is_some_and(|r| r.first().is_some_and(|c| c == "questions"))) { return item; }
+        if matches!(event.as_str(), "decided" | "unblocked") && !resolve(&link).is_some_and(|answer| answer["sender"] == "lead" && answer["grade"] == "proven" && answer["kind"] == "note" && answer["headers"]["reply_to"].as_array().is_some_and(|r| r.first().is_some_and(|c| c == "questions"))) { return item; }
         if matches!(event.as_str(), "started" | "finished") {
             let Some(fact) = resolve(&link) else { return item; };
             let Some(enrolment) = lifecycle_enrolment(board, event, &link, &fact) else { return item; };

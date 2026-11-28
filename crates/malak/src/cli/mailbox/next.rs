@@ -54,7 +54,6 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
     let tail = owner_commands::Tail::start(&mut watcher, None)?;
     let initial = status(&mut reader, false)?;
     let mut reader = Some(reader);
-    let mut _registration = plain::register_lead_watcher(&settings);
     let _tick = plain::TickMark::start(&settings);
     let (tx, rx) = mpsc::sync_channel(128);
     let tail_settings = Arc::clone(&settings);
@@ -73,9 +72,16 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
         .map_err(io_error)?;
 
     let mut output = io::stdout().lock();
-    let Some(mut view) = View::load(&config, &initial, started, &shown, &mut output)? else {
+    let mut view = View::open(&config, &initial, started);
+    // Attach the original preview Seat before advertising readiness.
+    // The auxiliary calls read must not widen the gap before that attachment.
+    let mut _registration = plain::register_lead_watcher(&settings);
+    if print_calls(&config, &shown, &mut output) {
         return Ok(());
-    };
+    }
+    if view.catch_up(&initial, &shown, &mut output)? {
+        return Ok(());
+    }
     if print_guest(&config, &shown, &mut output)? {
         return Ok(());
     }
@@ -94,13 +100,12 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
             }
             if let Some(snapshot) = live_status(&mut reader, false, &settings)? {
                 if resuming {
-                    _registration = plain::register_lead_watcher(&settings);
-                    let Some(reconnected) =
-                        View::load(&config, &snapshot, started, &shown, &mut output)?
-                    else {
+                    let mut reconnected = View::open(&config, &snapshot, started);
+                    if reconnected.catch_up(&snapshot, &shown, &mut output)? {
                         return Ok(());
-                    };
+                    }
                     view = reconnected;
+                    _registration = plain::register_lead_watcher(&settings);
                     resuming = false;
                 } else if snapshot.run == view.model.run {
                     view.model.update(snapshot.clone());
@@ -111,6 +116,9 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
                         Err(error) => return Err(error),
                     }
                 }
+            }
+            if print_calls(&config, &shown, &mut output) {
+                return Ok(());
             }
             if print_guest(&config, &shown, &mut output)? {
                 return Ok(());
@@ -124,6 +132,11 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
         });
         match rx.recv_timeout(wait) {
             Ok(Update::Event(event)) => {
+                if event.channel.as_deref() == Some("calls")
+                    && print_calls(&config, &shown, &mut output)
+                {
+                    return Ok(());
+                }
                 if view.model.viewer.as_deref() == Some("lead") {
                     let _ = crate::cli::org::lifecycle::on_command(config.clone());
                 }
@@ -167,6 +180,38 @@ pub(in crate::cli) fn run(config: Option<PathBuf>, timeout: Option<u32>) -> Resu
     }
 }
 
+fn print_calls(config: &Option<PathBuf>, store: &Store, output: &mut impl Write) -> bool {
+    // This auxiliary snapshot never owns the watcher's lifetime. Keep the
+    // last shown calls on any failure; the original tail alone reconnects
+    // or reports why watching ended. Silence also preserves its diagnostic.
+    let mut snapshot = || -> Result<bool, Error> {
+        let reader = crate::cli::org::seats::Reader::open(config.clone())?;
+        let calls = crate::cli::org::calls::watch(&reader)?;
+        store.update(|shown, _| {
+            let pending: Vec<_> = calls
+                .into_iter()
+                .filter(|call| {
+                    shown.calls.get(&call["link"].to_string())
+                        != Some(&crate::cli::org::calls::signature(call))
+                })
+                .collect();
+            if pending.is_empty() {
+                return Ok(false);
+            }
+            let result = crate::cli::org::calls::result(pending);
+            plain::write_plain(output, &format!("Calls waiting: {result}\n"))?;
+            for call in result["items"].as_array().into_iter().flatten() {
+                shown.calls.insert(
+                    call["link"].to_string(),
+                    crate::cli::org::calls::signature(call),
+                );
+            }
+            Ok(true)
+        })
+    };
+    snapshot().unwrap_or(false)
+}
+
 fn print_guest(
     config: &Option<PathBuf>,
     store: &Store,
@@ -207,13 +252,7 @@ struct View {
 }
 
 impl View {
-    fn load(
-        config: &Option<PathBuf>,
-        snapshot: &Status,
-        started: u64,
-        shown: &Store,
-        output: &mut impl Write,
-    ) -> Result<Option<Self>, Error> {
+    fn open(config: &Option<PathBuf>, snapshot: &Status, started: u64) -> Self {
         let mut model = Model::new(snapshot.clone(), Some("lead".into()));
         model.enable_lead_watch();
         let stuck = stuck::Watch::starting_after(snapshot, Some(started));
@@ -222,23 +261,31 @@ impl View {
         if let Some((_, id)) = &preview {
             model.viewer = Some(id.to_string());
         }
-        let mut view = Self {
+        Self {
             model,
             stuck,
             previews: preview.map(|(session, id)| LivePreviews::new(door, session, id)),
-        };
-        if view.print_waiting(shown, snapshot, output)? {
-            return Ok(None);
         }
-        if let Some(previews) = &mut view.previews
+    }
+
+    fn catch_up(
+        &mut self,
+        snapshot: &Status,
+        shown: &Store,
+        output: &mut impl Write,
+    ) -> Result<bool, Error> {
+        if self.print_waiting(shown, snapshot, output)? {
+            return Ok(true);
+        }
+        if let Some(previews) = &mut self.previews
             && let Some(viewer) = snapshot
                 .participants
                 .iter()
                 .find(|person| person.id == previews.id.as_str())
         {
-            seed_work(snapshot, viewer, previews, &mut view.stuck)?;
+            seed_work(snapshot, viewer, previews, &mut self.stuck)?;
         }
-        Ok(Some(view))
+        Ok(false)
     }
 
     fn is_lead_event(&self, event: &Event) -> bool {

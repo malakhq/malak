@@ -159,6 +159,15 @@ def work_identity(config, link, handover):
     sender = fact["sender"]
     reply = fact.get("headers", {}).get("reply_to")
     if sender == "lead" and fact["kind"] == "note" and reply and reply[0] == "questions":
+        # Use the shared reader's decision proof, never a copied attribution.
+        # This also covers peer answers loaded while checking a linked wait.
+        try:
+            shown = json.loads(board.malak("--config", target, "get", "--agent", "--json",
+                "--creation", link[2], link[1], str(link[3]), handover=handover).stdout)
+        except (board.RecipeError, OSError, ValueError):
+            return None
+        if not any(message.get("decided_by") for message in shown.get("messages", [])):
+            return None
         return ("fact", link[0], *reply)
     if link[1] == "questions":
         return ("fact", *link)

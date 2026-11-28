@@ -336,7 +336,9 @@ def recall_hand_over(path, key):
     try:
         fd = os.open(key, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         with os.fdopen(fd) as source:
-            return source.read(64) or None
+            # Work and top-note SHA-256 fingerprints, separated by a colon.
+            # A previous single fingerprint remains readable as well.
+            return source.read(2 * 64 + 1) or None
     except OSError:
         return None
     finally:

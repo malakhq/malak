@@ -59,6 +59,18 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read open calls, showing proposed and effective levels.
+    #[command(after_help = examples::help(&["calls"]))]
+    Calls {
+        /// Filter effective level names (default blue, orange, red; configurable).
+        #[arg(long)]
+        level: Option<String>,
+        /// Include digest-only calls (default blue; configurable).
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// List current briefs, grouped by lead, through existing read seats.
     #[command(after_help = examples::help(&["briefs"]))]
     Briefs {
@@ -488,6 +500,13 @@ impl Args {
             board_version::set_config_path(path.clone());
         }
         let result = match self.command {
+            Command::Calls { level, all, json } => {
+                let reader = org::seats::Reader::open(self.config)?;
+                org::calls::print(
+                    &org::calls::result(org::calls::list(&reader, level.as_deref(), all)?),
+                    json,
+                )
+            }
             Command::Briefs { kind, json } => briefs::show(
                 briefs::list(self.config, self.board.as_deref(), kind.as_deref())?,
                 json,
@@ -913,6 +932,10 @@ impl Args {
         let check_participant =
             "Use malak board status with the participant ID to check its current enrolment.";
         match &self.command {
+            Command::Calls { .. } => (
+                "read calls".into(),
+                "Use your board lead handover or the top lead seat.",
+            ),
             Command::Rail { .. } => (
                 "read the organisation rail".into(),
                 "Use a lead handover and an org read seat for the requested board.",

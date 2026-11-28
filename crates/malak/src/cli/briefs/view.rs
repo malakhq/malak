@@ -27,7 +27,9 @@ fn link(value: &Value) -> String {
 pub(super) fn text(value: &Value) -> String {
     let mut text = String::new();
     for item in value["items"].as_array().into_iter().flatten() {
-        if let Some(title) = item["title"].as_str() {
+        if item["type"] == "call" {
+            text.push_str(&super::super::org::calls::render(item));
+        } else if let Some(title) = item["title"].as_str() {
             let _ = writeln!(
                 text,
                 "{} · {} · {title}",

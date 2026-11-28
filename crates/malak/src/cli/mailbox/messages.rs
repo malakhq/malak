@@ -190,10 +190,57 @@ fn read_message_once(
     text: RecordBody,
 ) -> Result<Option<Preview>, Error> {
     let full = text == RecordBody::Full;
-    let Some((record, bytes)) = read_record_once(session, address, text, |_| true)? else {
+    let Some((mut record, mut bytes)) = read_record_once(session, address, text, |_| true)? else {
         return Ok(None);
     };
+    let answer =
+        record.label["sender"] == "lead" && record.label["headers"]["reply_to"][0] == "questions";
+    if answer
+        && record.preview.is_none()
+        && let Some((with_preview, _)) =
+            read_record_once(session, address, RecordBody::Preview, |_| true)?
+    {
+        record = with_preview;
+    }
+    let candidate = record.preview.as_deref().is_some_and(|body| {
+        body.starts_with("Decided by: ")
+            || body.starts_with("Type: decision")
+            || body.starts_with("Type: call-")
+            || body.starts_with("Type: cos-decision")
+            || body.starts_with("Type: owner-decision")
+            || body.contains("Decision: ")
+    });
+    if answer
+        && candidate
+        && bytes.is_empty()
+        && let Some((_, body)) = read_record_once(session, address, RecordBody::Raw, |_| true)?
+    {
+        bytes = body;
+    }
+    let decision = (answer && candidate)
+        .then(|| {
+            crate::cli::org::calls::recorded(
+                session.config(),
+                &crate::cli::participant::json_message(record.label.clone(), &bytes),
+            )
+        })
+        .flatten();
+    let proven = record.label["grade"] == "proven";
     let mut preview = preview_record(record, address)?;
+    if answer && !proven {
+        preview.reply_to = None;
+    }
+    if let Some(decision) = decision {
+        match decision {
+            Some(note) => {
+                bytes = note["text"].as_str().unwrap_or("").as_bytes().to_vec();
+                preview.text = Some(String::from_utf8_lossy(&bytes).into_owned());
+            }
+            None => {
+                preview.reply_to = None;
+            }
+        }
+    }
     if full {
         preview.body = Some(message_body(bytes));
     }

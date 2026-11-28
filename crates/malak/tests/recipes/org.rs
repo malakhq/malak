@@ -9,7 +9,7 @@ fn org(top: &Fixture, words: &[&str]) -> Command {
     command
 }
 
-fn organisation() -> (Fixture, Fixture, Fixture) {
+pub(super) fn organisation() -> (Fixture, Fixture, Fixture) {
     let a = Fixture::new();
     a.start();
     let b = a.sibling("second", "s2");

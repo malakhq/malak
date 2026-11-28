@@ -5,6 +5,7 @@
 //! into the board's verbs or an existing recipe. The router does not change.
 
 mod briefs;
+mod calls;
 mod catalog;
 mod org;
 mod recipes;
@@ -182,7 +183,17 @@ impl Server {
         })?;
         let send_id = participant::random_id().map_err(|error| error.to_string())?;
         retry_once(
-            matches!(name, "report" | "delegate" | "brief_put"),
+            matches!(
+                name,
+                "report"
+                    | "delegate"
+                    | "brief_put"
+                    | "raise_call"
+                    | "call_level"
+                    | "call_merge"
+                    | "decide_call"
+                    | "relay_owner_decision"
+            ),
             &send_id,
             seat,
             |seat, send_id| seat.call(name, arguments.clone(), send_id),
@@ -267,7 +278,7 @@ impl ServerHandler for Server {
                 return Some(Err("Briefs require a lead or chief of staff Seat; subs receive needed brief text in their task.".to_owned()));
             }
             if !catalog::offered(&name, server.is_lead()) {
-                if catalog::offered(&name, true) && matches!(name.as_str(),"rail"|"pulse"|"briefs"|"brief"|"brief_view"|"calls"|"rail_wait"|"rail_handover") {
+                if catalog::offered(&name, true) && (matches!(name.as_str(),"rail"|"pulse"|"briefs"|"brief"|"brief_view"|"rail_wait"|"rail_handover") || calls::NAMES.contains(&name.as_str())) {
                     return Some(Err("organisation tools require a lead or chief of staff Seat; subs cannot use them".to_owned()));
                 }
                 return None;
@@ -281,7 +292,7 @@ impl ServerHandler for Server {
         };
         Ok(match outcome {
             Ok(mut reply) => {
-                if bounded_view {
+                if bounded_view || reply.value.get("items").is_some() {
                     reply.value = crate::cli::org::bounded::for_request(
                         reply.value,
                         &serde_json::json!(context.id),

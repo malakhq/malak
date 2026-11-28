@@ -80,6 +80,8 @@ pub(super) struct Shown {
     reminder: Option<Reminder>,
     #[serde(default)]
     pub guests: GuestShown,
+    #[serde(default)]
+    pub calls: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Clone, Default, Deserialize, PartialEq, Serialize)]

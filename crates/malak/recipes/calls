@@ -1,0 +1,4 @@
+#!/bin/sh
+# The compiled recipe shares validation with the CLI and MCP.
+set -eu
+exec "${MALAK_RECIPE_EXE:-malak}" recipe calls "$@"

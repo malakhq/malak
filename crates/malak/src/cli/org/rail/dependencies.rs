@@ -92,6 +92,17 @@ fn links(messages: &[Value], field: &str) -> Vec<Value> {
         .collect()
 }
 
+fn answer_fact(config: Option<std::path::PathBuf>, fact: &Value) -> bool {
+    if fact["sender"] != "lead"
+        || fact["kind"] != "note"
+        || fact["grade"] != "proven"
+        || fact["headers"]["reply_to"][0] != "questions"
+    {
+        return true;
+    }
+    !matches!(crate::cli::org::calls::recorded(config, fact), Some(None))
+}
+
 fn fetch(reader: &Reader, addresses: Vec<Value>, facts: &mut HashMap<String, Option<Value>>) {
     for link in addresses {
         let key = link.to_string();
@@ -110,7 +121,8 @@ fn fetch(reader: &Reader, addresses: Vec<Value>, facts: &mut HashMap<String, Opt
                     true,
                 )
                 .ok()??;
-            Some(crate::cli::participant::json_message(record.label, &body))
+            let fact = crate::cli::participant::json_message(record.label, &body);
+            answer_fact(Some(seat.config), &fact).then_some(fact)
         })();
         facts.insert(key, found);
     }
@@ -129,6 +141,25 @@ pub(in crate::cli) fn read(reader: &Reader, board: &str, messages: &[Value]) -> 
     let work = links(messages, "Work link");
     fetch(reader, links(messages, "Link"), &mut facts);
     fetch(reader, work.clone(), &mut facts);
+    for (address, fact) in &mut facts {
+        let Some(record) = fact.as_ref().filter(|record| {
+            record["sender"] == "lead"
+                && record["kind"] == "note"
+                && record["headers"]["reply_to"][0] == "questions"
+        }) else {
+            continue;
+        };
+        let Ok(link) = serde_json::from_str::<Value>(address) else {
+            continue;
+        };
+        let config = reader
+            .open_board(link[0].as_str())
+            .ok()
+            .map(|seat| seat.config);
+        if !answer_fact(config, record) {
+            *fact = None;
+        }
+    }
     let mut peers = Peers::new();
     for link in work {
         let Some(peer) = link[0].as_str().filter(|peer| *peer != board) else {
