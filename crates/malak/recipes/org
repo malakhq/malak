@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Set up the local organisation through the owner door."""
+
+import os
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+
+import board_data as board
+import org_seats
+import org_state
+from recipe_board import _board_query, board_config, board_name, config_for_socket, handover_identity, selected_config
+import recipe_output as out
+
+
+def confirm(name, action):
+    if not sys.stdin.isatty():
+        raise board.RecipeError(f"{action} requires typed confirmation at an interactive terminal")
+    print(f"Type {name} to {action}: ", end="", file=sys.stderr, flush=True)
+    if sys.stdin.readline().strip() != name:
+        raise board.RecipeError("organisation confirmation did not match")
+
+
+def lead_entry(name):
+    try:
+        config = board_config(name).absolute()
+        status = board.board_status(config)
+    except (board.RecipeError, ValueError, OSError) as error:
+        raise board.RecipeError(f"lead {name!r} must have a local board; for another machine use Malak Cloud") from error
+    settings = org_seats.board_settings(config)
+    if settings.get("transport", "unix") != "unix":
+        raise board.RecipeError("organisation leads must be local; for another machine use Malak Cloud")
+    org_seats.session_of({"config": str(config)})
+    for channel in ("rail", "briefs", "calls"):
+        board.malak("--config", config, "channel", "create", channel)
+    return {"config": str(config), "active": True}
+
+
+def main():
+    parser = out.ArgumentParser(prog="malak recipe org", allow_abbrev=False)
+    parser.add_argument("action", choices=("setup", "add-lead", "remove-lead", "reseat", "trim"))
+    parser.add_argument("names", nargs="*")
+    selectors = parser.add_mutually_exclusive_group()
+    selectors.add_argument("--board", metavar="NAME")
+    selectors.add_argument("--config", type=Path, metavar="PATH")
+    args = parser.parse_args()
+    selected = selected_config(args.board, args.config)
+    config = selected
+    if config is None and args.action != "setup" and (inherited := os.environ.get("MALAK_HANDOVER")):
+        home = config_for_socket(handover_identity(inherited)[0])
+        found = org_state.find(home) if home else None
+        config = found[0] if found else None
+    if config is None:
+        config = Path(_board_query("recipe", "__board-config", "top", "--create")) if args.action == "setup" else board_config("top")
+    config = Path(config).absolute()
+    if args.action == "setup":
+        board.start_board(config)
+        status = board.board_status(config)
+        if status.get("lead_session"):
+            name = board_name(config)
+            raise board.RecipeError(
+                f"top board {name!r} already has a bound lead; choose an unclaimed board "
+                "or create a new one. Changing an existing lead to chief of staff requires "
+                "the owner-approved COS add/switch workflow"
+            )
+        # Starting the board leaves its lead credential unclaimed with the owner.
+        for channel in ("rail", "briefs", "calls", "top/leads", "cos/ramp"):
+            board.malak("--config", config, "channel", "create", channel)
+        with org_state.locked(config) as existing:
+            if existing is not None:
+                raise board.RecipeError("organisation already set up; use org add-lead")
+            roster = {"top": str(config), "leads": {}, "chief_of_staff": None, "candidate": None,
+                      "seats": {}, "rail_age_days": 30, "lead_silent_minutes": 60,
+                      "work_stale_minutes": 30, "ramp_minutes": 10}
+            for name in args.names:
+                if board_name(config) == name:
+                    raise board.RecipeError("the top board cannot also be a lead board")
+                roster["leads"][name] = lead_entry(name)
+            org_state.save(config, roster)
+            for name in org_state.readers(roster):
+                org_seats.issue(config, roster, name)
+        out.details(f"Organisation ready on {board_name(config)}.")
+        return
+    if args.action == "trim":
+        if args.names:
+            parser.error("trim takes no name")
+        found = org_state.find(config)
+        if found is None:
+            raise board.RecipeError("no organisation roster for this board")
+        from rail_events import trim
+        trim(config, found[1], all_boards=selected is None)
+        out.details("Organisation rail retention applied; briefs kept.")
+        return
+    elif len(args.names) != 1:
+        parser.error(f"{args.action} takes one name")
+    with org_state.locked(config) as roster:
+        if roster is None:
+            raise board.RecipeError("no organisation roster on this board; run org setup first")
+        name = args.names[0]
+        if args.action in ("add-lead", "remove-lead"):
+            confirm(name, args.action)
+        if args.action == "add-lead":
+            if board_name(config) == name:
+                raise board.RecipeError("the top board cannot also be a lead board")
+            if roster["leads"].get(name, {}).get("active"):
+                raise board.RecipeError(f"lead {name!r} already belongs to this organisation")
+            roster["leads"][name] = lead_entry(name)
+            org_state.save(config, roster)
+            for reader in org_state.readers(roster):
+                org_seats.issue(config, roster, reader)
+        elif args.action == "remove-lead":
+            removed = roster["leads"].get(name)
+            if removed is None:
+                raise board.RecipeError(f"lead {name!r} is not active on the roster")
+            # Mark removed before revocations; no reseat can restore it after a partial run.
+            removed["active"] = False
+            org_state.save(config, roster)
+            for reader, seats in roster["seats"].items():
+                for seat in seats:
+                    if reader == f"lead:{name}" or Path(seat["config"]) == Path(removed["config"]):
+                        org_seats.revoke_seat(seat)
+            # Keep identities for retry and audit; issue only consults active roster boards.
+        else:
+            matching = [key for key, reader in org_state.readers(roster).items() if reader["name"] == name]
+            if not matching:
+                raise board.RecipeError(f"{name!r} is not an active reader on the roster")
+            for key in matching:
+                org_seats.issue(config, roster, key)
+        org_state.save(config, roster)
+    out.details(f"Organisation {args.action} completed for {name}.")
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    try:
+        main()
+    except (board.RecipeError, OSError, KeyError, ValueError) as error:
+        out.error("update the organisation", error, "Check the roster and local board sessions.")
+        sys.exit(getattr(error, "code", 3))

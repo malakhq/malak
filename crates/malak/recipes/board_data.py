@@ -327,6 +327,13 @@ def lead_up(config, parent_config=None, takeover=False):
         if Path(selected).resolve() != default_handover.resolve():
             check_board(config, selected)
     handover = prepare_board(config, parent, takeover)
+    from org_seats import reseat_for_board
+    try:
+        reseat_for_board(config)
+    except (RecipeError, OSError, KeyError, ValueError) as error:
+        out.details("The local lead is ready; organisation read seats could not be reissued.",
+                    (("Reason", error), ("Next", "Run org reseat on the top board when it is reachable.")),
+                    stream=sys.stderr)
     if manager is not None:
         report_to_parent(config, name, parent_config, parent, *manager)
     fields = (("Parent", parent), ("Parent report", "Sent")) if parent_config else ()

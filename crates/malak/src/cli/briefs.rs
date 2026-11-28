@@ -312,41 +312,18 @@ fn page(brief: &model::Brief, offset: usize) -> Result<ResultView, Error> {
         fields.remove("lead");
         source["omitted_fields"] = serde_json::json!(["title", "lead"]);
     }
-    let mut low = offset;
-    let mut high = brief
-        .body
-        .len()
-        .min(offset.saturating_add(super::presentation::BUDGET));
-    while low < high {
-        let middle = low + (high - low).div_ceil(2);
-        let mut end = middle;
-        while !brief.body.is_char_boundary(end) {
-            end -= 1;
-        }
-        let value = candidate(&source, end);
-        if bounded::fits(&value.to_string(), &value) {
-            if end == low {
-                let next = brief.body[end..]
-                    .chars()
-                    .next()
-                    .map_or(end, |character| end + character.len_utf8());
-                if next <= high {
-                    let value = candidate(&source, next);
-                    if bounded::fits(&value.to_string(), &value) {
-                        low = next;
-                        continue;
-                    }
-                }
-                break;
-            }
-            low = end;
-        } else {
-            high = end.saturating_sub(1);
-        }
-    }
-    while !brief.body.is_char_boundary(low) {
-        low -= 1;
-    }
+    let low = bounded::prefix(
+        &brief.body,
+        offset,
+        brief
+            .body
+            .len()
+            .min(offset.saturating_add(super::presentation::BUDGET)),
+        |end| {
+            let value = candidate(&source, end);
+            bounded::fits(&value.to_string(), &value)
+        },
+    );
     let value = candidate(&source, low);
     if !bounded::fits(&value.to_string(), &value) || low == offset && offset < brief.body.len() {
         return Ok(result(
@@ -461,12 +438,7 @@ pub(super) fn view(config: Option<PathBuf>, since: &str) -> Result<ResultView, E
             .filter(|brief| brief.current())
             .map(|brief| row(brief, false))
             .collect::<Result<Vec<_>, _>>()?;
-        let rails: Vec<_> = messages
-            .iter()
-            .filter(|message| message["channel"] == "rail")
-            .cloned()
-            .collect();
-        let rail = super::org::rail::project(&name, &rails, |_| None);
+        let rail = super::org::rail::reader_projection(&reader, &name, &messages);
         let mut pulse = pulses
             .iter()
             .find(|pulse| pulse["lead"] == name || name == home && pulse["lead"] == reader.name)

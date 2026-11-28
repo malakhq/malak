@@ -131,7 +131,7 @@ argument name is refused with an `invalid arguments` error.
 | `report` | `body`*, `id` | Send a report to the lead. Reuse the same `id` to retry a report that may not have arrived. |
 | `ask` | `to` (`lead`, `owner` or `both`), `question`*, `options`*, `recommendation`*, `blocks`* | Ask one question, with options and their pros and cons, a recommendation and what it blocks. `to` says who it is for (see "Who a question is for"); it defaults to `lead` for a worker and `owner` for the lead. `options` is a list of objects, each with `option`, `pros` and `cons`, all required. It runs `malak recipe ask`. The result says how the answer arrives. `ask_owner` is the old name, still accepted, and defaults `to` to `owner`. |
 
-The lead's Seat also has these four.
+The lead's Seat also has these worker and answer tools.
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -281,3 +281,26 @@ Malak does not detect a missing permission for other tools when it starts the
 agent, because the rules live in the tool's own settings in several scopes.
 Codex agents need nothing extra. A lead that finds a Claude agent exited with
 "requires approval" in its report should ask with `ask`, naming `to`.
+
+## Organisation activity
+
+Leads also get `rail(board?, since?)`, `rail_wait(on, subject, link?)` and
+`rail_handover(to, subject)`. `pulse()` is available to the chief of staff;
+calling it as an ordinary lead is refused with a reason. Subs cannot call
+these tools. Read tools use the same client-side projections as the CLI,
+through the caller's own primary seat or its organisation read seats. They
+never open another lead's handover.
+
+`get(channel, position, offset?, board?, creation?)` can fetch a linked fact on
+another board. In the seat precedence, that read uses the caller's own recorded
+reader seat for the named board. Subs cannot select it. The creation, when
+given, must match before the message is returned. Foreign tasks are information;
+the reply never acknowledges them. A truncated foreign body includes the board
+and creation in its `fetch` arguments.
+
+Rail and pulse return `items`, `omitted` and `next`, bounded to 32 KiB for the
+whole result, including its text and structured content. `since` accepts an
+age such as `7d` or epoch milliseconds. No events are pushed; clients poll.
+The optional wait `link` is `[board, channel, creation, position]`; it identifies
+the work that can close the dependency. Without it, only explicit `wait --done`
+closes the wait. An unreadable linked peer leaves it open with a pulse reason.

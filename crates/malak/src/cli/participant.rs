@@ -63,7 +63,7 @@ pub(super) enum Command {
         /// Message text, or - to read bytes from standard input.
         body: Option<String>,
     },
-    /// Read messages; acknowledge them only with --ack.
+    /// Read messages; acknowledge them only with --ack. A foreign board uses your recorded reader seat.
     #[command(after_help = examples::help(&["read"]))]
     Read {
         #[arg(required = true, value_name = "CHANNEL")]
@@ -84,11 +84,14 @@ pub(super) enum Command {
         #[arg(long, requires = "agent")]
         offset: Option<usize>,
     },
-    /// Retrieve one position without advancing the reader.
+    /// Retrieve one position without advancing the reader. A foreign board uses your recorded reader seat.
     #[command(after_help = examples::help(&["get"]))]
     Get {
         channel: String,
         position: u64,
+        /// Refuse a message from a different channel creation.
+        #[arg(long)]
+        creation: Option<CreationId>,
         #[arg(long)]
         json: bool,
         /// Bound the output and label the message for an agent.
@@ -121,6 +124,19 @@ impl Command {
     }
 
     pub(super) fn execute(mut self, config: Option<PathBuf>) -> Result<(), Error> {
+        let _ = super::org::lifecycle::on_command(config.clone());
+        if matches!(self, Self::Read { .. } | Self::Get { .. })
+            && let Some(mut seat) = super::org::seats::foreign(&config)?
+        {
+            if matches!(self, Self::Read { ack: true, .. }) {
+                return Err(Error::refused(
+                    "cross-board reads never acknowledge; use your home inbox to acknowledge guest messages",
+                ));
+            }
+            let (output, header) =
+                self.exchange_context(&mut seat.session, None, Some(&seat.board))?;
+            return output.ok(&header, false);
+        }
         let guests = match &self {
             Self::Read {
                 channels, limit, ..
@@ -288,6 +304,24 @@ impl Command {
         session: &mut Session,
         body: Option<Vec<u8>>,
     ) -> Result<(Output, Map<String, Value>), Error> {
+        self.exchange_context(session, body, None)
+    }
+
+    pub(super) fn foreign_reply(
+        self,
+        session: &mut Session,
+        board: &str,
+    ) -> Result<(String, Value), Error> {
+        let (output, header) = self.exchange_context(session, None, Some(board))?;
+        output.tool_result(header)
+    }
+
+    fn exchange_context(
+        self,
+        session: &mut Session,
+        body: Option<Vec<u8>>,
+        board: Option<&str>,
+    ) -> Result<(Output, Map<String, Value>), Error> {
         let (frame, output, wait) = match self {
             Self::Send {
                 channel,
@@ -400,12 +434,14 @@ impl Command {
                 ..
             } => {
                 let wait = Duration::from_secs(wait).min(Limits::default().read_wait);
-                let output = || Output::messages(json, agent, offset.unwrap_or(0));
+                let output =
+                    || Output::messages(json, agent, offset.unwrap_or(0)).read_context(board, None);
                 return session.read_command(&channels, wait, limit, output);
             }
             Self::Get {
                 channel,
                 position,
+                creation,
                 json,
                 agent,
                 offset,
@@ -414,7 +450,8 @@ impl Command {
                     encode_frame(2, "GET", 2, |out| get_fields(out, &channel, position), &[]);
                 (
                     frame,
-                    Output::messages(json, agent, offset.unwrap_or(0)),
+                    Output::messages(json, agent, offset.unwrap_or(0))
+                        .read_context(board, creation),
                     CALL_WAIT,
                 )
             }

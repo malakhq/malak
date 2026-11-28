@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 
 /// Channels every board starts with. Participants' inbox and relay channels
 /// use `to/<id>` and `relay/<name>`.
-const STANDARD_CHANNELS: [&str; 3] = ["lead", "questions", "orders"];
+const STANDARD_CHANNELS: [&str; 6] = ["lead", "questions", "orders", "rail", "briefs", "calls"];
 pub(super) const LOG_FILE: &str = "board.log";
 const READY_STEP: &str = "ready";
 const STARTUP_POLL: Duration = Duration::from_millis(25);

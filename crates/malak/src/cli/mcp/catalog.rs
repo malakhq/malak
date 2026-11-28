@@ -5,7 +5,16 @@ use rmcp::model::Tool;
 use serde_json::{Value, json};
 
 const PARTICIPANT: [&str; 5] = ["inbox", "ack", "get", "report", "ask"];
-const LEAD: [&str; 4] = ["delegate", "start_agent", "agents", "answer"];
+const LEAD: [&str; 8] = [
+    "delegate",
+    "start_agent",
+    "agents",
+    "answer",
+    "rail",
+    "pulse",
+    "rail_wait",
+    "rail_handover",
+];
 /// Old names of a tool, still called but no longer listed.
 const ALIASES: [&str; 1] = ["ask_owner"];
 
@@ -48,8 +57,10 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
         ),
         (
             "get",
-            "Fetch one message by channel and position, or page a long body with offset.",
+            "Fetch one message or page a long body with offset. A lead reading another board uses its own recorded reader seat; foreign tasks are information. This never acknowledges.",
             json!({
+                "board": { "type": "string", "description": "Another board, through your own recorded reader seat. Subs cannot select one." },
+                "creation": { "type": "string", "description": "Refuse a message from a different channel creation." },
                 "channel": { "type": "string" },
                 "position": { "type": "integer", "minimum": 1 },
                 "offset": { "type": "integer", "minimum": 0, "description": "Byte offset to start the body at." },
@@ -138,6 +149,30 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
             "List the agents on the board with their claim status and unread counts.",
             json!({}),
             &[],
+        ),
+        (
+            "rail",
+            "Read lead-level rail facts through your own organisation read seats.",
+            json!({"board":{"type":"string"},"since":{"type":"string"}}),
+            &[][..],
+        ),
+        (
+            "pulse",
+            "Read the organisation pulse as chief of staff. Other leads are refused.",
+            json!({}),
+            &[][..],
+        ),
+        (
+            "rail_wait",
+            "Record that your work waits on another board, as your board's lead.",
+            json!({"on":{"type":"string"},"subject":{"type":"string"},"link":{"type":"array","minItems":4,"maxItems":4,"description":"Optional work address: board, channel, creation and position."}}),
+            &["on", "subject"][..],
+        ),
+        (
+            "rail_handover",
+            "Record work handed to another lead, as your board's lead.",
+            json!({"to":{"type":"string"},"subject":{"type":"string"}}),
+            &["to", "subject"][..],
         ),
     ];
     let mut tools: Vec<_> = all

@@ -28,26 +28,31 @@ pub(in crate::cli) fn row(
     timing: &Timing,
 ) -> Value {
     let mut open = BTreeMap::new();
-    let mut waits = BTreeMap::new();
+    let waits = rail::open_waits(events);
     let mut finished = 0;
+    let mut lifecycle = HashSet::new();
     for event in events.iter().filter(|event| event["type"] == "rail") {
-        let subject = event["subject"].as_str().unwrap_or("");
-        match event["event"].as_str().unwrap_or("") {
+        let kind = event["event"].as_str().unwrap_or("");
+        if matches!(kind, "started" | "finished") && event["_enrolment"].as_str().is_none() {
+            continue;
+        }
+        if !rail::first_lifecycle_fact(kind, &event["link"], &mut lifecycle) {
+            continue;
+        }
+        match kind {
             "started" => {
-                open.insert(subject, event);
-            }
-            "finished" => {
-                open.remove(subject);
-                waits.remove(subject);
-                if event["at_ms"].as_u64().unwrap_or(0) >= timing.midnight_ms {
-                    finished += 1;
+                if let Some(enrolment) = event["_enrolment"].as_str() {
+                    open.insert(enrolment, event);
                 }
             }
-            "waits on" => {
-                waits.insert(subject, event);
-            }
-            "handed over" | "unblocked" => {
-                waits.remove(subject);
+            "finished" => {
+                let Some(enrolment) = event["_enrolment"].as_str() else {
+                    continue;
+                };
+                open.remove(enrolment);
+                if event["_fact_at_ms"].as_u64().unwrap_or(0) >= timing.midnight_ms {
+                    finished += 1;
+                }
             }
             _ => {}
         }
@@ -55,7 +60,7 @@ pub(in crate::cli) fn row(
     let latest = messages.iter().filter(|m| {
         matches!(
             m["channel"].as_str().unwrap_or(""),
-            "lead" | "questions" | "rail" | "briefs"
+            "lead" | "questions" | "rail" | "briefs" | "calls"
         ) || m["channel"].as_str().unwrap_or("").starts_with("to/")
             || m["channel"].as_str().unwrap_or("").starts_with("relay/")
     });
@@ -76,7 +81,7 @@ pub(in crate::cli) fn row(
     let orange = calls.iter().find(|call| call["level"] == "orange");
     let silent = (!open.is_empty() || !calls.is_empty())
         && now.saturating_sub(lead_activity) >= timing.silent_ms;
-    let wait = waits.values().max_by_key(|event| event["at_ms"].as_u64());
+    let wait = waits.iter().max_by_key(|event| event["at_ms"].as_u64());
     let (colour, reason, blocker) = if !reachable {
         ("black", "not reachable", None)
     } else if silent {
@@ -86,7 +91,15 @@ pub(in crate::cli) fn row(
     } else if let Some(call) = orange {
         ("yellow", "open orange call", Some(call))
     } else if let Some(wait) = wait {
-        ("yellow", "waits on", Some(*wait))
+        (
+            "yellow",
+            if wait["_cannot_check"] == true {
+                "waits on; cannot check: board unreadable"
+            } else {
+                "waits on"
+            },
+            Some(wait),
+        )
     } else if overdue {
         ("yellow", "handover brief overdue", None)
     } else if !open.is_empty() && now.saturating_sub(activity) >= timing.stale_ms {
@@ -98,17 +111,23 @@ pub(in crate::cli) fn row(
         .values()
         .max_by_key(|event| event["at_ms"].as_u64())
         .map_or("idle", |event| event["subject"].as_str().unwrap_or("idle"));
-    json!({"lead":name,"colour":colour,"reason":reason,"on":on,"blocker":blocker,"last_activity":activity,"counts":{"started":open.len(),"calls":calls.len(),"finished":finished}})
+    json!({"lead":name,"colour":colour,"reason":reason,"on":on,"blocker":blocker.cloned().map(rail::public_event),"last_activity":activity,"counts":{"started":open.len(),"calls":calls.len(),"finished":finished}})
 }
 
-fn open_calls(messages: &[Value]) -> Vec<Value> {
-    // Interpret only authored question headers and proven lead call-level notes.
-    // The full calls projection can replace this hook without changing row().
+fn open_calls(board: &str, messages: &[Value]) -> Vec<Value> {
+    // Authored owner questions work before OR.7 lands. Its validated calls
+    // projection plugs into row(); call-level reference fields belong there.
     let mut calls = BTreeMap::<(String, u64), Value>::new();
     let mut answered = HashSet::new();
     for message in messages {
         let reply = &message["headers"]["reply_to"];
-        if message["sender"] == "lead" && message["grade"] == "proven" && reply[0] == "questions" {
+        if message["sender"] == "lead"
+            && message["grade"] == "proven"
+            && reply[0] == "questions"
+            && (message["channel"] == "questions"
+                || message["channel"] == "lead"
+                || message["channel"].as_str().unwrap_or("").starts_with("to/"))
+        {
             answered.insert((
                 reply[1].as_str().unwrap_or("").to_owned(),
                 reply[2].as_u64().unwrap_or(0),
@@ -120,27 +139,13 @@ fn open_calls(messages: &[Value]) -> Vec<Value> {
             && reply.is_null()
         {
             let text = typed::text(message);
-            let level = text
-                .lines()
-                .find_map(|line| line.strip_prefix("Level: "))
-                .unwrap_or("blue");
-            if ["red", "orange", "blue"].contains(&level) {
-                calls.insert((message["creation"].as_str().unwrap_or("").to_owned(), message["position"].as_u64().unwrap_or(0)), json!({"level":level,"link":["questions",message["creation"],message["position"]]}));
+            let level = text.lines().find_map(|line| line.strip_prefix("Level: "));
+            let audience = text.lines().find_map(|line| line.strip_prefix("For: "));
+            if let Some(level) = level.filter(|level| ["red", "orange", "blue"].contains(level))
+                && audience.is_none_or(|audience| matches!(audience, "owner" | "both"))
+            {
+                calls.insert((message["creation"].as_str().unwrap_or("").to_owned(), message["position"].as_u64().unwrap_or(0)), json!({"level":level,"link":[board,"questions",message["creation"],message["position"]]}));
             }
-        }
-        if message["channel"] == "calls"
-            && let Some(fields) = typed::fields(message, "call-level", "lead")
-            && let (Some(question), Some(level)) = (fields.get("Question"), fields.get("Level"))
-            && let Ok(link) = serde_json::from_str::<Value>(question)
-            && ["red", "orange", "blue"].contains(&level.as_str())
-        {
-            calls.insert(
-                (
-                    link[2].as_str().unwrap_or("").to_owned(),
-                    link[3].as_u64().unwrap_or(0),
-                ),
-                json!({"level":level,"link":link}),
-            );
         }
     }
     calls
@@ -160,41 +165,21 @@ pub(in crate::cli) fn view(reader: &Reader, now: u64) -> Result<Vec<Value>, Erro
         .roster
         .as_ref()
         .ok_or_else(|| Error::refused("no organisation roster"))?;
-    let utc = OffsetDateTime::from_unix_timestamp_nanos(i128::from(now) * 1_000_000)
-        .map_err(|_| Error::refused("invalid pulse time"))?;
-    let local = utc.to_offset(UtcOffset::local_offset_at(utc).unwrap_or(UtcOffset::UTC));
-    let midnight = local
-        .replace_time(time::Time::MIDNIGHT)
-        .unix_timestamp_nanos()
-        .max(0)
-        / 1_000_000;
+    let midnight = midnight_ms(now, |at| UtcOffset::local_offset_at(at).ok())?;
     let timing = Timing {
         silent_ms: roster.lead_silent_minutes.saturating_mul(60_000),
         stale_ms: roster.work_stale_minutes.saturating_mul(60_000),
-        midnight_ms: midnight as u64,
+        midnight_ms: midnight,
     };
     let mut top = reader.open_board(None)?;
     let ramp = records::retained(&top.config, &mut top.session, &["cos/ramp"])?;
-    let candidate = roster
-        .candidate
-        .as_ref()
-        .and_then(|candidate| candidate["id"].as_str());
-    let seated = ramp
-        .iter()
-        .filter(|message| {
-            candidate.is_some_and(|id| {
-                typed::fields(message, "ramp", id)
-                    .is_some_and(|fields| fields.get("Step").is_some_and(|step| step == "seated"))
-            })
-        })
-        .map(typed::at_ms)
-        .max();
-    let ready = ramp.iter().any(|message| {
-        candidate.is_some_and(|id| {
-            typed::fields(message, "ramp", id)
-                .is_some_and(|fields| fields.get("Step").is_some_and(|step| step == "ready"))
-        }) && seated.is_some_and(|at| typed::at_ms(message) >= at)
-    });
+    let (seated, ready) = ramp_status(
+        roster
+            .candidate
+            .as_ref()
+            .and_then(|candidate| candidate["id"].as_str()),
+        &ramp,
+    );
     let mut rows = Vec::new();
     let mut briefed = 0;
     for (name, lead) in &roster.leads {
@@ -220,44 +205,114 @@ pub(in crate::cli) fn view(reader: &Reader, now: u64) -> Result<Vec<Value>, Erro
         };
         let reachable = fetched.is_ok();
         let messages = fetched.unwrap_or_default();
-        let handover = seated.is_some_and(|start| {
-            messages.iter().any(|record| {
-                typed::at_ms(record) >= start
-                    && typed::fields(record, "brief", "lead").is_some_and(|fields| {
-                        fields.get("Kind").is_some_and(|kind| kind == "handover")
-                    })
-            })
-        });
+        let handover = seated.is_some_and(|start| handover_since(&messages, start));
         briefed += usize::from(handover);
         let overdue = seated.is_some_and(|start| {
             !ready
                 && !handover
                 && now.saturating_sub(start) >= roster.ramp_minutes.saturating_mul(60_000)
         });
-        let rail_messages: Vec<_> = messages
-            .iter()
-            .filter(|m| m["channel"] == "rail")
-            .cloned()
-            .collect();
-        let events = rail::project(name, &rail_messages, |_| None);
+        let events = rail::reader_projection(reader, name, &messages);
         rows.push(row(
             name,
             &messages,
             &events,
-            &open_calls(&messages),
+            &open_calls(name, &messages),
             now,
             reachable,
             overdue,
             &timing,
         ));
     }
+    let mut chief = own(reader, now)?;
     if let Some(start) = seated.filter(|_| !ready) {
-        rows.push(json!({"lead":"chief of staff","colour":if now.saturating_sub(start)>=30*60_000 {"yellow"} else {"green"},"reason":if now.saturating_sub(start)>=30*60_000 {"chief of staff ramp-up overdue"} else {"onboarding"},"on":format!("onboarding: {briefed} of {} leads briefed, started {}",roster.leads.values().filter(|lead| lead.active).count(),crate::cli::output::clock(Some(start))),"started":start}));
+        chief = ramp_row(
+            chief,
+            start,
+            now,
+            briefed,
+            roster.leads.values().filter(|lead| lead.active).count(),
+        );
     }
-    if seated.is_none() || ready {
-        rows.push(own(reader, now)?);
-    }
+    rows.push(chief);
     Ok(rows)
+}
+
+fn ramp_status(candidate: Option<&str>, ramp: &[Value]) -> (Option<u64>, bool) {
+    let seated = ramp
+        .iter()
+        .filter(|message| {
+            candidate.is_some_and(|id| {
+                typed::fields(message, "ramp", id)
+                    .is_some_and(|fields| fields.get("Step").is_some_and(|step| step == "seated"))
+            })
+        })
+        .map(typed::at_ms)
+        .max();
+    let ready = ramp.iter().any(|message| {
+        candidate.is_some_and(|id| {
+            typed::fields(message, "ramp", id)
+                .is_some_and(|fields| fields.get("Step").is_some_and(|step| step == "ready"))
+        }) && seated.is_some_and(|at| typed::at_ms(message) >= at)
+    });
+    (seated, ready)
+}
+
+fn handover_since(messages: &[Value], start: u64) -> bool {
+    messages.iter().any(|record| {
+        typed::at_ms(record) >= start
+            && typed::fields(record, "brief", "lead")
+                .is_some_and(|fields| fields.get("Kind").is_some_and(|kind| kind == "handover"))
+    })
+}
+
+fn own_handover_overdue(reader: &Reader, messages: &[Value], now: u64) -> Result<bool, Error> {
+    let Some(roster) = reader
+        .roster
+        .as_ref()
+        .filter(|roster| !reader.chief && roster.candidate.is_some())
+    else {
+        return Ok(false);
+    };
+    let top_name =
+        crate::cli::board_names::name(&crate::cli::board_group::Entry::read(roster.top.clone()));
+    let mut top = reader.open_board(Some(&top_name))?;
+    let ramp = records::retained(&top.config, &mut top.session, &["cos/ramp"])?;
+    let (seated, ready) = ramp_status(
+        roster
+            .candidate
+            .as_ref()
+            .and_then(|candidate| candidate["id"].as_str()),
+        &ramp,
+    );
+    Ok(seated.is_some_and(|start| {
+        !ready
+            && !handover_since(messages, start)
+            && now.saturating_sub(start) >= roster.ramp_minutes.saturating_mul(60_000)
+    }))
+}
+
+fn ramp_row(mut chief: Value, start: u64, now: u64, briefed: usize, total: usize) -> Value {
+    let overdue = now.saturating_sub(start) >= 30 * 60_000;
+    chief["lead"] = json!("chief of staff");
+    chief["on"] = json!(format!(
+        "onboarding: {briefed} of {total} leads briefed, started {}{}",
+        crate::cli::output::clock(Some(start)),
+        if overdue {
+            "; chief of staff ramp-up overdue"
+        } else {
+            ""
+        }
+    ));
+    if chief["colour"] == "green" {
+        chief["colour"] = json!(if overdue { "yellow" } else { "green" });
+        chief["reason"] = json!(if overdue {
+            "chief of staff ramp-up overdue"
+        } else {
+            "onboarding"
+        });
+    }
+    chief
 }
 
 /// The brief view's own-board pulse; this does not grant the pulse API to leads.
@@ -276,15 +331,7 @@ pub(in crate::cli) fn own(reader: &Reader, now: u64) -> Result<Value, Error> {
             "to/*",
         ],
     )?;
-    let rails: Vec<_> = messages
-        .iter()
-        .filter(|m| m["channel"] == "rail")
-        .cloned()
-        .collect();
-    let events = rail::project(&seat.board, &rails, |_| None);
-    let utc = OffsetDateTime::from_unix_timestamp_nanos(i128::from(now) * 1_000_000)
-        .map_err(|_| Error::refused("invalid pulse time"))?;
-    let local = utc.to_offset(UtcOffset::local_offset_at(utc).unwrap_or(UtcOffset::UTC));
+    let events = rail::reader_projection(reader, &seat.board, &messages);
     let timing = Timing {
         silent_ms: reader
             .roster
@@ -296,22 +343,44 @@ pub(in crate::cli) fn own(reader: &Reader, now: u64) -> Result<Value, Error> {
             .as_ref()
             .map_or(30, |r| r.work_stale_minutes)
             .saturating_mul(60_000),
-        midnight_ms: (local
-            .replace_time(time::Time::MIDNIGHT)
-            .unix_timestamp_nanos()
-            .max(0)
-            / 1_000_000) as u64,
+        midnight_ms: midnight_ms(now, |at| UtcOffset::local_offset_at(at).ok())?,
     };
-    Ok(row(
+    let ramp = own_handover_overdue(reader, &messages, now);
+    let mut result = row(
         &seat.board,
         &messages,
         &events,
-        &open_calls(&messages),
+        &open_calls(&seat.board, &messages),
         now,
         true,
-        false,
+        ramp.as_ref().copied().unwrap_or(false),
         &timing,
-    ))
+    );
+    if ramp.is_err() {
+        result["on"] = json!(format!(
+            "{}; note: top-board ramp status unavailable",
+            result["on"].as_str().unwrap_or("idle")
+        ));
+    }
+    Ok(result)
+}
+
+fn midnight_ms(
+    now: u64,
+    offset_at: impl Fn(OffsetDateTime) -> Option<UtcOffset>,
+) -> Result<u64, Error> {
+    let utc = OffsetDateTime::from_unix_timestamp_nanos(i128::from(now) * 1_000_000)
+        .map_err(|_| Error::refused("invalid pulse time"))?;
+    let offset = offset_at(utc).unwrap_or(UtcOffset::UTC);
+    let midnight = utc.to_offset(offset).date().midnight();
+    let candidate = midnight.assume_offset(offset);
+    // An offset change later today must not move the start of the day.
+    let midnight_offset = offset_at(candidate).unwrap_or(offset);
+    Ok((midnight
+        .assume_offset(midnight_offset)
+        .unix_timestamp_nanos()
+        .max(0)
+        / 1_000_000) as u64)
 }
 
 #[cfg(test)]
@@ -329,7 +398,7 @@ mod tests {
         json!({"channel":"lead","sender":"lead","grade":"proven","sent_at":[at/1000,0]})
     }
     fn event(kind: &str, at: u64) -> Value {
-        json!({"type":"rail","event":kind,"subject":"build","at_ms":at})
+        json!({"type":"rail","event":kind,"subject":"build","at_ms":at,"_enrolment":"worker","_fact_at_ms":at,"link":["b","lead","c",at+1]})
     }
 
     #[test]
@@ -396,6 +465,24 @@ mod tests {
         );
     }
     #[test]
+    fn a_call_message_is_activity_while_work_is_open() {
+        let now = 1_801_000;
+        let message =
+            json!({"channel":"calls","sender":"lead","grade":"proven","sent_at":[now / 1000,0]});
+        let result = row(
+            "a",
+            &[message],
+            &[event("started", 0)],
+            &[],
+            now,
+            true,
+            false,
+            &timing(),
+        );
+        assert_eq!(result["colour"], "green");
+        assert_eq!(result["last_activity"], now);
+    }
+    #[test]
     fn starting_work_does_not_close_a_dependency() {
         assert_eq!(
             row(
@@ -412,7 +499,7 @@ mod tests {
         );
     }
     #[test]
-    fn finishing_the_subject_closes_its_dependency() {
+    fn finishing_the_same_subject_leaves_an_unlinked_dependency_open() {
         assert_eq!(
             row(
                 "a",
@@ -424,7 +511,7 @@ mod tests {
                 false,
                 &timing()
             )["colour"],
-            "green"
+            "yellow"
         );
     }
     #[test]
@@ -470,6 +557,82 @@ mod tests {
             1
         );
     }
+    #[test]
+    fn an_old_exit_replay_cannot_close_a_new_enrolment_with_the_same_name() {
+        let old = event("started", 1);
+        let mut new = event("started", 2);
+        new["_enrolment"] = json!("replacement");
+        let exit = event("finished", 3);
+        let result = row(
+            "a",
+            &[],
+            &[old, new, exit.clone(), exit],
+            &[],
+            4,
+            true,
+            false,
+            &timing(),
+        );
+        assert_eq!(result["counts"]["started"], 1);
+        assert_eq!(result["counts"]["finished"], 1);
+        assert_eq!(result["on"], "build");
+    }
+
+    #[test]
+    fn replayed_lifecycle_facts_do_not_reopen_or_close_another_run() {
+        let start = event("started", 0);
+        let finish = event("finished", 1);
+        let next = event("started", 2);
+        for (events, expected) in [
+            (vec![start.clone(), finish.clone(), start.clone()], 0),
+            (vec![start, finish.clone(), next, finish], 1),
+        ] {
+            let result = row("a", &[], &events, &[], 3, true, false, &timing());
+            assert_eq!(result["counts"]["started"], expected);
+            assert_eq!(result["counts"]["finished"], 1);
+        }
+    }
+
+    #[test]
+    fn ramp_overdue_progress_keeps_higher_priority_colours_and_normal_fields() {
+        for (colour, expected) in [
+            ("green", "yellow"),
+            ("yellow", "yellow"),
+            ("red", "red"),
+            ("black", "black"),
+        ] {
+            let original = json!({"lead":"top","colour":colour,"reason":"existing","counts":{"calls":1},"blocker":{"level":"red"},"last_activity":1});
+            let result = ramp_row(original, 1, 30 * 60_000 + 1, 1, 2);
+            assert_eq!(result["colour"], expected);
+            assert_eq!(result["counts"]["calls"], 1);
+            assert_eq!(result["last_activity"], 1);
+            assert!(
+                result["on"]
+                    .as_str()
+                    .unwrap()
+                    .contains("chief of staff ramp-up overdue")
+            );
+        }
+    }
+
+    #[test]
+    fn midnight_uses_its_own_offset_when_the_offset_changes_later_today() {
+        let day = 86_400i64;
+        let now = ((day + 12 * 3_600) * 1000) as u64;
+        for (before, after, expected) in [(0, 3_600, day), (3_600, 0, day - 3_600)] {
+            let result = midnight_ms(now, |at| {
+                UtcOffset::from_whole_seconds(if at.unix_timestamp() < day + 3_600 {
+                    before
+                } else {
+                    after
+                })
+                .ok()
+            })
+            .unwrap();
+            assert_eq!(result, expected as u64 * 1000);
+        }
+    }
+
     #[test]
     fn unreadable_board_wins_over_red_call() {
         let timing = Timing {

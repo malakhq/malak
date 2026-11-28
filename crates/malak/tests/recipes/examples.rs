@@ -206,6 +206,23 @@ examples! {
         assert!(output.contains("No messages returned from lead."), "{output}");
     }
 
+    rail_lists_a_recorded_dependency: "rail" [running] |example| {
+        let output = example.run();
+        assert!(output.contains("Recorded waits on"), "{output}");
+        let value:Value=serde_json::from_str(output.lines().last().unwrap()).unwrap();
+        assert_eq!(value["items"][0]["event"],"waits on");
+    }
+
+    pulse_reads_the_established_chiefs_top_board: "pulse" [running] |example| {
+        run(example.shell("malak recipe org setup --board malak"));
+        let path=example.board.state.join("org/roster.json");
+        let mut roster:Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        roster["chief_of_staff"]=json!({"name":"coordinator"});
+        fs::write(path,serde_json::to_vec(&roster).unwrap()).unwrap();
+        let value:Value=serde_json::from_str(&example.run()).unwrap();
+        assert_eq!(value["items"][0]["colour"],"green");
+    }
+
     board_start_waits_for_readiness: "board start" [stopped] |example| {
         example.run();
         assert!(example.board.status()["run"].is_string());
@@ -489,6 +506,22 @@ examples! {
         example.board.lead(&["send", &inbox, "Reviewed."]);
         let reply = run(example.shell(command("Watch  ")));
         assert!(reply.contains("Reviewed."), "{reply}");
+    }
+
+    org_setup_creates_the_unclaimed_top_board: "recipe org" [stopped] |example| {
+        let output = example.run();
+        assert!(output.contains("Organisation ready"), "{output}");
+        let value:Value=serde_json::from_str(output.lines().last().unwrap()).unwrap();
+        assert!(value["lead_session"].is_null());
+        assert!(value["channels"].as_array().unwrap().iter().any(|channel|channel["name"]=="top/leads"));
+    }
+
+    rail_wait_done_records_the_wait_it_closes: "recipe rail" [running] |example| {
+        example.run();
+        let value=example.first_on("rail");
+        assert!(value["text"].as_str().unwrap().contains("Event: waits on"));
+        let done:Value=serde_json::from_str(&example.board.lead(&["get","--json","rail","2"])).unwrap();
+        assert!(done["text"].as_str().unwrap().contains("Event: wait done"));
     }
 
     order_records_the_scope_and_end_time: "recipe order" [running] |example| {

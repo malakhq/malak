@@ -22,8 +22,17 @@ impl Organisation {
             "briefs",
             "Type: brief\nTitle: Other brief\nKind: learned\nLead: other\n\nOriginal text",
         ]);
-        let guest = other.enrol("reader-lead", &["briefs:read,get"]);
-        let chief_guest = other.enrol("reader-chief", &["briefs:read,get"]);
+        let grants = [
+            "rail:read,get",
+            "briefs:read,get",
+            "calls:read,get",
+            "questions:read,get",
+            "lead:read,get",
+            "relay/*:read,get",
+            "to/*:read,get",
+        ];
+        let guest = other.enrol("reader-lead", &grants);
+        let chief_guest = other.enrol("reader-chief", &grants);
         let seat = |path: &Path| {
             json!({
                 "board":"other", "config":other.config,
@@ -37,7 +46,7 @@ impl Organisation {
                 "other":{"config":other.config,"active":true},
             },
             "chief_of_staff":{"name":"chief"}, "candidate":null,
-            "seats":{"malak":[seat(&guest)],"chief":[seat(&chief_guest)]},
+            "seats":{"lead:malak":[seat(&guest)],"chief_of_staff:chief":[seat(&chief_guest)]},
             "rail_age_days":30,"lead_silent_minutes":60,"work_stale_minutes":30,"ramp_minutes":10,
         });
         let folder = chief.state.join("org");
@@ -154,6 +163,17 @@ fn a_leads_brief_view_stays_on_its_own_board() {
 #[test]
 fn putting_a_brief_never_falls_back_from_another_selected_board() {
     let org = Organisation::new();
+    let head = |board: &Fixture| {
+        board.status()["channels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|channel| channel["name"] == "briefs")
+            .unwrap()["head"]
+            .clone()
+    };
+    let home_before = head(&org.lead);
+    let other_before = head(&org.other);
     let mut command = org.lead.recipe("brief");
     command
         .arg("--config")
@@ -171,12 +191,15 @@ fn putting_a_brief_never_falls_back_from_another_selected_board() {
         .unwrap();
     let result = child.wait_with_output().unwrap();
     assert_eq!(result.status.code(), Some(2));
-    assert!(
-        !org.lead.status()["channels"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|channel| channel["name"] == "briefs")
+    assert_eq!(
+        head(&org.lead),
+        home_before,
+        "must not fall back to the home board"
+    );
+    assert_eq!(
+        head(&org.other),
+        other_before,
+        "must not write to the selected peer"
     );
 }
 

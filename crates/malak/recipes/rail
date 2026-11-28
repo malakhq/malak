@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Record a dependency or a handover through the lead's own board."""
+
+import json
+import os
+from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+
+import board_data as board
+from rail_events import emit, event_link, open_wait, replay_finished
+from recipe_board import board_config, board_settings, handover_identity, selected_config
+import recipe_output as out
+
+
+def main():
+    parser = out.ArgumentParser(prog="malak recipe rail", allow_abbrev=False,
+        usage="%(prog)s wait --on BOARD SUBJECT [--link BOARD CHANNEL CREATION POSITION] [--board NAME | --config PATH]\n  %(prog)s wait --done SUBJECT [--board NAME | --config PATH]\n  %(prog)s handover --to LEAD SUBJECT [--board NAME | --config PATH]\n  %(prog)s emit EVENT SUBJECT --link BOARD CHANNEL CREATION POSITION [--board NAME | --config PATH]")
+    sub = parser.add_subparsers(dest="action", required=True)
+    wait = sub.add_parser("wait")
+    dependency = wait.add_mutually_exclusive_group(required=True)
+    dependency.add_argument("--on", metavar="BOARD")
+    dependency.add_argument("--done", action="store_true")
+    wait.add_argument("subject", metavar="SUBJECT")
+    wait.add_argument("--link", nargs=4, metavar=("BOARD", "CHANNEL", "CREATION", "POSITION"))
+    handover = sub.add_parser("handover")
+    handover.add_argument("--to", required=True, metavar="LEAD")
+    handover.add_argument("subject", metavar="SUBJECT")
+    raw = sub.add_parser("emit")
+    raw.add_argument("event")
+    raw.add_argument("subject")
+    raw.add_argument("--link", nargs=4, required=True, metavar=("BOARD", "CHANNEL", "CREATION", "POSITION"))
+    raw.add_argument("--other-board")
+    for command in (wait, handover, raw):
+        selectors = command.add_mutually_exclusive_group()
+        selectors.add_argument("--board", metavar="NAME")
+        selectors.add_argument("--config", type=Path, metavar="PATH")
+    args = parser.parse_args()
+    work = args.link if args.action == "wait" else None
+    if work:
+        if args.done:
+            parser.error("wait --done does not take --link")
+        work[3] = int(work[3])
+        if not event_link({"Link": json.dumps(work)}):
+            parser.error("--link must name board, channel, creation and a positive position")
+    config = Path(selected_config(args.board, args.config) or board_config()).absolute()
+    credential = os.environ.get("MALAK_HANDOVER")
+    if credential and handover_identity(credential)[1] != "lead":
+        raise board.RecipeError("only the board's lead may write rail events")
+    board.check_board(config, credential or Path(board_settings(config)["state"]) / "lead.handover")
+    if args.action == "emit":
+        args.link[3] = int(args.link[3])
+        receipt = (replay_finished(config, args.subject, args.link, credential) if args.event == "finished"
+                   else emit(config, args.event, args.subject, args.link, args.other_board))
+        if receipt is None:
+            out.details("This exit was already published on rail; its note has been trimmed.")
+        else:
+            out.receipt(f"Recorded {args.event} on rail #{receipt['position']}.", receipt)
+        return
+    if args.action == "wait" and args.done:
+        wait = open_wait(config, args.subject, credential)
+        receipt = emit(config, "wait done", args.subject, wait)
+        out.receipt(f"Closed wait on rail #{receipt['position']}.", receipt)
+        return
+    event = "waits on" if args.action == "wait" else "handed over"
+    other = args.on if args.action == "wait" else args.to
+    fact = json.loads(board.malak("--config", config, "send", "--json", "--kind", "note", "lead", "-",
+                                  body=f"{event}: {args.subject}\nOther board: {other}\n").stdout)
+    receipt = emit(config, event, args.subject, {"channel":"lead", **fact}, other_board=other, work_link=work)
+    out.receipt(f"Recorded {event} on rail #{receipt['position']}.", receipt)
+
+
+if __name__ == "__main__":
+    os.umask(0o077)
+    try:
+        main()
+    except (board.RecipeError, OSError, KeyError, ValueError) as error:
+        out.error("record the rail event", error, "Use your own board's lead handover.")
+        sys.exit(getattr(error, "code", 3))

@@ -6,6 +6,7 @@
 
 mod briefs;
 mod catalog;
+mod org;
 mod recipes;
 mod seat;
 
@@ -252,9 +253,13 @@ impl ServerHandler for Server {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.to_string();
+        let bounded_view = matches!(
+            name.as_str(),
+            "rail" | "pulse" | "briefs" | "brief" | "brief_view" | "calls"
+        );
         let arguments = Value::Object(request.arguments.unwrap_or_default());
         let server = self.clone();
         let outcome = tokio::task::spawn_blocking(move || {
@@ -262,6 +267,9 @@ impl ServerHandler for Server {
                 return Some(Err("Briefs require a lead or chief of staff Seat; subs receive needed brief text in their task.".to_owned()));
             }
             if !catalog::offered(&name, server.is_lead()) {
+                if catalog::offered(&name, true) && matches!(name.as_str(),"rail"|"pulse"|"briefs"|"brief"|"brief_view"|"calls"|"rail_wait"|"rail_handover") {
+                    return Some(Err("organisation tools require a lead or chief of staff Seat; subs cannot use them".to_owned()));
+                }
                 return None;
             }
             Some(server.dispatch(&name, arguments))
@@ -272,7 +280,16 @@ impl ServerHandler for Server {
             return Err(ErrorData::invalid_params("unknown tool", None));
         };
         Ok(match outcome {
-            Ok(reply) => reply.into_result(),
+            Ok(mut reply) => {
+                if bounded_view {
+                    reply.value = crate::cli::org::bounded::for_request(
+                        reply.value,
+                        &serde_json::json!(context.id),
+                    );
+                    reply.text = reply.value.to_string();
+                }
+                reply.into_result()
+            }
             Err(reason) => tool_error(&reason),
         }
         .into())

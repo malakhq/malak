@@ -66,6 +66,7 @@ pub(super) struct Message {
     answer: Option<Decision>,
     /// Bytes the stored body starts with that are not shown: the answer's attribution lines.
     skipped: usize,
+    foreign_read: bool,
 }
 
 /// Who decided an answer and who recorded it, from the lines the lead's answer starts with.
@@ -131,6 +132,10 @@ struct View<'a> {
 #[derive(Serialize)]
 struct Fetch<'a> {
     tool: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    creation: Option<&'a str>,
     channel: &'a str,
     position: u64,
     offset: usize,
@@ -156,7 +161,12 @@ impl Message {
             reply_channel,
             answer: None,
             skipped: 0,
+            foreign_read: false,
         })
+    }
+
+    pub(super) fn mark_foreign_read(&mut self) {
+        self.foreign_read = true;
     }
 
     /// Whether the message is a reply on `questions` to a message there. The
@@ -261,11 +271,16 @@ impl Message {
             body,
             body_encoding,
             body_bytes: self.body.len(),
-            reissue: std::str::from_utf8(&self.body)
-                .ok()
-                .and_then(reissue_command),
+            reissue: (!self.foreign_read)
+                .then_some(&self.body)
+                .and_then(|body| std::str::from_utf8(body).ok().and_then(reissue_command)),
             fetch: (end < self.body.len()).then_some(Fetch {
                 tool: "get",
+                board: self
+                    .foreign_read
+                    .then_some(self.label.guest_board.as_deref())
+                    .flatten(),
+                creation: self.foreign_read.then_some(self.label.creation.as_str()),
                 channel: &self.label.channel,
                 position: self.label.position,
                 offset: end,
@@ -387,7 +402,9 @@ pub(super) fn text(
         )
         .unwrap();
         if let Some(fetch) = view.fetch {
-            if view.label.guest_board.is_some() {
+            if let Some(board) = fetch.board {
+                writeln!(rendered, "Fetch more with malak --board {board} get --agent --creation {} --offset {} -- {} {}", view.label.creation, fetch.offset, fetch.channel, fetch.position).unwrap();
+            } else if view.label.guest_board.is_some() {
                 writeln!(rendered, "Read the full guest reply with malak read lead.").unwrap();
             } else {
                 writeln!(

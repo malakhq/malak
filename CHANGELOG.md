@@ -12,6 +12,11 @@
   `decided_by` and `recorded_by`). The lead is trusted as the owner's Door for
   every question; stronger proof for high-risk decisions comes later. Fixes #55.
 
+- Add organisation setup, roster-bound reading seats, rail and pulse through
+  the CLI and MCP. Lead watchers publish worker lifecycle events from proven
+  source facts; trim preserves publication memory, and top-board messages reach
+  each lead's existing watcher and turn-end reminders. Fixes #57.
+
 - `malak mcp` serves a Seat to any MCP client over stdio, built on the official
   Rust MCP SDK (`rmcp`) behind the new `mcp` feature, which is on by default for
   the command line and absent from the board-only library build. Every Seat has

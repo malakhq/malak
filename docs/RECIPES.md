@@ -22,6 +22,8 @@ See the [command examples](EXAMPLES.md) for a runnable snippet for each recipe.
 - `handoff` passes a task or part of it to another agent on the same trace.
 - `lead-up` sets up an agent chat to become or take over as the lead.
 - `observe` shows the Malak visibility nudge in an agent session.
+- `org` maintains the local organisation roster and read seats.
+- `rail` records a dependency or a handover.
 - `order` records what the lead can decide while the owner is away.
 - `queue` briefs a worker and starts it after its predecessor's verified final report.
 - `adopt` enrols a running Claude Code or Codex session as a worker.
@@ -1187,3 +1189,89 @@ malak send --kind report --reply-to INBOX CREATION POSITION lead - < result.txt
 ```
 
 Run `malak board stop` when done.
+
+## Read work across local lead boards
+
+As the owner, create an organisation after its leads have run `lead-up` on
+their own boards:
+
+```sh
+malak recipe org setup design build
+```
+
+This starts the ordinary `top` board and leaves its lead key unclaimed with
+the owner until a chief of staff takes over. Use `--board NAME` to select an
+existing top board. The owner-only roster lives under that board's
+`state/org/roster.json`. Its rail age is 30 days; the lead-silence and work
+inactivity windows are 60 and 30 minutes. The ramp window is 10 minutes.
+Setup refuses a board with a bound lead before changing its channels or roster.
+Choose an unclaimed board or create a new one; changing an existing lead to
+chief of staff uses the owner-approved COS add/switch workflow.
+
+Each lead gets read/get-only seats on the other lead boards' `rail`, `briefs`,
+`calls`, `questions`, `lead`, `relay/*` and `to/*`. These seats cannot send or
+acknowledge. Its separate top-board seat can send to `lead`, `questions` and
+`top/leads`; messages on `top/leads` and `cos/ramp` reach the other leads' watchers and turn
+end reminders. Handle and acknowledge them from the home board's `lead` inbox.
+
+```sh
+malak --board top recipe org add-lead research
+malak --board top recipe org remove-lead research
+malak --board top recipe org reseat design
+```
+
+Adding and removing a lead require its name typed at an interactive terminal.
+Removing it revokes its organisation seats and every reader's seat on its
+board. The board and its subs continue; its pulse row becomes black with
+`not reachable`. Running `lead-up` again reissues the active reader's seats
+for its recorded session, and never restores a removed lead or board.
+
+Leads read the merged rail with `malak rail --json`, or select one board with
+`malak --board build rail --since 7d --json`. To fetch a linked fact, use
+`malak --board build get --agent --creation CREATION CHANNEL POSITION`.
+In the seat precedence, a read on another board uses the caller's own recorded
+reader seat for that board. This applies to `get` and `read`; cross-board
+reads never send or acknowledge, subs are refused, and foreign tasks are
+information. The optional creation must match before any message is shown.
+A `Type: rail` note counts as an
+event only from that board's proven lead. A `decided` event also needs a link
+to a proven answer. Other notes keep their text. The current bound lead's commands and watcher publish
+`started` from accepted-claim notices and `finished` from verified launcher
+exit reports. If the lead is away, the events wait until it returns; detached
+launchers keep no lead authority. A current bound lead can replay a missing finish with
+`recipe rail emit finished SUBJECT --link BOARD lead CREATION POSITION`.
+The link must name the original verified launcher exit report; replaying it
+again is a no-op. Readers match worker enrolments, so an old exit cannot close
+a new worker that reuses the same name. Unresolvable lifecycle links stay notes.
+Lane merges write `merged` after the merge commit.
+
+```sh
+malak --board design recipe rail wait --on build 'shared contract'
+malak --board design recipe rail handover --to build 'shared contract'
+malak --board design recipe rail wait --done 'shared contract'
+```
+
+A wait without a work link stays open until `wait --done`; matching subject
+text never closes it. Add `--link BOARD CHANNEL CREATION POSITION` to wait for
+specific work. Its `Work link:` line is separate from the recording fact's
+`Link:`. Readers match worker enrolments, original questions, or exact facts,
+including completion events on the linked peer's rail through their own reader
+seat. If that peer is unreadable, pulse keeps the wait open and says
+`cannot check: board unreadable`.
+
+`pulse --json` is for the chief of staff. It computes colour, current work,
+blocker, last activity and counts from board messages. Unreachable boards or
+silent leads are black; red calls are red; orange calls, dependencies, overdue
+handover briefs or stale open work are yellow; other states are green.
+
+The owner's `malak recipe org trim` trims rail on the roster boards. Select
+`--board NAME` to trim one board. It reads ages through the invoking lead's or
+chief of staff's authorised read seats and uses the owner door only for trim.
+It refuses if the reader lacks a required seat. Briefs are retained.
+
+
+Each lead board keeps only published source links in its owner-only
+`state/org/rail-published.json`. Publication and trim share a lock, so a watcher
+never recreates a trimmed lifecycle event. If that file is missing after a trim
+or cannot be read, publication pauses and prints a notice; the owner must restore
+its publication history. Pending facts remain on the board.

@@ -119,7 +119,8 @@ def pending_guests(config, handover):
 
 
 def guest_label(message):
-    return f"guest · {message['guest_board']} #{message['position']}"
+    channel = " " + message["channel"] if message.get("channel") in ("top/leads", "cos/ramp") else ""
+    return f"guest · {message['guest_board']}{channel} #{message['position']}"
 
 
 def guest_reply_ack(command, message):

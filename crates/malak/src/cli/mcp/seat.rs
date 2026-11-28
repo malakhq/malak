@@ -94,7 +94,11 @@ impl Seat {
     /// Run one tool. `send_id` is the message ID a tool that sends uses unless
     /// the caller gave one, so a retry of the same call stores its message once.
     pub(super) fn call(&self, tool: &str, input: Value, send_id: &str) -> Result<Reply, Error> {
-        match tool {
+        let notice = self
+            .lead
+            .then(|| crate::cli::org::lifecycle::on_command(self.config.clone()))
+            .flatten();
+        let result = match tool {
             "briefs" | "brief" | "brief_view" | "brief_put" => {
                 super::briefs::call(self.config.clone(), tool, input, send_id)
             }
@@ -108,8 +112,22 @@ impl Seat {
             "delegate" => self.delegate(arguments(input)?, send_id),
             "start_agent" => recipes::start_agent(self, arguments(input)?),
             "agents" => recipes::agents(self),
+            "rail" => super::org::rail(self, arguments(input)?),
+            "pulse" => super::org::pulse(self, arguments(input)?),
+            "rail_wait" => super::org::wait(self, arguments(input)?),
+            "rail_handover" => super::org::handover(self, arguments(input)?),
             _ => Err(Error::refused("unknown tool")),
-        }
+        };
+        result.map(|mut reply| {
+            if let Some(notice) = notice {
+                reply.text = format!("{notice}\n{}", reply.text);
+                if reply.value.get("items").is_some() {
+                    let next = reply.value["next"].as_str().unwrap_or("");
+                    reply.value["next"] = json!(format!("{notice}\n{next}"));
+                }
+            }
+            reply
+        })
     }
 
     fn run(&self, command: Command, body: Option<Vec<u8>>) -> Result<(String, Value), Error> {
@@ -268,16 +286,30 @@ impl Seat {
     }
 
     fn get(&self, args: GetArgs) -> Result<Reply, Error> {
-        let (text, value) = self.run(
-            Command::Get {
-                channel: args.channel,
-                position: args.position,
-                json: true,
-                agent: true,
-                offset: args.offset,
-            },
-            None,
-        )?;
+        let command = Command::Get {
+            channel: args.channel,
+            position: args.position,
+            creation: args.creation.map(|creation| creation.parse()).transpose()?,
+            json: true,
+            agent: true,
+            offset: args.offset,
+        };
+        let (text, value) = if let Some(board) = args.board {
+            if !self.lead {
+                return Err(Error::refused(
+                    "subs cannot select an organisation reader seat",
+                ));
+            }
+            let reader = crate::cli::org::seats::Reader::open(self.config.clone())?;
+            let mut source = reader.open_board(Some(&board))?;
+            if source.config == reader.home {
+                self.run(command, None)?
+            } else {
+                command.foreign_reply(&mut source.session, &source.board)?
+            }
+        } else {
+            self.run(command, None)?
+        };
         Ok(Reply { text, value })
     }
 
@@ -366,6 +398,8 @@ struct AckArgs {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GetArgs {
+    board: Option<String>,
+    creation: Option<String>,
     channel: String,
     position: u64,
     offset: Option<usize>,
