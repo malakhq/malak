@@ -12,7 +12,7 @@ pub(in crate::cli) struct Timing {
     pub midnight_ms: u64,
 }
 
-/// Calls is a projection hook: OR.7 supplies its validated open calls here.
+/// Calls is a projection hook supplied with validated open calls.
 #[expect(
     clippy::too_many_arguments,
     reason = "pure projection names its facts, clock, reachability and configured timing explicitly"
@@ -115,7 +115,7 @@ pub(in crate::cli) fn row(
 }
 
 fn open_calls(board: &str, messages: &[Value]) -> Vec<Value> {
-    // Authored owner questions work before OR.7 lands. Its validated calls
+    // Authored owner questions supply fallback open calls. The validated calls
     // projection plugs into row(); call-level reference fields belong there.
     let mut calls = BTreeMap::<(String, u64), Value>::new();
     let mut answered = HashSet::new();

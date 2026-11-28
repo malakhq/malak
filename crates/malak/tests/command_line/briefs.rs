@@ -1,4 +1,4 @@
-//! OR.6 briefs through the real CLI and participant entrance.
+//! Briefs through the real CLI and participant entrance.
 
 use super::*;
 

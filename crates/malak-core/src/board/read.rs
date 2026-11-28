@@ -42,10 +42,12 @@ impl Handle {
         if channels.len() > self.board.limits.read_channels {
             return Err(Error::refused("invalid number of channels in read").at_limit());
         }
+        let table = self.board.table.check();
         let names = channels
             .iter()
-            .map(|name| name.parse())
+            .map(|name| table.resolve_read_channel(&name.parse()?, Some(&self.id)))
             .collect::<Result<SmallVec<[_; 1]>, _>>()?;
+        drop(table);
         self.board.read(self, &names, max_messages, wait, sink)
     }
 
@@ -64,7 +66,11 @@ impl Handle {
         creation: CreationId,
         position: u64,
     ) -> Result<(), Error> {
-        let name: ChannelName = channel.parse()?;
+        let name = self
+            .board
+            .table
+            .check()
+            .resolve_read_channel(&channel.parse()?, Some(&self.id))?;
         let position = Position::try_from(position)?;
         let channel = self
             .allowed_channel(Action::Ack, &name)?

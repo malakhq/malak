@@ -10,6 +10,18 @@ perform one board operation each through the stable command-line interface.
 
 See the [command examples](EXAMPLES.md) for a runnable snippet for each recipe.
 
+Inbox addresses in recipes accept `to/NAME` and `to/ID`; the board resolves
+the active enrolment and checks the existing ID grants. For example, after
+starting `reviewer`, run `malak send to/reviewer "Please check the tests."`
+or `malak recipe forward questions 1 to/reviewer`. After
+`worker-start reviewer --again`, that name reaches the new worker. Unknown
+inbox names are refused and never create channels. Nearby suggestions
+include only inboxes covered by the caller's send, read, get or ack grants.
+
+New participant names use 1–24 lowercase letters, digits and hyphens, start
+with a letter, and have no double or trailing hyphen. Existing names keep
+working until re-enrolled; `worker-start --again` creates a new enrolment.
+
 - `agents` installs or removes the user-level Malak skill and reminders.
 - `agents-md` adds the Malak block to a project's agent instruction files.
 - `answer` replies to a question and can assign follow-up work.

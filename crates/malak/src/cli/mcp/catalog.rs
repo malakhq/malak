@@ -49,7 +49,7 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
             "ack",
             "Mark messages handled, up to a position. Acknowledge a task with this after the work.",
             json!({
-                "channel": { "type": "string" },
+                "channel": { "type": "string", "description": "Channel or inbox: to/NAME and to/ID both work." },
                 "position": { "type": "integer", "minimum": 1 },
                 "creation": { "type": "string", "description": "The creation shown on the message." },
             }),
@@ -61,7 +61,7 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
             json!({
                 "board": { "type": "string", "description": "Another board, through your own recorded reader seat. Subs cannot select one." },
                 "creation": { "type": "string", "description": "Refuse a message from a different channel creation." },
-                "channel": { "type": "string" },
+                "channel": { "type": "string", "description": "Channel or inbox, for example to/reviewer." },
                 "position": { "type": "integer", "minimum": 1 },
                 "offset": { "type": "integer", "minimum": 0, "description": "Byte offset to start the body at." },
             }),
@@ -121,7 +121,7 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
              Reuse the same id to retry a task that may not have arrived. When it needs a brief, \
              put the brief text in the task; do not give a sub a reference into a brief artifact store.",
             json!({
-                "agent": { "type": "string", "description": "The agent's name, as agents lists it." },
+                "agent": { "type": "string", "description": "The agent's name or ID; to/NAME and to/ID also work. The board resolves it." },
                 "task": { "type": "string" },
                 "id": { "type": "string", "description": "Message ID, for an exact retry." },
             }),
@@ -138,7 +138,7 @@ pub(super) fn tools(lead: bool) -> Vec<Tool> {
              If this is refused because no lead watcher is running, call inbox with a wait (for example \
              wait 60), then call start_agent again.",
             json!({
-                "name": { "type": "string", "description": "Lowercase letters, digits, - and _." },
+                "name": { "type": "string", "description": "1 to 24 lowercase letters, digits or hyphens; start with a letter; no double or trailing hyphen." },
                 "brief": { "type": "string" },
                 "tool": { "type": "string", "enum": ["claude", "codex"] },
             }),

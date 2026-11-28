@@ -27,6 +27,60 @@ mod vm;
 
 const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+#[test]
+fn inbox_names_work_through_the_participant_client_api() {
+    use malak_core::{Action, GetReply, ParticipantClient, SendRequest};
+    let fixture = Fixture::new();
+    let address = fixture.root.address();
+    let (owner, entrances) = fixture.start_on(Entrance::General, &address).unwrap();
+    let path = fixture.root.path().join("worker");
+    let id = entrances
+        .enrol("worker", Grant::default(), &path, None)
+        .unwrap();
+    let inbox = id.inbox();
+    owner
+        .replace_grant(
+            &id,
+            common::grant(
+                inbox.as_str(),
+                &[Action::Send, Action::Read, Action::Get, Action::Ack],
+            ),
+        )
+        .unwrap();
+    let unix = Arc::new(UnixTransport::bind(&address).unwrap());
+
+    std::thread::scope(|scope| {
+        let server = scope.spawn(|| serve_participant(&entrances, &address, unix.clone()));
+        let mut client =
+            ParticipantClient::connect(unix.clone(), &path, Some(Arc::new(Key))).unwrap();
+        let receipt = client
+            .send(SendRequest::note("to/worker", "one", b"review"))
+            .unwrap();
+        let GetReply::Message(message) = client.get("to/worker", 1).unwrap() else {
+            panic!("missing named delivery");
+        };
+        assert_eq!(message.channel, inbox);
+        assert_eq!(
+            client
+                .read(&["to/worker"], 1, std::time::Duration::ZERO)
+                .unwrap()
+                .messages
+                .len(),
+            1
+        );
+        client.ack("to/worker", receipt.creation, 1).unwrap();
+        assert!(
+            client
+                .read(&[inbox.as_str()], 1, std::time::Duration::ZERO)
+                .unwrap()
+                .messages
+                .is_empty()
+        );
+        drop(client);
+        let _ = server.join().unwrap();
+    });
+}
+
 struct Fixture {
     root: SocketDir,
     state: PathBuf,

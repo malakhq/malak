@@ -39,7 +39,14 @@ pub(super) fn show_status(
         reply["board_build"] = Value::from(version.build());
         print_json(&reply)
     } else {
-        print_status(&reply, version, target)
+        let inventory = target
+            .filter(|target| target.starts_with("to/"))
+            .map(|_| status(client, &[]))
+            .transpose()?;
+        let people = inventory.as_ref().unwrap_or(&reply)["participants"]
+            .as_array()
+            .ok_or_else(invalid)?;
+        print_status(&reply, version, target, people)
     }
 }
 
@@ -215,9 +222,15 @@ pub(super) fn channel(client: &mut Client, command: Channel) -> Result<(), Error
         }
         Channel::Remove { channel, creation } => {
             let absent = || output::result(&format!("Channel {channel} is already absent."));
-            let Some(creation) = resolve(client, &channel, creation)? else {
+            let Some((resolved, creation)) = resolve(client, &channel, creation)? else {
                 return absent();
             };
+            if resolved != channel {
+                output::details(
+                    &format!("Removing inbox {resolved}."),
+                    &[("Creation", &creation)],
+                )?;
+            }
             let reply = fields(&request(
                 client,
                 "CHANNEL_REMOVE",
@@ -246,7 +259,7 @@ pub(super) fn trim(
     position: u64,
     creation: Option<CreationId>,
 ) -> Result<(), Error> {
-    let creation = resolve(client, channel, creation)?
+    let (_, creation) = resolve(client, channel, creation)?
         .ok_or_else(|| Error::refused("channel has no current creation"))?;
     let output = encode_frame(
         RID,
@@ -487,14 +500,52 @@ fn resolve(
     client: &mut Client,
     name: &ChannelName,
     creation: Option<CreationId>,
-) -> Result<Option<String>, Error> {
-    if let Some(creation) = creation {
-        return Ok(Some(creation.to_string()));
+) -> Result<Option<(ChannelName, String)>, Error> {
+    let inbox = name.as_str().starts_with("to/");
+    if !inbox && let Some(creation) = creation {
+        return Ok(Some((name.clone(), creation.to_string())));
     }
-    let current = status(client, &[("channel", name.as_str())])?;
-    Ok(current["channels"][0]["creation"]
-        .as_str()
-        .map(str::to_owned))
+    let current = if inbox {
+        status(client, &[])?
+    } else {
+        status(client, &[("channel", name.as_str())])?
+    };
+    let people = current["participants"].as_array().ok_or_else(invalid)?;
+    let canonical = inbox_owner(people, name.as_str())
+        .and_then(|person| person["id"].as_str())
+        .map(|id| id.parse::<ParticipantId>().map(|id| id.inbox()))
+        .transpose()?;
+    let selected = canonical.as_ref().unwrap_or(name);
+    if let Some(creation) = creation {
+        return Ok(Some((selected.clone(), creation.to_string())));
+    }
+    let resolved = current["channels"]
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .find(|channel| channel["name"] == selected.as_str())
+        .and_then(|channel| channel["creation"].as_str())
+        .map(|creation| (selected.clone(), creation.to_owned()));
+    if resolved.is_none() && canonical.is_none() && name.as_str().starts_with("to/") {
+        let address = name.as_str().strip_prefix("to/").unwrap();
+        let nearest = people
+            .iter()
+            .filter(|person| person["revoked"] == false)
+            .filter_map(|person| {
+                let id = person["id"].as_str()?;
+                let label = person["name"].as_str()?;
+                Some((
+                    strsim::levenshtein(address, label).min(strsim::levenshtein(address, id)),
+                    format!("to/{label} ({id})"),
+                ))
+            })
+            .min();
+        let suggestion = nearest.map_or_else(String::new, |(_, inbox)| {
+            format!("; nearest active inbox: {inbox}")
+        });
+        return Err(Error::refused(format!("unknown inbox {name}{suggestion}")));
+    }
+    Ok(resolved)
 }
 
 fn fields(frame: &Frame) -> Result<Value, Error> {
@@ -565,7 +616,12 @@ fn invalid() -> Error {
     Error::unavailable("invalid owner response")
 }
 
-fn print_status(status: &Value, version: &BoardVersion, target: Option<&str>) -> Result<(), Error> {
+fn print_status(
+    status: &Value,
+    version: &BoardVersion,
+    target: Option<&str>,
+    inventory_people: &[Value],
+) -> Result<(), Error> {
     let format = output::Format::stdout();
     let people = status["participants"].as_array().ok_or_else(invalid)?;
     let channels = status["channels"].as_array().ok_or_else(invalid)?;
@@ -574,7 +630,7 @@ fn print_status(status: &Value, version: &BoardVersion, target: Option<&str>) ->
         let block = if let Some(person) = people.first() {
             participant_details(&format, person, now)?
         } else if let Some(channel) = channels.first() {
-            channel_details(&format, channel)?
+            channel_details(&format, channel, inventory_people)?
         } else {
             format.details(
                 &format!("No current channel or participant matches {target}."),
@@ -636,7 +692,7 @@ fn print_status(status: &Value, version: &BoardVersion, target: Option<&str>) ->
     for channel in channels {
         channel_rows.push(vec![
             required(channel, "name")?.into(),
-            channel_state(channel)?.into(),
+            channel_inventory_state(channel, inventory_people)?,
             number(channel, "floor")?,
             number(channel, "head")?,
         ]);
@@ -769,14 +825,53 @@ fn channel_state(channel: &Value) -> Result<&'static str, Error> {
     })
 }
 
-fn channel_details(format: &output::Format, channel: &Value) -> Result<String, Error> {
+// Status inventories retain literal names, even when an active inbox alias
+// shadows a stray. This lookup describes the inventory, never grants access.
+fn inbox_owner<'a>(people: &'a [Value], channel: &str) -> Option<&'a Value> {
+    let address = channel.strip_prefix("to/")?;
+    people
+        .iter()
+        .find(|person| person["id"] == address)
+        .or_else(|| {
+            people
+                .iter()
+                .find(|person| person["name"] == address && person["revoked"] == false)
+        })
+}
+
+fn channel_inventory_state(channel: &Value, people: &[Value]) -> Result<String, Error> {
+    let name = required(channel, "name")?;
+    let state = channel_state(channel)?;
+    if !name.starts_with("to/") {
+        return Ok(state.into());
+    }
+    let Some(owner) = inbox_owner(people, name) else {
+        return Ok(format!("Stray ({state})"));
+    };
+    let id = required(owner, "id")?;
+    let owner_name = required(owner, "name")?;
+    let inbox = id.parse::<ParticipantId>()?.inbox();
+    if inbox.as_str() == name {
+        Ok(format!("{state}; owner {owner_name} ({id})"))
+    } else {
+        Ok(format!(
+            "Stray ({state}); name resolves to {owner_name} ({inbox})"
+        ))
+    }
+}
+
+fn channel_details(
+    format: &output::Format,
+    channel: &Value,
+    people: &[Value],
+) -> Result<String, Error> {
     let floor = number(channel, "floor")?;
     let head = number(channel, "head")?;
     let mut block = format.screen(
         &format!("Channel {}", required(channel, "name")?),
         "",
         &[
-            ("State", channel_state(channel)?),
+            ("State", &channel_inventory_state(channel, people)?),
             ("Creation", required(channel, "creation")?),
             ("First kept", &floor),
             ("Next position", &head),
@@ -811,6 +906,29 @@ fn number(value: &Value, key: &str) -> Result<String, Error> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn status_marks_a_shadowed_stray_and_names_the_resolved_inbox_owner() {
+        let people = [json!({"name":"reviewer", "id":"a0123456", "revoked":false})];
+        let channel = json!({"name":"to/reviewer", "stopped":false});
+
+        let state = channel_inventory_state(&channel, &people).unwrap();
+        assert_eq!(
+            state,
+            "Stray (Open); name resolves to reviewer (to/a0123456)"
+        );
+    }
+
+    #[test]
+    fn status_shows_the_name_and_id_for_a_real_inbox() {
+        let people = [json!({"name":"reviewer", "id":"a0123456", "revoked":false})];
+        let channel = json!({"name":"to/a0123456", "stopped":false});
+
+        assert_eq!(
+            channel_inventory_state(&channel, &people).unwrap(),
+            "Open; owner reviewer (a0123456)"
+        );
+    }
 
     #[test]
     fn revoke_refuses_an_ambiguous_name_and_lists_the_active_ids() {

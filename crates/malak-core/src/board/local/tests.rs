@@ -1231,7 +1231,7 @@ impl Mechanism for TwoRounds {
 #[test]
 fn a_multiround_proof_finishes_over_unix() {
     let mut fixture = Fixture::with_mechanism(uid(), Arc::new(TwoRounds));
-    let (id, opening, mut caller) = fixture.start_proof("two_rounds");
+    let (id, opening, mut caller) = fixture.start_proof("two-rounds");
 
     let attached = std::thread::scope(|scope| {
         let board = scope.spawn(|| opening.attach_participant());

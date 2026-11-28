@@ -102,6 +102,7 @@ enum Command {
     /// Enrol a participant and write their private handover.
     #[command(after_help = examples::help(&["enrol"]))]
     Enrol {
+        /// New name: 1–24 lowercase letters, digits or hyphens; start with a letter, no double or trailing hyphen.
         name: String,
         #[arg(long = "grant", value_name = "PATTERN:ACTIONS")]
         grants: Vec<String>,
@@ -162,6 +163,7 @@ enum Command {
     /// Drop a channel's history before a position.
     #[command(after_help = examples::help(&["trim"]))]
     Trim {
+        /// Channel or inbox: to/NAME and to/ID both work.
         channel: ChannelName,
         position: u64,
         #[arg(long)]
@@ -276,6 +278,7 @@ enum Board {
     /// Show the state of the current board, participant or channel.
     #[command(after_help = examples::help(&["board status"]))]
     Status {
+        /// Participant ID or literal stored channel name; inventory selectors do not expand aliases.
         target: Option<String>,
         #[arg(long)]
         json: bool,
@@ -295,10 +298,14 @@ enum Board {
 enum Channel {
     /// Create this channel, or report the creation that is already there.
     #[command(after_help = examples::help(&["channel create"]))]
-    Create { channel: ChannelName },
+    Create {
+        /// Channel or inbox: to/NAME and to/ID both work.
+        channel: ChannelName,
+    },
     /// Remove the named channel's selected creation.
     #[command(after_help = examples::help(&["channel remove"]))]
     Remove {
+        /// Channel or inbox: to/NAME and to/ID both work.
         channel: ChannelName,
         #[arg(long)]
         creation: Option<CreationId>,

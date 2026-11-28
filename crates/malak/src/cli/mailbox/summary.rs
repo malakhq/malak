@@ -7,7 +7,6 @@ use crate::cli::output::display;
 use malak::Error;
 use std::collections::{HashMap, hash_map::Entry};
 
-pub(super) const ROWS: u16 = 5;
 const ORDERS: &str = "orders";
 
 /// Only channels this participant can get messages from contribute to a review.
@@ -217,7 +216,7 @@ pub(super) fn compact(
     now: u64,
     waiting_workers: usize,
     stopped: bool,
-) -> [String; ROWS as usize] {
+) -> Vec<String> {
     let pending = if stopped { "unavailable" } else { "loading…" };
     let questions = match question_counts(model) {
         _ if model.question_inbox_viewer().is_some() => inbox_label(),
@@ -233,16 +232,21 @@ pub(super) fn compact(
         0 => "relay –".into(),
         count => format!("relay {count}"),
     };
-    [
+    let mut lines = vec![
         format!("lead {}", model.lead_waiting()),
         questions,
         orders,
-        format!("inboxes {waiting_workers} waiting"),
+        match model.stray_channels().count() {
+            0 => format!("inboxes {waiting_workers} waiting"),
+            count => format!("inboxes {waiting_workers} waiting · {count} stray channels"),
+        },
         relay,
-    ]
+    ];
+    lines.extend(stray_lines(model));
+    lines
 }
 
-pub(super) fn lines(model: &Model, now: u64, columns: usize) -> [String; ROWS as usize] {
+pub(super) fn lines(model: &Model, now: u64, columns: usize) -> Vec<String> {
     let questions = match question_counts(model) {
         _ if model.question_inbox_viewer().is_some() => inbox_label(),
         None => "questions unavailable".into(),
@@ -264,13 +268,25 @@ pub(super) fn lines(model: &Model, now: u64, columns: usize) -> [String; ROWS as
         0 => "relay none".into(),
         count => format!("relay {count} waiting"),
     };
-    [
+    let mut lines = vec![
         format!("lead {} waiting", model.lead_waiting()),
         questions,
         orders,
         inboxes(model, columns),
         relay,
-    ]
+    ];
+    lines.extend(stray_lines(model));
+    lines
+}
+
+fn stray_lines(model: &Model) -> impl Iterator<Item = String> + '_ {
+    model.stray_channels().map(|channel| {
+        format!(
+            "stray channel {}: {} retained messages",
+            channel.name,
+            channel.head.saturating_sub(channel.floor)
+        )
+    })
 }
 
 pub(super) fn inbox_label() -> String {
@@ -318,6 +334,24 @@ mod tests {
         tests::{event, status},
     };
     use serde_json::json;
+
+    #[test]
+    fn stray_channels_are_listed_with_counts_even_when_an_active_name_shadows_them() {
+        let mut snapshot = status();
+        snapshot.channels.push(
+            serde_json::from_value(json!({
+                "name": "to/worker", "creation": "stray", "floor": 2, "head": 6, "readers": {}
+            }))
+            .unwrap(),
+        );
+        let model = Model::new(snapshot, None);
+
+        assert!(
+            lines(&model, 0, usize::MAX)
+                .iter()
+                .any(|line| line == "stray channel to/worker: 4 retained messages")
+        );
+    }
 
     fn preview(sender: &str, reply_to: Option<Address>) -> Preview {
         Preview {

@@ -1040,6 +1040,7 @@ dependencies = [
  "malak-layers",
  "malak-mechanism-key",
  "malak-proto",
+ "malak-record",
  "malak-store-markdown",
  "malak-store-memory",
  "malak-store-sqlite",
@@ -1054,6 +1055,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "signal-hook",
+ "strsim",
  "time",
  "tokio",
  "toml",
@@ -1083,6 +1085,7 @@ dependencies = [
  "parking_lot",
  "sha2",
  "smallvec",
+ "strsim",
  "zeroize",
 ]
 

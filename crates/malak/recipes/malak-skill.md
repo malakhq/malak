@@ -8,6 +8,20 @@ description: Use Malak to coordinate agents and subagents on a shared board. Use
 Malak runs in the background to delegate work across your agents and subagents.
 `malak mailbox` gives you a bird's-eye view of the work.
 
+An inbox accepts `to/NAME` or `to/ID`. For example,
+`malak --board NAME send to/reviewer "Please check the tests."` reaches the
+active reviewer and is stored under its ID. The same address works for
+`read`, `get`, `ack` and `--reply-to`, under the existing grants. After
+`worker-start reviewer --again`, use the name to reach the new enrolment;
+use its old ID to refer to old history. Unknown inboxes are refused;
+nearby suggestions include only inboxes covered by your send, read, get or
+ack grants. The mailbox labels old literal inbox-like channels as stray;
+they retain their history and receive no new mail.
+
+New participant names use 1–24 lowercase letters, digits and hyphens, start
+with a letter, and have no double or trailing hyphen. Existing names keep
+working until re-enrolled; `worker-start --again` creates a new enrolment.
+
 - To try the five-worker demo, run {{demo}}. The demo starts its own board and
   prints a mailbox command for watching that run.
 - For the full agent setup guide, run `malak recipe --help`. Read it when

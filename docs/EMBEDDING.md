@@ -129,3 +129,14 @@ public API.
 The constructors that the server uses, `create_local` and the `Local*` types, stay
 `#[doc(hidden)]`. The owner door has no public client: the `malak` command is its
 client.
+
+## Inbox addresses
+
+The board resolves `to/NAME` and `to/ID` before checking grants. For example,
+`lead.send(SendRequest::note("to/worker", "request-1", b"Check this"))?`
+stores the message under that active worker's ID inbox. `read`, `get`, `ack`
+and reply headers accept the same addresses. Grants continue to match the
+resolved ID channel. A name follows the active enrolment after a rerun;
+an explicit ID keeps identifying the original history. Unknown inboxes are
+refused and create no channel. Nearby suggestions include only inboxes
+covered by the caller's send, read, get or ack grants.

@@ -171,6 +171,7 @@ fn printable(value: &str) -> bool {
 #[derive(Clone, Copy, Debug)]
 pub struct SendRequest<'a> {
     /// Channel name, validated by the board after counting the call.
+    /// Inbox addresses accept `to/NAME` or `to/ID` and are stored under the ID.
     pub channel: &'a str,
     /// Sender-chosen ID, reused when retrying the same message.
     pub id: &'a str,
@@ -264,6 +265,26 @@ pub struct SendContent<'a> {
 }
 
 impl SendContent<'_> {
+    pub(crate) fn resolve_reply_channels(
+        &mut self,
+        resolve: impl Fn(&ChannelName) -> Result<ChannelName, Error>,
+    ) -> Result<(), Error> {
+        for header in &mut self.headers {
+            if let Header::ReplyTo { channel, .. } = header {
+                let resolved = resolve(channel)?;
+                self.header_bytes_left = self
+                    .header_bytes_left
+                    .checked_add(channel.as_str().len())
+                    .and_then(|available| available.checked_sub(resolved.as_str().len()))
+                    .ok_or_else(|| {
+                        Error::refused("resolved reply address exceeds header limits").at_limit()
+                    })?;
+                *channel = resolved;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn add_trace(&mut self, trace: TraceId, limits: &Limits) -> Result<(), Error> {
         if self.headers.len() >= limits.header_entries
             || self.header_bytes_left < "trace".len() + trace.len()

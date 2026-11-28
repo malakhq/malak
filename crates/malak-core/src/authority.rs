@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 mod attached;
 mod claim;
+mod inbox;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) use claim::ClaimChange;
@@ -159,7 +160,9 @@ impl Authority {
         Ok(())
     }
 
-    pub(crate) fn check_enrol_name(&self, name: &ParticipantName) -> Result<(), Error> {
+    pub(crate) fn check_enrol_name(&self, name: &str) -> Result<ParticipantName, Error> {
+        inbox::check_new_name(name)?;
+        let name: ParticipantName = name.parse()?;
         if RESERVED_PARTICIPANT_NAMES.contains(&name.as_str())
             || reserved_names::is_command(name.as_str())
         {
@@ -167,7 +170,8 @@ impl Authority {
                 "participant name {name} is reserved"
             )));
         }
-        self.check_name(name)
+        self.check_name(&name)?;
+        Ok(name)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

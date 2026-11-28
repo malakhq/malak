@@ -34,6 +34,8 @@ mod detach;
 mod help;
 #[path = "command_line/hook.rs"]
 mod hook;
+#[path = "command_line/inbox_names.rs"]
+mod inbox_names;
 #[path = "command_line/output.rs"]
 mod output;
 #[path = "command_line/owner_scope.rs"]
@@ -2065,7 +2067,7 @@ pattern = "relay/*"
 "#,
         );
         let lead = board.lead();
-        for channel in ["tasks", "to/alias", "relay/target/extra"] {
+        for channel in ["tasks", "work/alias", "relay/target/extra"] {
             assert!(send_to(&lead, channel, "one").status.success());
 
             assert!(send_to(&lead, channel, "two").status.success());

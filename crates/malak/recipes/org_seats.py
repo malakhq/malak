@@ -33,6 +33,16 @@ def revoke_seat(seat):
         board.malak("--config", seat["config"], "revoke", seat["id"])
 
 
+def available_name(config, reader):
+    occupied = set(board.active_participants(board.board_status(config)))
+    for attempt in range(256):
+        source = reader if attempt == 0 else f"{reader}:{attempt}"
+        candidate = "org-" + hashlib.sha256(source.encode()).hexdigest()[:20]
+        if candidate not in occupied:
+            return candidate
+    raise board.RecipeError("could not find a free reader-seat name on the receiving board")
+
+
 def issue(top, roster, name):
     reader = org_state.readers(roster).get(name)
     if reader is None:
@@ -51,9 +61,11 @@ def issue(top, roster, name):
     for target_name, config, is_top in targets:
         key = hashlib.sha256(f"{name}:{config}".encode()).hexdigest()
         path = org_state.folder(top) / f"{key}.handover"
-        # guest is the one registration path. Old revoked names can be enrolled anew.
+        # guest is the one registration path. A fresh handover also makes a
+        # competing enrolment fail rather than reuse somebody else's seat.
         path.unlink(missing_ok=True)
-        result = board.malak("--config", config, "recipe", "guest", "org-" + hashlib.sha256(name.encode()).hexdigest()[:24],
+        guest_name = available_name(config, name)
+        result = board.malak("--config", config, "recipe", "guest", guest_name,
                              "--out", path, "--session", str(session["pid"]), "--json")
         guest = json.loads(result.stdout)
         seat = {"board": target_name, "config": str(config), "id": guest["id"],

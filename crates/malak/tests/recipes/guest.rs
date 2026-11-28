@@ -181,6 +181,41 @@ fn ack_lead_routes_a_guest_reply_to_its_board() {
 }
 
 #[test]
+fn inbox_names_read_to_lead_includes_registered_guest_replies() {
+    let boards = GuestBoards::start(true);
+    boards.home.lead(&["send", "lead", "Local mail."]);
+    boards.reply("Guest mail.");
+
+    let records = messages(&run(boards.home_command(&["read", "--json", "to/lead"])));
+    assert_eq!(records.len(), 2);
+    assert_eq!(records[0]["channel"], "lead");
+    assert_eq!(records[0]["text"], "Local mail.");
+    assert_eq!(records[1]["guest_board"], "reviews");
+    assert_eq!(records[1]["channel"], boards.inbox);
+    assert_eq!(records[1]["text"], "Guest mail.");
+}
+
+#[test]
+fn inbox_names_ack_to_lead_uses_the_guest_creation_without_acking_local_mail() {
+    let boards = GuestBoards::start(true);
+    boards.home.lead(&["send", "lead", "Keep local mail due."]);
+    let receipt = boards.reply("Acknowledge guest mail.");
+    run(boards.home_command(&["read", "to/lead"]));
+    run(boards.home_command(&[
+        "ack",
+        "--creation",
+        receipt["creation"].as_str().unwrap(),
+        "to/lead",
+        "1",
+    ]));
+
+    assert!(boards.pending().is_empty());
+    let local = messages(&boards.home.lead(&["read", "--json", "lead"]));
+    assert_eq!(local.len(), 1);
+    assert_eq!(local[0]["text"], "Keep local mail due.");
+}
+
+#[test]
 fn read_ack_honors_its_limit_across_home_and_guest_inboxes() {
     let boards = GuestBoards::start(true);
     boards

@@ -17,7 +17,7 @@ cli = [
     "markdown", "sqlite", "unix", "key",
     "dep:clap", "dep:getrandom", "dep:ratatui", "dep:malak-fs", "dep:malak-journal",
     "dep:malak-proto", "dep:minicbor", "dep:nix", "dep:rustix",
-    "dep:serde", "dep:serde_json", "dep:signal-hook", "dep:sha2", "dep:time", "dep:toml",
+    "dep:serde", "dep:serde_json", "dep:signal-hook", "dep:sha2", "dep:strsim", "dep:time", "dep:toml",
 ]
 # Local MCP server over stdio (`malak mcp`), built on the official Rust SDK.
 mcp = ["cli", "dep:rmcp", "dep:tokio"]
@@ -52,6 +52,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 signal-hook = { version = "0.3", default-features = false, optional = true }
 sha2 = { version = "0.11", default-features = false, optional = true }
+strsim = { version = "0.11", optional = true }
 time = { version = "0.3", default-features = false, features = ["local-offset"], optional = true }
 tokio = { version = "1", default-features = false, features = ["rt"], optional = true }
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"], optional = true }
@@ -62,6 +63,7 @@ malak-store-sqlite = { path = "../malak-store-sqlite", version = "0.1.2", option
 criterion = { version = "0.8", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+malak-record = { path = "../malak-record", version = "0.1.2" }
 malak-testkit = { path = "../malak-testkit", version = "0.1.2" }
 rmcp = { version = "3.11", default-features = false, features = ["client", "transport-child-process"] }
 tokio = { version = "1", default-features = false, features = ["macros", "rt"] }

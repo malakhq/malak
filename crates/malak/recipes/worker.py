@@ -132,6 +132,8 @@ def arguments(mode, words):
                 f"--brief FILE posts a task to the worker's inbox. {adapters.names('and')}",
                 "hooks deliver it at session start. The command's prompt need not repeat it.",
                 "--again retires the previous enrolment once its launcher has exited.",
+                "Inbox addresses accept to/NAME or to/ID; the name reaches the active worker.",
+                "Example: malak send to/reviewer 'Please check the tests.'",
                 "--detach returns once the command starts and prints how to follow or stop it.",
                 "--unbound allows several local processes to use the handover. Required for --resume.",
             ])
@@ -143,7 +145,9 @@ def arguments(mode, words):
     if not args.command:
         raise QueueError("supply a command after --")
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", args.name):
-        raise QueueError(f"invalid participant name {args.name!r}")
+        raise QueueError(board.PARTICIPANT_NAME_RULE)
+    if not args.prepared:
+        board.check_new_participant_name(args.name)
     if mode == "worker-start" and args.resume and not args.unbound:
         raise QueueError("--resume requires --unbound")
     if args.prepared and args.brief:

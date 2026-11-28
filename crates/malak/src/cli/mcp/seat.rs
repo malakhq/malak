@@ -319,7 +319,11 @@ impl Seat {
     }
 
     fn delegate(&self, args: DelegateArgs, send_id: &str) -> Result<Reply, Error> {
-        let inbox = recipes::inbox_of(self, &args.agent)?;
+        let inbox = if args.agent.starts_with("to/") {
+            args.agent
+        } else {
+            format!("to/{}", args.agent)
+        };
         let id = args.id.unwrap_or_else(|| send_id.to_owned());
         self.send(&inbox, Kind::Task, id, args.task)
     }

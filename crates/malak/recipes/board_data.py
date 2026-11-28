@@ -49,6 +49,16 @@ class RecipeError(Exception):
         self.code = code
 
 
+PARTICIPANT_NAME_RULE = ("new participant names must be 1 to 24 lowercase letters, digits or hyphens, "
+                         "start with a letter, and have no double or trailing hyphen")
+
+
+def check_new_participant_name(name):
+    if (not re.fullmatch(r"[a-z][a-z0-9-]{0,23}", name)
+            or "--" in name or name.endswith("-")):
+        raise RecipeError(PARTICIPANT_NAME_RULE)
+
+
 BOARD_CONFIG = None
 
 
@@ -714,16 +724,8 @@ def forward(config, channel, position, target=None):
     use_board(config)
     if handover := os.environ.get("MALAK_HANDOVER"):
         check_board(config, handover)
-    status = board_status(config)
-    recipient = next((
-        person["id"] for person in status["participants"]
-        if person["name"] == target and not person["revoked"] and person["id"] != "lead"
-    ), None)
-    if recipient is None:
-        raise RecipeError(f"no enrolled participant named {target!r}")
-
     original = get_message(channel, position)
-    inbox = f"to/{recipient}"
+    inbox = target if target.startswith("to/") else f"to/{target}"
     options, body = forward_record(original)
     return send_result(
         malak_command("send", "--json", *options, "--", inbox, "-"),

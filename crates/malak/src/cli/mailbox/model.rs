@@ -633,7 +633,17 @@ impl Model {
                 |person| (person.name.as_str(), channel.acked_by(id)),
             );
             let waiting = channel.waiting(acked);
-            (waiting > 0).then_some((name, waiting, recipient.and_then(|p| p.launcher_state)))
+            (waiting > 0).then_some((
+                name,
+                waiting,
+                recipient.map_or(Some("stray"), |p| p.launcher_state),
+            ))
+        })
+    }
+
+    pub fn stray_channels(&self) -> impl Iterator<Item = &Channel> {
+        self.channels.values().filter(|channel| {
+            channel.name.starts_with("to/") && self.inbox_recipient(&channel.name).is_none()
         })
     }
 
@@ -677,6 +687,9 @@ impl Model {
     }
 
     pub fn plain_recipient<'a>(&'a self, channel: &'a str) -> Cow<'a, str> {
+        if channel.starts_with("to/") && self.inbox_recipient(channel).is_none() {
+            return Cow::Owned(format!("stray {channel}"));
+        }
         self.inbox_recipient(channel)
             .map_or(Cow::Borrowed(channel), |person| self.plain_label(person))
     }

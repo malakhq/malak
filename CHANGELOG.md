@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The board resolves inbox addresses by participant name or ID for all four
+  verbs and reply headers, before checking ID grants. Unknown inboxes are
+  refused without creating channels; nearby matches respect the caller's
+  grants. MCP delegation accepts names and IDs. Old stray channels retain
+  their history and are labelled in the mailbox with message counts. New
+  participant names use 1–24 lowercase letters, digits and hyphens, start
+  with a letter, and have no double or trailing hyphen. Existing
+  names remain valid until re-enrolled.
+  Exact retries of older literal-name reply headers keep their original
+  receipt and record; new writes store canonical ID references.
+
 - Questions name who they are for: `recipe ask --to lead|owner|both` and the MCP
   `ask` tool (`ask_owner` stays as an alias that defaults to `owner`). A worker's
   default is `lead`; the lead's is `owner`. The audience is a `For:` line in the
